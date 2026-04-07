@@ -1,0 +1,50 @@
+import {
+  Monitor,
+  Shield,
+  Lock,
+  Settings2,
+  Brain,
+  Layers,
+  Database,
+  Zap,
+  Wrench,
+  BookOpen,
+  Search,
+  Terminal,
+  RefreshCw,
+  GitBranch,
+  GitFork,
+  RotateCcw,
+  Users,
+  ScanLine,
+  Gauge,
+  ClipboardList,
+  type LucideIcon,
+} from 'lucide-react'
+
+const iconMap: Record<string, LucideIcon> = {
+  Monitor,
+  Shield,
+  Lock,
+  Settings2,
+  Brain,
+  Layers,
+  Database,
+  Zap,
+  Wrench,
+  BookOpen,
+  Search,
+  Terminal,
+  RefreshCw,
+  GitBranch,
+  GitFork,
+  RotateCcw,
+  Users,
+  ScanLine,
+  Gauge,
+  ClipboardList,
+}
+
+export function getIcon(name: string): LucideIcon {
+  return iconMap[name] ?? Settings2
+}

@@ -1,0 +1,68 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* React Flow canvas */
+.react-flow {
+  background-color: #111111;
+}
+
+.react-flow__background {
+  background-color: #111111;
+}
+
+/* Controls */
+.react-flow__controls {
+  background-color: transparent;
+  border: none;
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  background-color: #191919 !important;
+  border-color: #2d2d2d !important;
+  color: #94a3b8 !important;
+  border-radius: 6px !important;
+  margin-bottom: 4px;
+}
+
+.react-flow__controls-button:hover {
+  background-color: #212121 !important;
+  color: #e2e8f0 !important;
+}
+
+.react-flow__controls-button svg {
+  fill: currentColor;
+}
+
+/* Edge */
+.react-flow__edge-path {
+  stroke: #5b5bf0;
+  stroke-width: 2;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #7c7cf5;
+}
+
+/* Selection box */
+.react-flow__selection {
+  background: rgba(91, 91, 240, 0.08);
+  border: 1px solid #5b5bf0;
+}
+
+/* Node drag placeholder */
+.react-flow__node.dragging {
+  opacity: 0.8;
+}
