@@ -105,7 +105,7 @@ ipcMain.handle('open-directory', async () => {
   const win = BrowserWindow.getFocusedWindow()
   if (!win) return null
   const result = await dialog.showOpenDialog(win, {
-    properties: ['openDirectory']
+    properties: ['openDirectory', 'createDirectory']
   })
   return result.filePaths[0] ?? null
 })
