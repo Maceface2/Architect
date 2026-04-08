@@ -1,4 +1,4 @@
-import { Zap, Loader2, FolderOpen, Save } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save, Sparkles } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -12,6 +12,9 @@ interface TopNavProps {
   onChangeDir: () => void
   onSave: () => void
   isDirty: boolean
+  onGenerateClick: () => void
+  isRedispatch: boolean
+  changedCount: number
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Preview']
@@ -33,6 +36,7 @@ export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir, onSave, isDirty,
+  onGenerateClick, isRedispatch, changedCount,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -86,6 +90,14 @@ export default function TopNav({
             <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
           )}
         </button>
+        <button
+          onClick={onGenerateClick}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
+          title="Generate diagram with AI"
+        >
+          <Sparkles size={12} />
+          Generate
+        </button>
         <button onClick={onClear} className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors">
           Clear
         </button>
@@ -98,7 +110,12 @@ export default function TopNav({
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors disabled:opacity-40 disabled:pointer-events-none"
         >
           {dispatching ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
-          {dispatching ? 'Launching…' : `Dispatch agents${nodeCount > 0 ? ` (${nodeCount})` : ''}`}
+          {dispatching
+            ? 'Launching…'
+            : isRedispatch
+              ? `Redispatch${changedCount > 0 ? ` (${changedCount} changed)` : ''}`
+              : `Dispatch${nodeCount > 0 ? ` (${nodeCount})` : ''}`
+          }
         </button>
       </div>
     </div>

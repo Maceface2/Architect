@@ -2,7 +2,7 @@ import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
-import { execFileSync } from 'child_process'
+import { execFileSync, execFile } from 'child_process'
 
 // Augment PATH with common locations so node-pty can find binaries
 const EXTRA_PATHS = [
@@ -180,7 +180,11 @@ function buildMermaidDiagram(nodes: GraphNode[], edges: GraphEdge[]): string {
   return ['```mermaid', 'graph TD', ...nodeLines, ...edgeLines, '```'].join('\n')
 }
 
-function buildArchitectPrompt(nodes: GraphNode[], edges: GraphEdge[]): string {
+function buildArchitectPrompt(
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+): string {
   const agentList = nodes.map(n => {
     const up   = edges.filter(e => e.target === n.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
     const down = edges.filter(e => e.source === n.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean)
@@ -225,7 +229,15 @@ ${flowLines}
 3. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
 4. Monitor ARCHITECT/outputs/ — when agents complete, coordinate handoffs by updating downstream task files with actual upstream output details
 
-Start immediately. Write the task files now.`
+Start immediately. Write the task files now.${
+    dispatchContext?.isRedispatch
+      ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/.\n${
+          dispatchContext.changedNodeLabels.length > 0
+            ? `Only the following agents have changed and MUST be re-run: ${dispatchContext.changedNodeLabels.join(', ')}.\nDo NOT re-run unchanged agents unless their upstream inputs changed.`
+            : 'No agent configurations changed. Only re-run agents that previously failed or need updating.'
+        }`
+      : ''
+  }`
 }
 
 function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]): string {
@@ -256,7 +268,12 @@ Work fully autonomously — do not stop or ask for clarification.`
 
 // ── Workspace setup ────────────────────────────────────────────────────────
 
-function setupWorkspace(projectDir: string, nodes: GraphNode[], edges: GraphEdge[]) {
+function setupWorkspace(
+  projectDir: string,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+) {
   const base = join(projectDir, 'ARCHITECT')
   for (const d of ['tasks', 'outputs', 'prompts'].map(s => join(base, s))) {
     fs.mkdirSync(d, { recursive: true })
@@ -278,7 +295,7 @@ function setupWorkspace(projectDir: string, nodes: GraphNode[], edges: GraphEdge
 
   // Prompt files — one per agent so we never paste multi-line text into the terminal
   fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(nodes, edges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges, dispatchContext))
   for (const node of nodes) {
     fs.writeFileSync(join(base, 'prompts', `${sanitize(node.data.label)}.md`), buildNodePrompt(node, edges, nodes))
   }
@@ -295,10 +312,11 @@ export async function runGraph(
   nodes: GraphNode[],
   edges: GraphEdge[],
   projectDir: string,
+  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   killAll()
 
-  setupWorkspace(projectDir, nodes, edges)
+  setupWorkspace(projectDir, nodes, edges, dispatchContext)
 
   const sorted  = topoSort(nodes, edges)
   const created: TerminalInfo[] = []
@@ -350,4 +368,49 @@ export async function runGraph(
 
 function sleep(ms: number) {
   return new Promise<void>(resolve => setTimeout(resolve, ms))
+}
+
+// ── AI diagram generation ──────────────────────────────────────────────────
+
+export function generateDiagramWithClaude(
+  description: string
+): Promise<{ nodes: unknown[]; edges: unknown[] }> {
+  const prompt = `You are generating a multi-agent pipeline diagram for an app called Architect.
+Return ONLY valid JSON — no markdown fences, no explanation, nothing else. Use this exact structure:
+{
+  "nodes": [
+    {
+      "id": "kebab-case-id",
+      "label": "Human Readable Name",
+      "description": "One sentence of what this agent does",
+      "category": "infrastructure",
+      "iconName": "Settings2",
+      "color": "#60a5fa",
+      "tag": "SHORT",
+      "prompt": "Detailed specific instructions for this agent..."
+    }
+  ],
+  "edges": [
+    { "id": "e1", "source": "node-id-a", "target": "node-id-b" }
+  ]
+}
+
+Available categories: infrastructure, services, storage
+Available iconNames: Monitor, Shield, Lock, Settings2, Brain, Layers, Database, Zap, Wrench, BookOpen, Search, Terminal, RefreshCw, GitBranch, Users, ScanLine, Gauge, ClipboardList
+Use 3–7 nodes. Assign each node a distinct hex color. Keep tags under 6 chars.
+
+System to model: ${description}`
+
+  return new Promise((resolve, reject) => {
+    execFile(CLAUDE_BIN, ['-p', prompt], { timeout: 60_000 }, (err, stdout) => {
+      if (err) { reject(err.message); return }
+      try {
+        const match = stdout.match(/\{[\s\S]*\}/)
+        if (!match) { reject('No JSON found in Claude response'); return }
+        resolve(JSON.parse(match[0]))
+      } catch {
+        reject('Failed to parse JSON from Claude response')
+      }
+    })
+  })
 }

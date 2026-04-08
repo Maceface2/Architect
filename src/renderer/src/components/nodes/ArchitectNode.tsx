@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useState, useRef } from 'react'
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { ChevronDown, ChevronUp, Plus, X, FileText } from 'lucide-react'
 import type {
@@ -40,6 +40,9 @@ const BUILTIN_SKILLS: Omit<NodeSkillFile, 'id'>[] = [
 function ArchitectNode({ id, data }: ArchitectNodeProps) {
   const { setNodes } = useReactFlow()
   const [customSkillInput, setCustomSkillInput] = useState('')
+  const [editingLabel, setEditingLabel] = useState(false)
+  const [labelDraft, setLabelDraft] = useState('')
+  const labelInputRef = useRef<HTMLInputElement>(null)
 
   const nodeColor   = data.color as string
   const tag         = data.tag as string
@@ -129,7 +132,25 @@ function ArchitectNode({ id, data }: ArchitectNodeProps) {
             <span className="text-[11px] font-bold tracking-widest" style={{ color: nodeColor }}>{tag}</span>
             <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor(status, nodeColor) }} />
           </div>
-          <p className="text-[15px] font-semibold text-white leading-snug">{label}</p>
+          {editingLabel ? (
+            <input
+              ref={labelInputRef}
+              value={labelDraft}
+              onChange={e => setLabelDraft(e.target.value)}
+              onBlur={() => { patch({ label: labelDraft.trim() || label }); setEditingLabel(false) }}
+              onKeyDown={e => {
+                if (e.key === 'Enter') { patch({ label: labelDraft.trim() || label }); setEditingLabel(false) }
+                if (e.key === 'Escape') setEditingLabel(false)
+              }}
+              className="text-[15px] font-semibold text-white leading-snug bg-transparent border-b border-white/30 focus:outline-none focus:border-white/60 w-full"
+            />
+          ) : (
+            <p
+              className="text-[15px] font-semibold text-white leading-snug cursor-text"
+              onDoubleClick={() => { setLabelDraft(label); setEditingLabel(true); setTimeout(() => labelInputRef.current?.select(), 0) }}
+              title="Double-click to rename"
+            >{label}</p>
+          )}
         </div>
 
         {/* Sections */}

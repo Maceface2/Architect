@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { runGraph, writeToTerminal, resizeTerminal, killAll } from './terminals'
+import { runGraph, writeToTerminal, resizeTerminal, killAll, generateDiagramWithClaude } from './terminals'
 
 app.name = 'Architect'
 app.setName('Architect')
@@ -137,9 +137,13 @@ ipcMain.handle('scan-components', (_event, dirPath: string) => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('run-graph', (_event, nodes, edges, cwd) => {
+ipcMain.handle('run-graph', (_event, nodes, edges, cwd, dispatchContext) => {
   if (!mainWindow) return []
-  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'))
+  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), dispatchContext)
+})
+
+ipcMain.handle('generate-diagram', (_event, description: string) => {
+  return generateDiagramWithClaude(description)
 })
 
 ipcMain.on('terminal:input', (_event, id: string, data: string) => {

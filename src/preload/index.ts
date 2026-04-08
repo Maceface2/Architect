@@ -18,8 +18,12 @@ contextBridge.exposeInMainWorld('electron', {
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
   // Graph execution
-  runGraph: (nodes: unknown[], edges: unknown[], cwd: string) =>
-    ipcRenderer.invoke('run-graph', nodes, edges, cwd),
+  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, dispatchContext?: unknown) =>
+    ipcRenderer.invoke('run-graph', nodes, edges, cwd, dispatchContext),
+
+  // AI diagram generation
+  generateDiagram: (description: string) =>
+    ipcRenderer.invoke('generate-diagram', description),
 
   // Terminal I/O
   terminal: {
