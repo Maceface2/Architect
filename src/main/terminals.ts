@@ -64,9 +64,12 @@ interface Session {
   buffer: string
   ready: boolean
   callbacks: (() => void)[]
+  done: boolean
+  doneCallbacks: (() => void)[]
 }
 
 const sessions = new Map<string, Session>()
+let activeWatcher: fs.FSWatcher | null = null
 
 // ── PTY management ─────────────────────────────────────────────────────────
 
@@ -85,7 +88,7 @@ function spawnClaude(
     env: { ...process.env, ...env } as Record<string, string>,
   })
 
-  const session: Session = { pty: ptyProcess, buffer: '', ready: false, callbacks: [] }
+  const session: Session = { pty: ptyProcess, buffer: '', ready: false, callbacks: [], done: false, doneCallbacks: [] }
   sessions.set(id, session)
 
   ptyProcess.onData(data => {
@@ -94,6 +97,10 @@ function spawnClaude(
     if (!session.ready && /[>❯]\s*$/.test(session.buffer)) {
       session.ready = true
       session.callbacks.splice(0).forEach(cb => cb())
+    }
+    if (!session.done && session.buffer.includes('ARCHITECT_COMPLETE')) {
+      session.done = true
+      session.doneCallbacks.splice(0).forEach(cb => cb())
     }
     if (!win.isDestroyed()) win.webContents.send('terminal:data', { id, data })
   })
@@ -127,7 +134,16 @@ export function resizeTerminal(id: string, cols: number, rows: number) {
   try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
 }
 
+function onSessionDone(id: string, cb: () => void) {
+  const s = sessions.get(id)
+  if (!s) return
+  if (s.done) { cb(); return }
+  s.doneCallbacks.push(cb)
+}
+
 export function killAll() {
+  activeWatcher?.close()
+  activeWatcher = null
   sessions.forEach(s => { try { s.pty.kill() } catch {} })
   sessions.clear()
 }
@@ -263,7 +279,12 @@ Write your progress and final output to: ${outputFile}
 
 If you have downstream agents, clearly document your interfaces (ports, schemas, file paths) in your output file.
 
-Work fully autonomously — do not stop or ask for clarification.`
+Work fully autonomously — do not stop or ask for clarification.
+
+When you have finished ALL work and written your final output to ${outputFile}, run this exact shell command as your last action:
+\`\`\`
+echo ARCHITECT_COMPLETE
+\`\`\``
 }
 
 // ── Workspace setup ────────────────────────────────────────────────────────
@@ -329,45 +350,79 @@ export async function runGraph(
     created.push(spawnClaude(win, node.id, node.data.label, env, projectDir))
   }
 
-  // Wire up prompts after ready — don't block the IPC return
-  ;(async () => {
-    // Wait for all sessions to show the > prompt
-    await Promise.all(created.map(c => waitForReady(c.id, 30_000)))
+  // Wire up prompts — each session fires as soon as IT is ready, not when all are ready.
+  const tasksDir   = join(projectDir, 'ARCHITECT', 'tasks')
+  const nodeMap    = new Map(sorted.map(n => [sanitize(n.data.label), n]))
+  const triggered  = new Set<string>()
+  const taskReady  = new Set<string>()
 
-    // Architect: auto-submit immediately
+  // Build downstream adjacency so completion tokens can immediately unblock dependents.
+  const downstreamMap = new Map<string, string[]>()
+  for (const node of sorted) {
+    const safe = sanitize(node.data.label)
+    const downSafes = edges
+      .filter(e => e.source === node.id)
+      .map(e => nodes.find(n => n.id === e.target))
+      .filter(Boolean)
+      .map(n => sanitize(n!.data.label))
+    downstreamMap.set(safe, downSafes)
+  }
+
+  // Fires only when BOTH the session is ready AND its task file has content.
+  function tryTrigger(safe: string) {
+    if (triggered.has(safe)) return
+    const node = nodeMap.get(safe)
+    if (!node) return
+    const session = sessions.get(node.id)
+    if (!session?.ready) return
+    if (!taskReady.has(safe)) return
+    triggered.add(safe)
+    writeToTerminal(node.id,
+      `Read ARCHITECT/prompts/${safe}.md to understand your role, then read ARCHITECT/tasks/${safe}.md and execute every instruction. Write all output to ARCHITECT/outputs/${safe}.md.\r`
+    )
+    if (triggered.size === nodeMap.size) {
+      activeWatcher?.close()
+      activeWatcher = null
+    }
+  }
+
+  // fs.watch fires the instant Architect writes a task file — no polling delay.
+  activeWatcher?.close()
+  activeWatcher = fs.watch(tasksDir, (_event, filename) => {
+    if (!filename?.endsWith('.md')) return
+    const safe = filename.slice(0, -3)
+    if (!nodeMap.has(safe) || taskReady.has(safe)) return
+    try {
+      if (fs.statSync(join(tasksDir, filename)).size > 0) {
+        taskReady.add(safe)
+        tryTrigger(safe)
+      }
+    } catch { /* race: file briefly absent */ }
+  })
+
+  // Architect gets its prompt the moment it reaches the > prompt.
+  waitForReady('architect-agent', 30_000).then(() => {
     writeToTerminal('architect-agent',
       'Read the file ARCHITECT/prompts/architect.md and follow every instruction in it exactly.\r'
     )
+  })
 
-    // Node agents: sit idle until their task file is written by the overseer.
-    // Main process polls — much more reliable than asking Claude to loop.
-    const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
-    const nodeMap  = new Map(sorted.map(n => [sanitize(n.data.label), n]))
-    const triggered = new Set<string>()
+  // Each node agent: trigger as soon as it is ready (task file may already be there).
+  for (const node of sorted) {
+    const safe = sanitize(node.data.label)
 
-    const pollId = setInterval(() => {
-      for (const [safe, node] of nodeMap) {
-        if (triggered.has(safe)) continue
-        try {
-          const stat = fs.statSync(join(tasksDir, `${safe}.md`))
-          if (stat.size > 0) {
-            triggered.add(safe)
-            writeToTerminal(node.id,
-              `Read ARCHITECT/prompts/${safe}.md to understand your role, then read ARCHITECT/tasks/${safe}.md and execute every instruction. Write all output to ARCHITECT/outputs/${safe}.md.\r`
-            )
-          }
-        } catch { /* file not yet written */ }
+    waitForReady(node.id, 30_000).then(() => tryTrigger(safe))
+
+    // Completion token: when this agent emits ARCHITECT_COMPLETE, immediately unblock
+    // any downstream agents whose task files are already written.
+    onSessionDone(node.id, () => {
+      for (const downSafe of downstreamMap.get(safe) ?? []) {
+        tryTrigger(downSafe)
       }
-      if (triggered.size === nodeMap.size) clearInterval(pollId)
-    }, 2000)
-
-  })().catch(err => console.error('[Architect] orchestration error:', err))
+    })
+  }
 
   return created
-}
-
-function sleep(ms: number) {
-  return new Promise<void>(resolve => setTimeout(resolve, ms))
 }
 
 // ── AI diagram generation ──────────────────────────────────────────────────
