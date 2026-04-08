@@ -191,7 +191,6 @@ Start immediately. Write the task files now.`
 
 function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]): string {
   const safe       = sanitize(node.data.label)
-  const taskFile   = `ARCHITECT/tasks/${safe}.md`
   const outputFile = `ARCHITECT/outputs/${safe}.md`
 
   const upstream   = edges.filter(e => e.target === node.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
@@ -201,38 +200,19 @@ function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]
 
   return `You are the ${node.data.label} agent [${node.data.tag}] — ${node.data.description}.
 ${node.data.prompt ? `\nUser goal: ${node.data.prompt}\n` : ''}
-${upstream.length   ? `Upstream agents (read their output files): ${upstream.map(u => `ARCHITECT/outputs/${sanitize(u as string)}.md`).join(', ')}\n` : ''}
+${upstream.length   ? `Upstream agents (read their output files first): ${upstream.map(u => `ARCHITECT/outputs/${sanitize(u as string)}.md`).join(', ')}\n` : ''}
 ${downstream.length ? `Downstream agents depending on you: ${downstream.join(', ')}\n` : ''}
 ${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ${skills ? `${skills}\n` : ''}
-## Your task
+## Instructions
 
-Your task file is: ${taskFile}
-The Overseer is writing this file right now. You MUST wait for it before doing anything else.
+Your task file has already been written and is ready to read. Execute every instruction in it immediately and concretely — create files, write code, implement everything specified.
 
-Poll for it using the Bash tool in a loop — do not stop until the file exists:
+Write your progress and final output to: ${outputFile}
 
-\`\`\`
-while true; do
-  if [ -f "${taskFile}" ]; then
-    echo "READY"
-    break
-  else
-    echo "WAITING..."
-    sleep 10
-  fi
-done
-\`\`\`
+If you have downstream agents, clearly document your interfaces (ports, schemas, file paths) in your output file.
 
-Run that exact bash command now. It will block until the file appears. Do NOT proceed until you see "READY".
-
-Once READY:
-1. Read the task file with the Bash tool: cat "${taskFile}"
-2. Execute every instruction in it — create files, write code, implement everything concretely
-3. Write your progress and final output to: ${outputFile}
-4. If you have downstream agents, clearly document your interfaces in your output file
-
-Start the polling loop now. Work fully autonomously — do not stop or ask for clarification.`
+Work fully autonomously — do not stop or ask for clarification.`
 }
 
 // ── Workspace setup ────────────────────────────────────────────────────────
@@ -296,20 +276,33 @@ export async function runGraph(
     // Wait for all sessions to show the > prompt
     await Promise.all(created.map(c => waitForReady(c.id, 30_000)))
 
-    // Overseer: auto-submit with \r — fully hands-off like node agents
+    // Overseer: auto-submit immediately
     writeToTerminal('overseer',
       'Read the file ARCHITECT/prompts/overseer.md and follow every instruction in it exactly.\r'
     )
 
-    // Node agents: same pattern but WITH \r — fully automatic, no human input needed
-    for (let i = 0; i < sorted.length; i++) {
-      await sleep(600)
-      const node = sorted[i]
-      const safe = sanitize(node.data.label)
-      writeToTerminal(node.id,
-        `Read the file ARCHITECT/prompts/${safe}.md and follow every instruction in it exactly.\r`
-      )
-    }
+    // Node agents: sit idle until their task file is written by the overseer.
+    // Main process polls — much more reliable than asking Claude to loop.
+    const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
+    const nodeMap  = new Map(sorted.map(n => [sanitize(n.data.label), n]))
+    const triggered = new Set<string>()
+
+    const pollId = setInterval(() => {
+      for (const [safe, node] of nodeMap) {
+        if (triggered.has(safe)) continue
+        try {
+          const stat = fs.statSync(join(tasksDir, `${safe}.md`))
+          if (stat.size > 0) {
+            triggered.add(safe)
+            writeToTerminal(node.id,
+              `Read ARCHITECT/prompts/${safe}.md to understand your role, then read ARCHITECT/tasks/${safe}.md and execute every instruction. Write all output to ARCHITECT/outputs/${safe}.md.\r`
+            )
+          }
+        } catch { /* file not yet written */ }
+      }
+      if (triggered.size === nodeMap.size) clearInterval(pollId)
+    }, 2000)
+
   })().catch(err => console.error('[Architect] orchestration error:', err))
 
   return created
