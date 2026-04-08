@@ -2,7 +2,7 @@ import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
-import { execFileSync, execFile } from 'child_process'
+import { execFileSync } from 'child_process'
 
 // Augment PATH with common locations so node-pty can find binaries
 const EXTRA_PATHS = [
@@ -430,8 +430,11 @@ export async function runGraph(
 export function generateDiagramWithClaude(
   description: string
 ): Promise<{ nodes: unknown[]; edges: unknown[] }> {
-  const prompt = `You are generating a multi-agent pipeline diagram for an app called Architect.
-Return ONLY valid JSON — no markdown fences, no explanation, nothing else. Use this exact structure:
+  // Write instructions to a temp file so we never paste multi-line text into the PTY.
+  const tmpFile = join('/tmp', `architect-gen-${Date.now()}.md`)
+  const instructions = `You are generating a multi-agent pipeline diagram for an app called Architect.
+Respond with ONLY valid JSON — no markdown fences, no explanation, nothing else.
+Use this exact structure:
 {
   "nodes": [
     {
@@ -456,16 +459,65 @@ Use 3–7 nodes. Assign each node a distinct hex color. Keep tags under 6 chars.
 
 System to model: ${description}`
 
+  fs.writeFileSync(tmpFile, instructions)
+
   return new Promise((resolve, reject) => {
-    execFile(CLAUDE_BIN, ['-p', prompt], { timeout: 60_000 }, (err, stdout) => {
-      if (err) { reject(err.message); return }
-      try {
-        const match = stdout.match(/\{[\s\S]*\}/)
-        if (!match) { reject('No JSON found in Claude response'); return }
-        resolve(JSON.parse(match[0]))
-      } catch {
-        reject('Failed to parse JSON from Claude response')
+    // Use interactive PTY (subscription auth) — NOT claude -p which needs API credits.
+    const ptyProcess = pty.spawn(CLAUDE_BIN, ['--dangerously-skip-permissions'], {
+      name: 'xterm-256color',
+      cols: 220,
+      rows: 50,
+      cwd: process.env.HOME ?? '/',
+      env: { ...process.env } as Record<string, string>,
+    })
+
+    let buffer = ''
+    let prompted = false
+    let settled = false
+
+    const settle = (fn: () => void) => {
+      if (settled) return
+      settled = true
+      clearTimeout(timer)
+      try { ptyProcess.kill() } catch {}
+      try { fs.unlinkSync(tmpFile) } catch {}
+      fn()
+    }
+
+    const timer = setTimeout(() => {
+      settle(() => reject('Diagram generation timed out after 60s'))
+    }, 60_000)
+
+    ptyProcess.onData(data => {
+      buffer += data
+
+      // Step 1: wait for the initial > prompt, then send the instruction.
+      if (!prompted && /[>❯]\s*$/.test(buffer)) {
+        prompted = true
+        buffer = '' // reset so we only capture the response going forward
+        ptyProcess.write(`Read the file ${tmpFile} and follow every instruction in it exactly.\r`)
+        return
       }
+
+      // Step 2: wait for the next > prompt which signals the response is complete.
+      if (prompted && /[>❯]\s*$/.test(buffer)) {
+        settle(() => {
+          const match = buffer.match(/\{[\s\S]*\}/)
+          if (!match) { reject('No JSON found in response'); return }
+          try { resolve(JSON.parse(match[0])) }
+          catch { reject('Failed to parse JSON from response') }
+        })
+      }
+    })
+
+    ptyProcess.onExit(() => {
+      settle(() => {
+        const match = buffer.match(/\{[\s\S]*\}/)
+        if (match) {
+          try { resolve(JSON.parse(match[0])); return } catch {}
+        }
+        reject('Claude session exited before producing a response')
+      })
     })
   })
 }

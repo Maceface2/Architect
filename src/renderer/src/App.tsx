@@ -269,6 +269,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const onGenerate = useCallback(async (description: string) => {
     const result = await window.electron.generateDiagram(description)
+    if (!result || typeof result !== 'object') throw new Error('Invalid response from diagram generator')
     const rawNodes = (result.nodes ?? []) as Array<Record<string, unknown>>
     const rawEdges = (result.edges ?? []) as Array<{ id?: string; source: string; target: string }>
     const positions = computeLayoutPositions(rawNodes.map(n => String(n.id)), rawEdges)
@@ -357,7 +358,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         )}
 
         <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
-          <TerminalPanel sessions={terminalSessions} />
+          <TerminalPanel sessions={terminalSessions} isVisible={isTerminal} />
         </div>
 
         {!isCanvas && !isFiles && !isTerminal && (

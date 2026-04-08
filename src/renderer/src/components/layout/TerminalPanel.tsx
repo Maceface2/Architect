@@ -10,6 +10,7 @@ interface TerminalInfo {
 
 interface Props {
   sessions: TerminalInfo[]
+  isVisible: boolean
 }
 
 const TERM_THEME = {
@@ -119,7 +120,7 @@ function TermTab({
   )
 }
 
-export default function TerminalPanel({ sessions }: Props) {
+export default function TerminalPanel({ sessions, isVisible }: Props) {
   const [activeId, setActiveId] = useState<string | null>(null)
 
   // When sessions change, default to first (overseer)
@@ -128,6 +129,22 @@ export default function TerminalPanel({ sessions }: Props) {
       setActiveId(sessions[0].id)
     }
   }, [sessions])
+
+  // Re-fit the active terminal whenever this panel becomes visible.
+  // The outer container uses display:none while on another tab, so xterm's
+  // ResizeObserver sees 0×0. We must refit after the next paint.
+  useEffect(() => {
+    if (!isVisible || !activeId) return
+    const instance = termInstances.get(activeId)
+    if (!instance) return
+    const raf = requestAnimationFrame(() => {
+      try {
+        instance.fit.fit()
+        window.electron.terminal.resize(activeId, instance.term.cols, instance.term.rows)
+      } catch {}
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [isVisible, activeId])
 
   // Clean up terminal instances that are no longer in sessions
   useEffect(() => {
