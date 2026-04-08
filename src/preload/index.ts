@@ -2,7 +2,39 @@ import { contextBridge, ipcRenderer } from 'electron'
 
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
+
+  // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('read-dir', dirPath),
+  readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
+  readOutputs: (outputsDir: string) => ipcRenderer.invoke('read-outputs', outputsDir),
   getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
   openDirectory: () => ipcRenderer.invoke('open-directory'),
+
+  // Graph execution
+  runGraph: (nodes: unknown[], edges: unknown[], cwd: string) =>
+    ipcRenderer.invoke('run-graph', nodes, edges, cwd),
+
+  // Terminal I/O
+  terminal: {
+    input: (id: string, data: string) =>
+      ipcRenderer.send('terminal:input', id, data),
+
+    resize: (id: string, cols: number, rows: number) =>
+      ipcRenderer.send('terminal:resize', id, cols, rows),
+
+    killAll: () =>
+      ipcRenderer.send('terminal:kill-all'),
+
+    onData: (cb: (event: { id: string; data: string }) => void) => {
+      const handler = (_: unknown, event: { id: string; data: string }) => cb(event)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
+    },
+
+    onExit: (cb: (event: { id: string; exitCode: number }) => void) => {
+      const handler = (_: unknown, event: { id: string; exitCode: number }) => cb(event)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
+    },
+  },
 })

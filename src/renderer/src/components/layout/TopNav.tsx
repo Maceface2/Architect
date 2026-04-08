@@ -1,10 +1,15 @@
-import { Zap } from 'lucide-react'
+import { Zap, Loader2, FolderOpen } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
   onTabChange: (tab: string) => void
   onClear: () => void
   onLoadDemo: () => void
+  onDispatch: () => void
+  dispatching: boolean
+  nodeCount: number
+  projectDir: string
+  onChangeDir: () => void
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Preview']
@@ -22,14 +27,33 @@ function ArchitectLogo() {
   )
 }
 
-export default function TopNav({ activeTab, onTabChange, onClear, onLoadDemo }: TopNavProps) {
+export default function TopNav({
+  activeTab, onTabChange, onClear, onLoadDemo,
+  onDispatch, dispatching, nodeCount,
+  projectDir, onChangeDir,
+}: TopNavProps) {
+  const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
+
   return (
     <div className="flex items-center justify-between h-11 px-4 bg-panel border-b border-node-border flex-shrink-0">
-      <div className="flex items-center gap-6">
+      <div className="flex items-center gap-4">
+        {/* Logo */}
         <div className="flex items-center gap-2 select-none">
           <ArchitectLogo />
           <span className="text-sm font-semibold text-white tracking-tight">architect</span>
         </div>
+
+        {/* Project dir badge */}
+        <button
+          onClick={onChangeDir}
+          className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-slate-400 hover:text-slate-200 hover:bg-white/[0.05] border border-white/[0.06] transition-colors max-w-[200px]"
+          title={projectDir}
+        >
+          <FolderOpen size={11} className="text-amber-400 flex-shrink-0" />
+          <span className="truncate font-mono">{dirName}</span>
+        </button>
+
+        {/* Tabs */}
         <div className="flex items-center gap-0.5">
           {TABS.map(tab => (
             <button
@@ -48,22 +72,20 @@ export default function TopNav({ activeTab, onTabChange, onClear, onLoadDemo }: 
       </div>
 
       <div className="flex items-center gap-2">
-        <span className="text-xs text-slate-500 mr-1">v0.1.0</span>
-        <button
-          onClick={onClear}
-          className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
-        >
+        <span className="text-xs text-slate-600 mr-1">v0.1.0</span>
+        <button onClick={onClear} className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors">
           Clear
         </button>
-        <button
-          onClick={onLoadDemo}
-          className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
-        >
+        <button onClick={onLoadDemo} className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors">
           Load demo
         </button>
-        <button className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors">
-          <Zap size={12} />
-          Dispatch agents
+        <button
+          onClick={onDispatch}
+          disabled={dispatching || nodeCount === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        >
+          {dispatching ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+          {dispatching ? 'Launching…' : `Dispatch agents${nodeCount > 0 ? ` (${nodeCount})` : ''}`}
         </button>
       </div>
     </div>
