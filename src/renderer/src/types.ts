@@ -1,6 +1,6 @@
 import type { Node } from '@xyflow/react'
 
-export type ComponentCategory = 'infrastructure' | 'services' | 'storage'
+export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
 export type RunMode = 'sequential' | 'parallel' | 'loop'
 export type OnFailure = 'stop' | 'retry' | 'skip'

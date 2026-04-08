@@ -155,7 +155,7 @@ export default function TerminalPanel({ sessions }: Props) {
       {/* Tab strip */}
       <div className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto">
         {sessions.map(s => {
-          const isOverseer = s.id === 'overseer'
+          const isArchitect = s.id === 'architect-agent'
           const isActive = s.id === activeId
           return (
             <button
@@ -169,10 +169,10 @@ export default function TerminalPanel({ sessions }: Props) {
             >
               <span
                 className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  isOverseer ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                  isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
                 }`}
               />
-              {isOverseer ? '⬡ Overseer' : s.label}
+              {isArchitect ? '⬡ Architect' : s.label}
             </button>
           )
         })}

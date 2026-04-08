@@ -71,8 +71,8 @@ ipcMain.handle('read-outputs', (_event, outputsDir: string) => {
       })
       .sort((a, b) => {
         // Overseer always first, rest by name
-        if (a.name === 'Overseer') return -1
-        if (b.name === 'Overseer') return 1
+        if (a.name === 'Architect') return -1
+        if (b.name === 'Architect') return 1
         return a.name.localeCompare(b.name)
       })
     return files
@@ -108,6 +108,31 @@ ipcMain.handle('open-directory', async () => {
     properties: ['openDirectory', 'createDirectory']
   })
   return result.filePaths[0] ?? null
+})
+
+ipcMain.handle('save-canvas', (_event, projectDir: string, data: string) => {
+  fs.writeFileSync(path.join(projectDir, 'architect-canvas.json'), data, 'utf-8')
+})
+
+ipcMain.handle('load-canvas', (_event, projectDir: string) => {
+  try { return fs.readFileSync(path.join(projectDir, 'architect-canvas.json'), 'utf-8') }
+  catch { return null }
+})
+
+ipcMain.handle('scan-components', (_event, dirPath: string) => {
+  const results: unknown[] = []
+  const walk = (d: string) => {
+    let entries: import('fs').Dirent[]
+    try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
+    for (const entry of entries) {
+      if (entry.isDirectory()) walk(path.join(d, entry.name))
+      else if (entry.name === 'architect-component.json') {
+        try { results.push(...JSON.parse(fs.readFileSync(path.join(d, entry.name), 'utf-8'))) } catch {}
+      }
+    }
+  }
+  walk(dirPath)
+  return results
 })
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────

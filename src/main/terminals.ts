@@ -2,6 +2,36 @@ import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
+import { execFileSync } from 'child_process'
+
+// Augment PATH with common locations so node-pty can find binaries
+const EXTRA_PATHS = [
+  '/opt/homebrew/bin',
+  '/opt/homebrew/sbin',
+  '/usr/local/bin',
+  '/usr/bin',
+  '/bin',
+]
+process.env.PATH = [...EXTRA_PATHS, ...(process.env.PATH || '').split(':')].join(':')
+
+// Resolve claude binary — try shell first, fall back to known locations
+function resolveClaude(): string {
+  const candidates = [
+    '/opt/homebrew/bin/claude',
+    '/usr/local/bin/claude',
+  ]
+  for (const p of candidates) {
+    if (fs.existsSync(p)) return p
+  }
+  try {
+    const shell = process.env.SHELL || '/bin/zsh'
+    return execFileSync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8' }).trim()
+  } catch {
+    return 'claude'
+  }
+}
+
+const CLAUDE_BIN = resolveClaude()
 
 export interface TerminalInfo {
   id: string
@@ -47,7 +77,7 @@ function spawnClaude(
   env: Record<string, string>,
   cwd: string,
 ): TerminalInfo {
-  const ptyProcess = pty.spawn('claude', ['--dangerously-skip-permissions'], {
+  const ptyProcess = pty.spawn(CLAUDE_BIN, ['--dangerously-skip-permissions'], {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -144,7 +174,13 @@ function topoSort(nodes: GraphNode[], edges: GraphEdge[]): GraphNode[] {
 
 // ── Prompt builders ────────────────────────────────────────────────────────
 
-function buildOverseerPrompt(nodes: GraphNode[], edges: GraphEdge[]): string {
+function buildMermaidDiagram(nodes: GraphNode[], edges: GraphEdge[]): string {
+  const nodeLines = nodes.map(n => `  ${n.id}["${n.data.label} [${n.data.tag}]"]`)
+  const edgeLines = edges.map(e => `  ${e.source} --> ${e.target}`)
+  return ['```mermaid', 'graph TD', ...nodeLines, ...edgeLines, '```'].join('\n')
+}
+
+function buildArchitectPrompt(nodes: GraphNode[], edges: GraphEdge[]): string {
   const agentList = nodes.map(n => {
     const up   = edges.filter(e => e.target === n.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
     const down = edges.filter(e => e.source === n.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean)
@@ -163,9 +199,12 @@ function buildOverseerPrompt(nodes: GraphNode[], edges: GraphEdge[]): string {
     ? edges.map(e => `  ${nodes.find(n => n.id === e.source)?.data.label} → ${nodes.find(n => n.id === e.target)?.data.label}`).join('\n')
     : '  (agents run independently)'
 
-  return `You are the Overseer agent coordinating a multi-agent system. The other agents are already running as interactive Claude Code sessions. Each agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
+  return `You are the Architect agent coordinating a multi-agent system. The other agents are already running as interactive Claude Code sessions. Each agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
 
 DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem.
+
+## Architecture Diagram
+${buildMermaidDiagram(nodes, edges)}
 
 ## Agents
 ${agentList}
@@ -183,7 +222,7 @@ ${flowLines}
    - What to read from upstream agents' output files
    - Clear acceptance criteria
 
-3. After writing all task files, write your coordination log to ARCHITECT/outputs/Overseer.md
+3. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
 4. Monitor ARCHITECT/outputs/ — when agents complete, coordinate handoffs by updating downstream task files with actual upstream output details
 
 Start immediately. Write the task files now.`
@@ -238,7 +277,8 @@ function setupWorkspace(projectDir: string, nodes: GraphNode[], edges: GraphEdge
   }, null, 2))
 
   // Prompt files — one per agent so we never paste multi-line text into the terminal
-  fs.writeFileSync(join(base, 'prompts', 'overseer.md'), buildOverseerPrompt(nodes, edges))
+  fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(nodes, edges))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges))
   for (const node of nodes) {
     fs.writeFileSync(join(base, 'prompts', `${sanitize(node.data.label)}.md`), buildNodePrompt(node, edges, nodes))
   }
@@ -264,7 +304,7 @@ export async function runGraph(
   const created: TerminalInfo[] = []
 
   // Spawn all sessions (they all start loading claude simultaneously)
-  created.push(spawnClaude(win, 'overseer', 'Overseer', {}, projectDir))
+  created.push(spawnClaude(win, 'architect-agent', 'Architect', {}, projectDir))
   for (const node of sorted) {
     const env: Record<string, string> = {}
     for (const { key, value } of node.data.envVars ?? []) { if (key) env[key] = value }
@@ -276,9 +316,9 @@ export async function runGraph(
     // Wait for all sessions to show the > prompt
     await Promise.all(created.map(c => waitForReady(c.id, 30_000)))
 
-    // Overseer: auto-submit immediately
-    writeToTerminal('overseer',
-      'Read the file ARCHITECT/prompts/overseer.md and follow every instruction in it exactly.\r'
+    // Architect: auto-submit immediately
+    writeToTerminal('architect-agent',
+      'Read the file ARCHITECT/prompts/architect.md and follow every instruction in it exactly.\r'
     )
 
     // Node agents: sit idle until their task file is written by the overseer.

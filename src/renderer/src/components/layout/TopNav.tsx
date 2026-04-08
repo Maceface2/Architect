@@ -1,4 +1,4 @@
-import { Zap, Loader2, FolderOpen } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -10,6 +10,8 @@ interface TopNavProps {
   nodeCount: number
   projectDir: string
   onChangeDir: () => void
+  onSave: () => void
+  isDirty: boolean
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Preview']
@@ -30,7 +32,7 @@ function ArchitectLogo() {
 export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,
   onDispatch, dispatching, nodeCount,
-  projectDir, onChangeDir,
+  projectDir, onChangeDir, onSave, isDirty,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -73,6 +75,17 @@ export default function TopNav({
 
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate-600 mr-1">v0.1.0</span>
+        <button
+          onClick={onSave}
+          className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
+          title="Save canvas"
+        >
+          <Save size={12} />
+          Save
+          {isDirty && (
+            <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
+          )}
+        </button>
         <button onClick={onClear} className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors">
           Clear
         </button>

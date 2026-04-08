@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld('electron', {
   getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
   openDirectory: () => ipcRenderer.invoke('open-directory'),
 
+  // Canvas persistence
+  saveCanvas: (projectDir: string, data: string) => ipcRenderer.invoke('save-canvas', projectDir, data),
+  loadCanvas: (projectDir: string) => ipcRenderer.invoke('load-canvas', projectDir),
+
+  // Custom component discovery
+  scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
+
   // Graph execution
   runGraph: (nodes: unknown[], edges: unknown[], cwd: string) =>
     ipcRenderer.invoke('run-graph', nodes, edges, cwd),

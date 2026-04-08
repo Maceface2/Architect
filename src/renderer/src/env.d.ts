@@ -22,6 +22,9 @@ interface ElectronAPI {
   readOutputs: (outputsDir: string) => Promise<OutputFile[]>
   getHomeDir: () => Promise<string>
   openDirectory: () => Promise<string | null>
+  saveCanvas: (projectDir: string, data: string) => Promise<void>
+  loadCanvas: (projectDir: string) => Promise<string | null>
+  scanComponents: (dirPath: string) => Promise<unknown[]>
   runGraph: (nodes: unknown[], edges: unknown[], cwd: string) => Promise<TerminalInfo[]>
   terminal: {
     input: (id: string, data: string) => void

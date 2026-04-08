@@ -87,7 +87,7 @@ export default function AgentLog({ projectDir }: Props) {
                 : 'border-transparent text-slate-600 hover:text-slate-400'
             }`}
           >
-            {f.name === 'Overseer' ? '⬡ Overseer' : f.name}
+            {f.name === 'Architect' ? '⬡ Architect' : f.name}
           </button>
         ))}
       </div>

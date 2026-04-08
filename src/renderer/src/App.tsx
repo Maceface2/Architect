@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react'
+import { useState, useCallback, useEffect } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -109,12 +109,30 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [activeTab, setActiveTab] = useState('Canvas')
   const [terminalSessions, setTerminalSessions] = useState<TerminalInfo[]>([])
   const [dispatching, setDispatching] = useState(false)
+  const [isDirty, setIsDirty] = useState(false)
   const { screenToFlowPosition } = useReactFlow()
 
+  // Auto-load canvas on mount
+  useEffect(() => {
+    window.electron.loadCanvas(projectDir).then((raw: string | null) => {
+      if (!raw) return
+      try {
+        const { nodes: savedNodes, edges: savedEdges } = JSON.parse(raw)
+        setNodes(savedNodes ?? [])
+        setEdges(savedEdges ?? [])
+      } catch {}
+    })
+  }, [projectDir])
+
   const onConnect = useCallback(
-    (connection: Connection) => setEdges(eds => addEdge(connection, eds)),
+    (connection: Connection) => { setEdges(eds => addEdge(connection, eds)); setIsDirty(true) },
     [setEdges]
   )
+
+  const onSave = useCallback(async () => {
+    await window.electron.saveCanvas(projectDir, JSON.stringify({ nodes, edges, savedAt: new Date().toISOString() }))
+    setIsDirty(false)
+  }, [projectDir, nodes, edges])
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -139,8 +157,18 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     [screenToFlowPosition, setNodes]
   )
 
-  const onClear    = useCallback(() => { setNodes([]); setEdges([]) }, [setNodes, setEdges])
-  const onLoadDemo = useCallback(() => { setNodes(DEMO_NODES); setEdges(DEMO_EDGES) }, [setNodes, setEdges])
+  const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
+    onNodesChange(changes)
+    setIsDirty(true)
+  }, [onNodesChange])
+
+  const handleEdgesChange = useCallback((changes: Parameters<typeof onEdgesChange>[0]) => {
+    onEdgesChange(changes)
+    setIsDirty(true)
+  }, [onEdgesChange])
+
+  const onClear    = useCallback(() => { setNodes([]); setEdges([]); setIsDirty(true) }, [setNodes, setEdges])
+  const onLoadDemo = useCallback(() => { setNodes(DEMO_NODES); setEdges(DEMO_EDGES); setIsDirty(true) }, [setNodes, setEdges])
 
   const onDispatch = useCallback(async () => {
     if (nodes.length === 0) return
@@ -170,6 +198,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         nodeCount={nodes.length}
         projectDir={projectDir}
         onChangeDir={onChangeDir}
+        onSave={onSave}
+        isDirty={isDirty}
       />
       <div className="flex flex-1 overflow-hidden">
         <ResizablePanel side="left" defaultWidth={160}>
@@ -179,7 +209,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
           <ReactFlow
             nodes={nodes} edges={edges}
-            onNodesChange={onNodesChange} onEdgesChange={onEdgesChange}
+            onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
             onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
             nodeTypes={nodeTypes}
             defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}

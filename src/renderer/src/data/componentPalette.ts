@@ -27,4 +27,5 @@ export const categoryLabels: Record<ComponentCategory, string> = {
   infrastructure: 'Infrastructure',
   services: 'Services',
   storage: 'Storage',
+  custom: 'Custom',
 }
