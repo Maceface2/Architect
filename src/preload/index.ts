@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { RunGraphOptions } from '../shared/graphDispatch'
 
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
@@ -18,8 +19,8 @@ contextBridge.exposeInMainWorld('electron', {
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
   // Graph execution
-  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, settings: unknown, dispatchContext?: unknown) =>
-    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatchContext),
+  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, settings: unknown, options?: RunGraphOptions) =>
+    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, options),
 
   // Architecture assistant
   assistant: {

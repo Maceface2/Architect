@@ -21,11 +21,14 @@ import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
 import { nodeTypes } from './components/nodes/nodeTypes'
+import { DispatchActionsProvider } from './context/DispatchActionsContext'
+import { ProjectDirectoryProvider } from './context/ProjectDirectoryContext'
 import type { ArchitectNodeType, ProjectSettings } from './types'
 import type { PaletteItemConfig } from './data/componentPalette'
 import { createDefaultNodeConfig, createDefaultProjectSettings, migrateCanvasData } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import type { LaunchScopeMode, RunGraphOptions } from '../../shared/graphDispatch'
 
 interface TerminalInfo {
   id: string
@@ -170,6 +173,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
+  const [launchRevision, setLaunchRevision] = useState(0)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { screenToFlowPosition } = useReactFlow()
 
@@ -277,26 +281,59 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const changedNodeLabels = dispatchedGraph
     ? nodes.filter(n => nodeHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
     : []
+  const selectedNodeIds = nodes.filter(node => node.selected).map(node => node.id)
 
-  const onDispatch = useCallback(async () => {
+  const dispatchGraph = useCallback(async (mode: LaunchScopeMode, nodeIds: string[] = []) => {
     if (nodes.length === 0) return
+    const scopedNodeIds = [...new Set(nodeIds)].filter(nodeId => nodes.some(node => node.id === nodeId))
+    if (mode !== 'all' && scopedNodeIds.length === 0) return
+
+    const isFullLaunch = mode === 'all'
+    const options: RunGraphOptions = {}
+    if (!isFullLaunch) {
+      options.launchScope = { mode, nodeIds: scopedNodeIds }
+    }
+
     setDispatching(true)
-    const isRedispatch = dispatchedGraph !== null
-    const dispatchContext = isRedispatch
-      ? { isRedispatch: true, changedNodeLabels }
-      : undefined
+    if (isFullLaunch && dispatchedGraph !== null) {
+      options.dispatchContext = { isRedispatch: true, changedNodeLabels }
+    }
+
     try {
-      const sessions = await window.electron.runGraph(nodes, edges, projectDir, projectSettings, dispatchContext)
+      const sessions = await window.electron.runGraph(
+        nodes,
+        edges,
+        projectDir,
+        projectSettings,
+        Object.keys(options).length > 0 ? options : undefined,
+      )
       setTerminalSessions(sessions)
       setActiveTab('Terminal')
-      // Snapshot the dispatched graph for incremental re-dispatch detection
-      const snapshot: Record<string, string> = {}
-      for (const n of nodes) snapshot[n.id] = nodeHash(n)
-      setDispatchedGraph(snapshot)
+      setLaunchRevision(current => current + 1)
+      if (isFullLaunch) {
+        // Snapshot the dispatched graph for incremental re-dispatch detection
+        const snapshot: Record<string, string> = {}
+        for (const n of nodes) snapshot[n.id] = nodeHash(n)
+        setDispatchedGraph(snapshot)
+      } else {
+        setDispatchedGraph(null)
+      }
     } finally {
       setDispatching(false)
     }
   }, [nodes, edges, projectDir, projectSettings, dispatchedGraph, changedNodeLabels])
+
+  const onDispatch = useCallback(() => {
+    void dispatchGraph('all')
+  }, [dispatchGraph])
+
+  const onDispatchSelected = useCallback(() => {
+    void dispatchGraph('selected', selectedNodeIds)
+  }, [dispatchGraph, selectedNodeIds])
+
+  const launchNodes = useCallback(async (nodeIds: string[], mode: Exclude<LaunchScopeMode, 'all'>) => {
+    await dispatchGraph(mode, nodeIds)
+  }, [dispatchGraph])
 
   const buildAssistantContext = useCallback((currentNodes: ArchitectNodeType[], currentEdges: Edge[]) => {
     const canvasJson = JSON.stringify({
@@ -402,81 +439,87 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
   const isTerminal = activeTab === 'Terminal'
 
   return (
-    <ProjectSettingsProvider value={projectSettings}>
-      <div className="flex flex-col h-screen bg-canvas text-white overflow-hidden">
-        <TopNav
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
-          onClear={onClear}
-          onLoadDemo={onLoadDemo}
-          onDispatch={onDispatch}
-          dispatching={dispatching}
-          nodeCount={nodes.length}
-          projectDir={projectDir}
-          onChangeDir={onChangeDir}
-          onSave={onSave}
-          isDirty={isDirty}
-          onAssistantToggle={handleAssistantToggle}
-          assistantOpen={assistantOpen}
-          isRedispatch={dispatchedGraph !== null}
-          changedCount={changedNodeLabels.length}
-          projectSettings={projectSettings}
-          onDefaultRuntimeChange={(defaultRuntime) => {
-            setProjectSettings(current => ({ ...current, defaultRuntime }))
-            setIsDirty(true)
-            setDispatchedGraph(null)
-          }}
-        />
-        <div className="flex flex-1 overflow-hidden">
-          <ResizablePanel side="left" defaultWidth={160}>
-            <Sidebar />
-          </ResizablePanel>
+    <ProjectDirectoryProvider value={projectDir}>
+      <ProjectSettingsProvider value={projectSettings}>
+        <DispatchActionsProvider value={{ dispatching, launchRevision, launchNodes }}>
+          <div className="flex flex-col h-screen bg-canvas text-white overflow-hidden">
+            <TopNav
+              activeTab={activeTab}
+              onTabChange={setActiveTab}
+              onClear={onClear}
+              onLoadDemo={onLoadDemo}
+              onDispatch={onDispatch}
+              onDispatchSelected={onDispatchSelected}
+              dispatching={dispatching}
+              nodeCount={nodes.length}
+              selectedCount={selectedNodeIds.length}
+              projectDir={projectDir}
+              onChangeDir={onChangeDir}
+              onSave={onSave}
+              isDirty={isDirty}
+              onAssistantToggle={handleAssistantToggle}
+              assistantOpen={assistantOpen}
+              isRedispatch={dispatchedGraph !== null}
+              changedCount={changedNodeLabels.length}
+              projectSettings={projectSettings}
+              onDefaultRuntimeChange={(defaultRuntime) => {
+                setProjectSettings(current => ({ ...current, defaultRuntime }))
+                setIsDirty(true)
+                setDispatchedGraph(null)
+              }}
+            />
+            <div className="flex flex-1 overflow-hidden">
+              <ResizablePanel side="left" defaultWidth={160}>
+                <Sidebar />
+              </ResizablePanel>
 
-          <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
-            <ReactFlow
-              nodes={nodes} edges={edges}
-              onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
-              onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
-              nodeTypes={nodeTypes}
-              defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
-              proOptions={{ hideAttribution: true }}
-              fitView
-            >
-              <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
-              <Controls />
-            </ReactFlow>
-          </div>
+              <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
+                <ReactFlow
+                  nodes={nodes} edges={edges}
+                  onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
+                  onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
+                  nodeTypes={nodeTypes}
+                  defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
+                  proOptions={{ hideAttribution: true }}
+                  fitView
+                >
+                  <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
+                  <Controls />
+                </ReactFlow>
+              </div>
 
-          {isFiles && (
-            <div className="flex-1 overflow-hidden">
-              <FilesPanel rootDir={projectDir} />
+              {isFiles && (
+                <div className="flex-1 overflow-hidden">
+                  <FilesPanel rootDir={projectDir} />
+                </div>
+              )}
+
+              <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
+                <TerminalPanel sessions={terminalSessions} isVisible={isTerminal} />
+              </div>
+
+              {!isCanvas && !isFiles && !isTerminal && (
+                <div className="flex-1 flex items-center justify-center">
+                  <span className="text-slate-600 text-sm">{activeTab} — coming soon</span>
+                </div>
+              )}
+
+              <ResizablePanel key={assistantOpen ? 'assistant' : 'agentlog'} side="right" defaultWidth={assistantOpen ? 420 : 256}>
+                {assistantOpen ? (
+                  <AssistantPanel
+                    onClose={handleAssistantClose}
+                    onCanvasUpdate={applyCanvasUpdate}
+                    runtime={assistantRuntime ?? projectSettings.defaultRuntime}
+                  />
+                ) : (
+                  <AgentLog projectDir={projectDir} />
+                )}
+              </ResizablePanel>
             </div>
-          )}
-
-          <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
-            <TerminalPanel sessions={terminalSessions} isVisible={isTerminal} />
           </div>
-
-          {!isCanvas && !isFiles && !isTerminal && (
-            <div className="flex-1 flex items-center justify-center">
-              <span className="text-slate-600 text-sm">{activeTab} — coming soon</span>
-            </div>
-          )}
-
-          <ResizablePanel key={assistantOpen ? 'assistant' : 'agentlog'} side="right" defaultWidth={assistantOpen ? 420 : 256}>
-            {assistantOpen ? (
-              <AssistantPanel
-                onClose={handleAssistantClose}
-                onCanvasUpdate={applyCanvasUpdate}
-                runtime={assistantRuntime ?? projectSettings.defaultRuntime}
-              />
-            ) : (
-              <AgentLog projectDir={projectDir} />
-            )}
-          </ResizablePanel>
-        </div>
-      </div>
-    </ProjectSettingsProvider>
+        </DispatchActionsProvider>
+      </ProjectSettingsProvider>
+    </ProjectDirectoryProvider>
   )
 }
 

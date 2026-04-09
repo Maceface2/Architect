@@ -58,6 +58,7 @@ export interface ArchitectNodeData {
   tag: string
   status: NodeStatus
   prompt: string
+  additionalChanges: string
   agentRuntimeMode: AgentRuntimeMode
   agentRuntime: AgentRuntime
   providerModels: RuntimeModelMap

@@ -4,6 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant } from './terminals'
 import type { AgentRuntime } from '../shared/agentRuntimes'
+import type { RunGraphOptions } from '../shared/graphDispatch'
 
 app.name = 'Architect'
 app.setName('Architect')
@@ -139,9 +140,9 @@ ipcMain.handle('scan-components', (_event, dirPath: string) => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, dispatchContext) => {
+ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, options: RunGraphOptions | undefined) => {
   if (!mainWindow) return []
-  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatchContext)
+  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, options)
 })
 
 ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime) => {

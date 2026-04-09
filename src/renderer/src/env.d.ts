@@ -1,4 +1,5 @@
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import type { RunGraphOptions } from '../../shared/graphDispatch'
 import type { ProjectSettings } from './types'
 
 interface FileEntry {
@@ -34,7 +35,7 @@ interface ElectronAPI {
     edges: unknown[],
     cwd: string,
     settings: ProjectSettings,
-    dispatchContext?: unknown
+    options?: RunGraphOptions
   ) => Promise<TerminalInfo[]>
   assistant: {
     start: (projectDir: string, contextMd: string, runtime: AgentRuntime) => Promise<TerminalInfo | null>

@@ -11,6 +11,7 @@ import {
   isAgentRuntimeMode,
   type AgentRuntime,
 } from '../shared/agentRuntimes'
+import type { DispatchContext, LaunchScope, RunGraphOptions } from '../shared/graphDispatch'
 
 // Augment PATH with common locations so node-pty can find binaries
 const EXTRA_PATHS = [
@@ -24,6 +25,13 @@ process.env.PATH = [...EXTRA_PATHS, ...(process.env.PATH || '').split(':')].join
 
 interface ProjectSettings {
   defaultRuntime: AgentRuntime
+}
+
+interface LaunchMetadata {
+  mode: LaunchScope['mode']
+  activeNodeIds: Set<string>
+  activeNodeLabels: string[]
+  omittedConnectedNodeLabels: string[]
 }
 
 function normalizeProjectSettings(raw: unknown): ProjectSettings {
@@ -68,6 +76,7 @@ export interface GraphNode {
     tag: string
     description: string
     prompt: string
+    additionalChanges?: string
     agentRuntimeMode?: 'inherit' | 'override'
     agentRuntime?: AgentRuntime
     providerModels?: Partial<Record<AgentRuntime, string>>
@@ -251,6 +260,30 @@ function sanitize(label: string) {
   return label.replace(/[^a-zA-Z0-9-_]/g, '-')
 }
 
+function getNodeFileStem(node: Pick<GraphNode, 'id'> | string) {
+  return sanitize(typeof node === 'string' ? node : node.id)
+}
+
+function getTaskFilePathForNode(node: Pick<GraphNode, 'id'> | string) {
+  return `ARCHITECT/tasks/${getNodeFileStem(node)}.md`
+}
+
+function getLegacyTaskFilePathForLabel(label: string) {
+  return `ARCHITECT/tasks/${sanitize(label)}.md`
+}
+
+function getOutputFilePathForNode(node: Pick<GraphNode, 'id'> | string) {
+  return `ARCHITECT/outputs/${getNodeFileStem(node)}.md`
+}
+
+function getPromptFilePathForNode(node: Pick<GraphNode, 'id'> | string) {
+  return `ARCHITECT/prompts/${getNodeFileStem(node)}.md`
+}
+
+function hasUniqueNodeLabel(label: string, nodes: GraphNode[]) {
+  return nodes.filter(node => node.data.label === label).length === 1
+}
+
 function readSkillContent(skillPath: string): string {
   try {
     if (skillPath.startsWith('builtin:')) {
@@ -293,6 +326,99 @@ function topoSort(nodes: GraphNode[], edges: GraphEdge[]): GraphNode[] {
   return result
 }
 
+function resolveLaunchScope(nodes: GraphNode[], edges: GraphEdge[], launchScope?: LaunchScope) {
+  if (!launchScope || launchScope.mode === 'all') {
+    return {
+      nodes,
+      edges,
+      metadata: {
+        mode: 'all' as const,
+        activeNodeIds: new Set(nodes.map(node => node.id)),
+        activeNodeLabels: nodes.map(node => node.data.label),
+        omittedConnectedNodeLabels: [],
+      },
+    }
+  }
+
+  const selectedIds = new Set(
+    launchScope.nodeIds.filter(nodeId => nodes.some(node => node.id === nodeId))
+  )
+
+  if (selectedIds.size === 0) {
+    return {
+      nodes,
+      edges,
+      metadata: {
+        mode: 'all' as const,
+        activeNodeIds: new Set(nodes.map(node => node.id)),
+        activeNodeLabels: nodes.map(node => node.data.label),
+        omittedConnectedNodeLabels: [],
+      },
+    }
+  }
+
+  const scopedNodes = nodes.filter(node => selectedIds.has(node.id))
+  const scopedEdges = edges.filter(edge => selectedIds.has(edge.source) && selectedIds.has(edge.target))
+  const connectedExternalLabels = new Set<string>()
+
+  for (const edge of edges) {
+    const sourceInScope = selectedIds.has(edge.source)
+    const targetInScope = selectedIds.has(edge.target)
+    if (sourceInScope === targetInScope) continue
+
+    const externalNodeId = sourceInScope ? edge.target : edge.source
+    const externalNode = nodes.find(node => node.id === externalNodeId)
+    if (externalNode) connectedExternalLabels.add(externalNode.data.label)
+  }
+
+  return {
+    nodes: scopedNodes,
+    edges: scopedEdges,
+    metadata: {
+      mode: launchScope.mode,
+      activeNodeIds: selectedIds,
+      activeNodeLabels: scopedNodes.map(node => node.data.label),
+      omittedConnectedNodeLabels: [...connectedExternalLabels].sort((a, b) => a.localeCompare(b)),
+    },
+  }
+}
+
+function getRelationshipLabels(
+  nodeId: string,
+  nodes: GraphNode[],
+  edges: GraphEdge[],
+  activeNodeIds: Set<string>,
+) {
+  const labelById = new Map(nodes.map(node => [node.id, node.data.label]))
+  const upstreamInScope: string[] = []
+  const downstreamInScope: string[] = []
+  const upstreamExternal: string[] = []
+  const downstreamExternal: string[] = []
+
+  for (const edge of edges) {
+    if (edge.target === nodeId) {
+      const label = labelById.get(edge.source)
+      if (!label) continue
+      if (activeNodeIds.has(edge.source)) upstreamInScope.push(label)
+      else upstreamExternal.push(label)
+    }
+
+    if (edge.source === nodeId) {
+      const label = labelById.get(edge.target)
+      if (!label) continue
+      if (activeNodeIds.has(edge.target)) downstreamInScope.push(label)
+      else downstreamExternal.push(label)
+    }
+  }
+
+  return {
+    upstreamInScope,
+    downstreamInScope,
+    upstreamExternal,
+    downstreamExternal,
+  }
+}
+
 function getNodeRuntime(node: GraphNode, settings: ProjectSettings): AgentRuntime {
   return isAgentRuntimeMode(node.data.agentRuntimeMode) && node.data.agentRuntimeMode === 'override' && isAgentRuntime(node.data.agentRuntime)
     ? node.data.agentRuntime
@@ -309,15 +435,53 @@ function buildMermaidDiagram(nodes: GraphNode[], edges: GraphEdge[]): string {
   return ['```mermaid', 'graph TD', ...nodeLines, ...edgeLines, '```'].join('\n')
 }
 
+function ensureArchitectWorkspace(projectDir: string) {
+  const base = join(projectDir, 'ARCHITECT')
+  for (const dir of ['tasks', 'outputs', 'prompts'].map(name => join(base, name))) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+}
+
+function buildDirectTaskLaunchPrompt(node: GraphNode, taskMarkdown: string): string {
+  const statusLog = getOutputFilePathForNode(node)
+  const additionalChanges = node.data.additionalChanges?.trim()
+
+  return `You are resuming work for the ${node.data.label} component.
+
+## Existing Task Markdown
+\`\`\`md
+${taskMarkdown.trim()}
+\`\`\`
+
+${additionalChanges
+    ? `## Additional Requested Changes
+${additionalChanges}
+
+Apply these changes on top of the existing task markdown above.
+`
+    : ''}
+Execute the task markdown immediately.
+
+Write progress notes and your final summary to ${statusLog}.
+Create real code and project files in the project root, not inside ARCHITECT/.
+
+When you have finished ALL work, run this exact shell command as your last action:
+\`\`\`
+echo ARCHITECT_COMPLETE
+\`\`\``
+}
+
 function buildArchitectPrompt(
-  nodes: GraphNode[],
-  edges: GraphEdge[],
+  scopedNodes: GraphNode[],
+  scopedEdges: GraphEdge[],
+  allNodes: GraphNode[],
+  allEdges: GraphEdge[],
   settings: ProjectSettings,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+  launchMetadata: LaunchMetadata,
+  dispatchContext?: DispatchContext,
 ): string {
-  const agentList = nodes.map(node => {
-    const upstream = edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean)
-    const downstream = edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean)
+  const agentList = scopedNodes.map(node => {
+    const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
     const runtime = getNodeRuntime(node, settings)
     const model = getNodeModel(node, runtime)
 
@@ -327,23 +491,37 @@ function buildArchitectPrompt(
       `Runtime: ${getAgentRuntime(runtime).label}`,
       `Model: ${model}`,
       node.data.prompt ? `User goal: ${node.data.prompt}` : '',
-      upstream.length ? `Upstream: ${upstream.join(', ')}` : '',
-      downstream.length ? `Downstream: ${downstream.join(', ')}` : '',
-      `Task file: ARCHITECT/tasks/${sanitize(node.data.label)}.md`,
-      `Status log: ARCHITECT/outputs/${sanitize(node.data.label)}.md (progress notes only — actual code goes in the project root)`,
+      relationships.upstreamInScope.length ? `Upstream in this launch: ${relationships.upstreamInScope.join(', ')}` : '',
+      relationships.downstreamInScope.length ? `Downstream in this launch: ${relationships.downstreamInScope.join(', ')}` : '',
+      relationships.upstreamExternal.length ? `Upstream outside this launch: ${relationships.upstreamExternal.join(', ')}` : '',
+      relationships.downstreamExternal.length ? `Downstream outside this launch: ${relationships.downstreamExternal.join(', ')}` : '',
+      `Task file: ${getTaskFilePathForNode(node)}`,
+      `Status log: ${getOutputFilePathForNode(node)} (progress notes only — actual code goes in the project root)`,
     ].filter(Boolean).join('\n')
   }).join('\n\n')
 
-  const flowLines = edges.length
-    ? edges.map(edge => `  ${nodes.find(node => node.id === edge.source)?.data.label} → ${nodes.find(node => node.id === edge.target)?.data.label}`).join('\n')
+  const flowLines = scopedEdges.length
+    ? scopedEdges.map(edge => `  ${scopedNodes.find(node => node.id === edge.source)?.data.label} → ${scopedNodes.find(node => node.id === edge.target)?.data.label}`).join('\n')
     : '  (agents run independently)'
+
+  const scopeSummary = launchMetadata.mode === 'all'
+    ? 'This launch includes every node on the current canvas.'
+    : `This launch only includes the following nodes: ${launchMetadata.activeNodeLabels.join(', ')}. Do not create or coordinate tasks for any other canvas nodes.`
+
+  const omittedSummary = launchMetadata.omittedConnectedNodeLabels.length > 0
+    ? `Connected nodes that are NOT launching right now: ${launchMetadata.omittedConnectedNodeLabels.join(', ')}. Treat them as external context only.`
+    : 'No connected out-of-scope nodes were detected for this launch.'
 
   return `You are the Architect agent coordinating a multi-agent system. The other agents are already running as interactive coding CLI sessions. Each agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
 
 DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem.
 
+## Launch Scope
+${scopeSummary}
+${omittedSummary}
+
 ## Architecture Diagram
-${buildMermaidDiagram(nodes, edges)}
+${buildMermaidDiagram(scopedNodes, scopedEdges)}
 
 ## Agents
 ${agentList}
@@ -354,7 +532,7 @@ ${flowLines}
 ## Your job
 
 1. Read ARCHITECT/manifest.json for full details
-2. Write a task file for EVERY agent listed above. Write them in dependency order (upstream first).
+2. Write a task file for EVERY agent listed above and only for those agents. Write them in dependency order (upstream first).
    Each task file must contain:
    - Specific files to create and their exact content/structure
    - API contracts, ports, endpoints, schemas
@@ -373,12 +551,17 @@ Start immediately. Write the task files now.${dispatchContext?.isRedispatch
     : ''}`
 }
 
-function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]): string {
-  const safe = sanitize(node.data.label)
-  const statusLog = `ARCHITECT/outputs/${safe}.md`
+function buildNodePrompt(
+  node: GraphNode,
+  scopedNodes: GraphNode[],
+  allNodes: GraphNode[],
+  allEdges: GraphEdge[],
+  launchMetadata: LaunchMetadata,
+): string {
+  const safe = getNodeFileStem(node)
+  const statusLog = getOutputFilePathForNode(node)
 
-  const upstream = edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean)
-  const downstream = edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean)
+  const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
   const tools = Object.entries(node.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key)
   const skills = (node.data.skills ?? [])
     .map(skill => {
@@ -390,13 +573,16 @@ function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]
 
   return `You are the ${node.data.label} agent [${node.data.tag}] — ${node.data.description}.
 ${node.data.prompt ? `\nUser goal: ${node.data.prompt}\n` : ''}
-${upstream.length ? `Upstream agents (read their status logs first): ${upstream.map(label => `ARCHITECT/outputs/${sanitize(label as string)}.md`).join(', ')}\n` : ''}
-${downstream.length ? `Downstream agents depending on you: ${downstream.join(', ')}\n` : ''}
+${launchMetadata.mode === 'all' ? 'This launch includes the full canvas.\n' : `This launch only includes: ${scopedNodes.map(candidate => candidate.data.label).join(', ')}.\n`}
+${relationships.upstreamInScope.length ? `Upstream agents in this launch are available in ARCHITECT/outputs/ for their respective node ids.\n` : ''}
+${relationships.downstreamInScope.length ? `Downstream agents in this launch depending on you: ${relationships.downstreamInScope.join(', ')}\n` : ''}
+${relationships.upstreamExternal.length ? `Upstream agents outside this launch: ${relationships.upstreamExternal.join(', ')}\n` : ''}
+${relationships.downstreamExternal.length ? `Downstream agents outside this launch: ${relationships.downstreamExternal.join(', ')}\n` : ''}
 ${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ${skills ? `${skills}\n` : ''}
 ## Instructions
 
-Read ARCHITECT/tasks/${safe}.md and execute every instruction in it immediately and concretely.
+Read ${getTaskFilePathForNode(node)} and execute every instruction in it immediately and concretely.
 
 **WHERE TO CREATE FILES:**
 - All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
@@ -415,21 +601,28 @@ echo ARCHITECT_COMPLETE
 
 function setupWorkspace(
   projectDir: string,
-  nodes: GraphNode[],
-  edges: GraphEdge[],
+  scopedNodes: GraphNode[],
+  scopedEdges: GraphEdge[],
+  allNodes: GraphNode[],
+  allEdges: GraphEdge[],
   settings: ProjectSettings,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+  launchMetadata: LaunchMetadata,
+  dispatchContext?: DispatchContext,
 ) {
+  ensureArchitectWorkspace(projectDir)
   const base = join(projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts'].map(name => join(base, name))) {
-    fs.mkdirSync(dir, { recursive: true })
-  }
 
   fs.writeFileSync(join(base, 'manifest.json'), JSON.stringify({
     generated: new Date().toISOString(),
     defaultRuntime: settings.defaultRuntime,
-    agents: nodes.map(node => {
+    launchScope: {
+      mode: launchMetadata.mode,
+      activeAgents: launchMetadata.activeNodeLabels,
+      omittedConnectedAgents: launchMetadata.omittedConnectedNodeLabels,
+    },
+    agents: scopedNodes.map(node => {
       const runtime = getNodeRuntime(node, settings)
+      const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
       return {
         label: node.data.label,
         tag: node.data.tag,
@@ -438,33 +631,84 @@ function setupWorkspace(
         runtimeLabel: getAgentRuntime(runtime).label,
         model: getNodeModel(node, runtime),
         userPrompt: node.data.prompt || null,
-        taskFile: `ARCHITECT/tasks/${sanitize(node.data.label)}.md`,
-        outputFile: `ARCHITECT/outputs/${sanitize(node.data.label)}.md`,
+        taskFile: getTaskFilePathForNode(node),
+        outputFile: getOutputFilePathForNode(node),
         enabledTools: Object.entries(node.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key),
-        upstream: edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean),
-        downstream: edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean),
+        upstream: relationships.upstreamInScope,
+        downstream: relationships.downstreamInScope,
+        upstreamOutsideLaunch: relationships.upstreamExternal,
+        downstreamOutsideLaunch: relationships.downstreamExternal,
       }
     }),
   }, null, 2))
 
-  fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(nodes, edges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges, settings, dispatchContext))
-  for (const node of nodes) {
-    fs.writeFileSync(join(base, 'prompts', `${sanitize(node.data.label)}.md`), buildNodePrompt(node, edges, nodes))
+  fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(scopedNodes, scopedEdges))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(scopedNodes, scopedEdges, allNodes, allEdges, settings, launchMetadata, dispatchContext))
+  for (const node of scopedNodes) {
+    fs.writeFileSync(join(base, 'prompts', `${getNodeFileStem(node)}.md`), buildNodePrompt(node, scopedNodes, allNodes, allEdges, launchMetadata))
   }
 }
 
 export async function runGraph(
   win: BrowserWindow,
-  nodes: GraphNode[],
-  edges: GraphEdge[],
+  allNodes: GraphNode[],
+  allEdges: GraphEdge[],
   projectDir: string,
   rawSettings: unknown,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
+  options?: RunGraphOptions,
 ): Promise<TerminalInfo[]> {
   killAll()
   const settings = normalizeProjectSettings(rawSettings)
-  setupWorkspace(projectDir, nodes, edges, settings, dispatchContext)
+
+  if (options?.launchScope && options.launchScope.mode !== 'all') {
+    const { nodes } = resolveLaunchScope(allNodes, allEdges, options.launchScope)
+    ensureArchitectWorkspace(projectDir)
+
+    return nodes.map(node => {
+      const safe = getNodeFileStem(node)
+      let taskFile = join(projectDir, 'ARCHITECT', 'tasks', `${safe}.md`)
+      const runtime = getNodeRuntime(node, settings)
+      const env: Record<string, string> = {}
+
+      for (const { key, value } of node.data.envVars ?? []) {
+        if (key) env[key] = value
+      }
+
+      if (!fs.existsSync(taskFile) && hasUniqueNodeLabel(node.data.label, allNodes)) {
+        const legacyTaskFile = join(projectDir, getLegacyTaskFilePathForLabel(node.data.label))
+        if (fs.existsSync(legacyTaskFile)) {
+          taskFile = legacyTaskFile
+        }
+      }
+
+      if (!fs.existsSync(taskFile)) {
+        return spawnErrorSession(
+          win,
+          node.id,
+          node.data.label,
+          runtime,
+          projectDir,
+          `Architect could not find ${taskFile}. Run a full launch first so the task markdown exists, then launch the selected component again.`,
+        )
+      }
+
+      const taskMarkdown = fs.readFileSync(taskFile, 'utf-8')
+
+      return spawnAgentSession({
+        win,
+        id: node.id,
+        label: node.data.label,
+        runtime,
+        env,
+        cwd: projectDir,
+        initialPrompt: buildDirectTaskLaunchPrompt(node, taskMarkdown),
+        model: getNodeModel(node, runtime),
+      })
+    })
+  }
+
+  const { nodes, edges, metadata } = resolveLaunchScope(allNodes, allEdges, options?.launchScope)
+  setupWorkspace(projectDir, nodes, edges, allNodes, allEdges, settings, metadata, options?.dispatchContext)
 
   const sorted = topoSort(nodes, edges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
@@ -475,7 +719,7 @@ export async function runGraph(
     ...sorted.map(node => ({ id: node.id, label: node.data.label, runtime: getNodeRuntime(node, settings) })),
   ]
 
-  const nodeMap = new Map(sorted.map(node => [sanitize(node.data.label), node]))
+  const nodeMap = new Map(sorted.map(node => [getNodeFileStem(node), node]))
   const triggered = new Set<string>()
   const taskReady = new Set<string>()
   const agentDone = new Set<string>()
@@ -483,17 +727,17 @@ export async function runGraph(
   const upstreamMap = new Map<string, string[]>()
   const downstreamMap = new Map<string, string[]>()
   for (const node of sorted) {
-    const safe = sanitize(node.data.label)
+    const safe = getNodeFileStem(node)
     upstreamMap.set(safe, edges
       .filter(edge => edge.target === node.id)
       .map(edge => nodes.find(candidate => candidate.id === edge.source))
       .filter(Boolean)
-      .map(candidate => sanitize(candidate!.data.label)))
+      .map(candidate => getNodeFileStem(candidate!)))
     downstreamMap.set(safe, edges
       .filter(edge => edge.source === node.id)
       .map(edge => nodes.find(candidate => candidate.id === edge.target))
       .filter(Boolean)
-      .map(candidate => sanitize(candidate!.data.label)))
+      .map(candidate => getNodeFileStem(candidate!)))
   }
 
   function trySpawnNode(safe: string) {

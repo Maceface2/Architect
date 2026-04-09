@@ -8,8 +8,10 @@ interface TopNavProps {
   onClear: () => void
   onLoadDemo: () => void
   onDispatch: () => void
+  onDispatchSelected: () => void
   dispatching: boolean
   nodeCount: number
+  selectedCount: number
   projectDir: string
   onChangeDir: () => void
   onSave: () => void
@@ -39,7 +41,7 @@ function ArchitectLogo() {
 
 export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,
-  onDispatch, dispatching, nodeCount,
+  onDispatch, onDispatchSelected, dispatching, nodeCount, selectedCount,
   projectDir, onChangeDir, onSave, isDirty,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
   projectSettings, onDefaultRuntimeChange,
@@ -130,6 +132,14 @@ export default function TopNav({
           Load demo
         </button>
         <button
+          onClick={onDispatchSelected}
+          disabled={dispatching || selectedCount === 0}
+          className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 border border-node-border rounded hover:bg-node transition-colors disabled:opacity-40 disabled:pointer-events-none"
+        >
+          <Zap size={12} />
+          {selectedCount > 0 ? `Launch components (${selectedCount})` : 'Launch components'}
+        </button>
+        <button
           onClick={onDispatch}
           disabled={dispatching || nodeCount === 0}
           className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors disabled:opacity-40 disabled:pointer-events-none"
@@ -138,8 +148,8 @@ export default function TopNav({
           {dispatching
             ? 'Launching…'
             : isRedispatch
-              ? `Redispatch${changedCount > 0 ? ` (${changedCount} changed)` : ''}`
-              : `Dispatch${nodeCount > 0 ? ` (${nodeCount})` : ''}`
+              ? `Redispatch all${changedCount > 0 ? ` (${changedCount} changed)` : ''}`
+              : `Launch all${nodeCount > 0 ? ` (${nodeCount})` : ''}`
           }
         </button>
       </div>

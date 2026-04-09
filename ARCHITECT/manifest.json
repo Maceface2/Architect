@@ -1,46 +1,33 @@
 {
-  "generated": "2026-04-08T23:45:44.116Z",
+  "generated": "2026-04-09T05:07:51.395Z",
+  "defaultRuntime": "codex",
+  "launchScope": {
+    "mode": "single",
+    "activeAgents": [
+      "Desktop App"
+    ],
+    "omittedConnectedAgents": [
+      "IPC Bridge"
+    ]
+  },
   "agents": [
     {
-      "label": "Content & Knowledge",
-      "tag": "DATA",
-      "description": "Gathers all portfolio content and builds the knowledge base for the chatbot.",
-      "userPrompt": "You are responsible for all content and knowledge preparation. First, define a schema for project entries (title, description, tech stack, links, images, dates) and write structured JSON data files for each project. Draft bio sections, skills lists, and contact info. Output all content to ARCHITECT/outputs/content.json.\n\nThen, construct a comprehensive knowledge base that the AI chatbot will use to answer questions about the site owner. Write detailed markdown documents covering: professional background, education, each project in depth, technical skills and proficiency levels, work experience, interests and hobbies, and FAQs. Output these to ARCHITECT/outputs/knowledge/. Be thorough — the chatbot's quality depends on this content.",
-      "taskFile": "ARCHITECT/tasks/Content---Knowledge.md",
-      "outputFile": "ARCHITECT/outputs/Content---Knowledge.md",
+      "label": "Desktop App",
+      "tag": "UI",
+      "description": "",
+      "runtime": "codex",
+      "runtimeLabel": "Codex CLI",
+      "model": "gpt-5-codex",
+      "userPrompt": null,
+      "taskFile": "ARCHITECT/tasks/Desktop-App.md",
+      "outputFile": "ARCHITECT/outputs/Desktop-App.md",
       "enabledTools": [],
       "upstream": [],
-      "downstream": [
-        "Site Builder"
+      "downstream": [],
+      "upstreamOutsideLaunch": [],
+      "downstreamOutsideLaunch": [
+        "IPC Bridge"
       ]
-    },
-    {
-      "label": "Site Builder",
-      "tag": "BUILD",
-      "description": "Builds the complete Next.js portfolio site with frontend pages and AI chat widget.",
-      "userPrompt": "You are responsible for building the entire portfolio website. Using Next.js and Tailwind CSS, create: a hero landing page with bio and CTA, a projects gallery page with filterable cards, an about page with skills and experience timeline, and a contact section. Consume content from ARCHITECT/outputs/content.json. Use clean, modern design with smooth animations.\n\nAlso implement the AI chatbot feature. Using the Anthropic Claude API, build a React chat widget (floating button, slide-out panel, message history) that answers questions about the site owner. Read the knowledge base from ARCHITECT/outputs/knowledge/ and embed it as context in the system prompt. Implement a Next.js API route at /api/chat that calls Claude with the knowledge base context and the user's question. Keep responses friendly, concise, and accurate.\n\nOutput the complete Next.js project to ARCHITECT/outputs/frontend/, with the chatbot at ARCHITECT/outputs/frontend/components/ChatBot and ARCHITECT/outputs/frontend/pages/api/chat.ts.",
-      "taskFile": "ARCHITECT/tasks/Site-Builder.md",
-      "outputFile": "ARCHITECT/outputs/Site-Builder.md",
-      "enabledTools": [],
-      "upstream": [
-        "Content & Knowledge"
-      ],
-      "downstream": [
-        "Deploy"
-      ]
-    },
-    {
-      "label": "Deploy",
-      "tag": "INFRA",
-      "description": "Configures environment variables, deployment config, and CI/CD for Vercel.",
-      "userPrompt": "You are responsible for final integration and deployment configuration. Set up: environment variable templates (.env.example with ANTHROPIC_API_KEY), Next.js API route middleware for rate limiting the chat endpoint, a vercel.json deployment config, a README with setup instructions, and a GitHub Actions CI workflow. Audit the full project output in ARCHITECT/outputs/frontend/ and fix any integration issues between the chatbot API route and the frontend component. Ensure the project builds cleanly with `next build`.",
-      "taskFile": "ARCHITECT/tasks/Deploy.md",
-      "outputFile": "ARCHITECT/outputs/Deploy.md",
-      "enabledTools": [],
-      "upstream": [
-        "Site Builder"
-      ],
-      "downstream": []
     }
   ]
 }
