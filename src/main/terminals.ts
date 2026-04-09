@@ -1,8 +1,10 @@
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
 import { join } from 'path'
+import os from 'os'
 import fs from 'fs'
 import { execFileSync } from 'child_process'
+import { randomUUID } from 'crypto'
 import {
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
@@ -77,6 +79,7 @@ export interface GraphNode {
     description: string
     prompt: string
     additionalChanges?: string
+    claudeSessionId?: string
     agentRuntimeMode?: 'inherit' | 'override'
     agentRuntime?: AgentRuntime
     providerModels?: Partial<Record<AgentRuntime, string>>
@@ -100,6 +103,8 @@ interface Session {
   buffer: string
   done: boolean
   doneCallbacks: (() => void)[]
+  completedAt?: number
+  completionToken: string
 }
 
 interface SpawnSessionOptions {
@@ -112,15 +117,20 @@ interface SpawnSessionOptions {
   initialPrompt?: string
   model?: string
   onExit?: () => void
+  projectDir?: string
+  nodeId?: string
+  resumeSessionId?: string
+  completionToken?: string
 }
 
 const sessions = new Map<string, Session>()
 let activeWatcher: fs.FSWatcher | null = null
 
-function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string): string[] {
+function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string, resumeSessionId?: string): string[] {
   switch (runtime) {
     case 'claude': {
       const args: string[] = ['--dangerously-skip-permissions']
+      if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
       if (prompt) args.push(prompt)
       return args
@@ -146,22 +156,41 @@ function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string
   }
 }
 
+function resolveClaudeSessionId(projectDir: string): string | null {
+  try {
+    const encoded = projectDir.replace(/\//g, '-')
+    const sessionsDir = join(os.homedir(), '.claude', 'projects', encoded)
+    const entries = fs.readdirSync(sessionsDir)
+      .filter(f => f.endsWith('.jsonl'))
+      .map(f => ({ sessionId: f.slice(0, -6), mtime: fs.statSync(join(sessionsDir, f)).mtimeMs }))
+      .sort((a, b) => b.mtime - a.mtime)
+    return entries.length > 0 ? entries[0].sessionId : null
+  } catch { return null }
+}
+
 function createSession(
   win: BrowserWindow,
   id: string,
   label: string,
   runtime: AgentRuntime,
   ptyProcess: pty.IPty,
-  onExit?: () => void
+  onExit?: () => void,
+  projectDir?: string,
+  nodeId?: string,
+  completionToken?: string,
 ): TerminalInfo {
-  const session: Session = { pty: ptyProcess, buffer: '', done: false, doneCallbacks: [] }
+  const token = completionToken ?? 'ARCHITECT_COMPLETE'
+  const session: Session = { pty: ptyProcess, buffer: '', done: false, doneCallbacks: [], completionToken: token }
   sessions.set(id, session)
 
   ptyProcess.onData(data => {
     session.buffer += data
-    if (!session.done && session.buffer.includes('ARCHITECT_COMPLETE')) {
+    if (!session.done && session.buffer.includes(session.completionToken)) {
       session.done = true
+      session.completedAt = Date.now()
       session.doneCallbacks.splice(0).forEach(cb => cb())
+      // Kill the PTY now that the agent has signalled completion
+      try { session.pty.kill() } catch {}
     }
     if (!win.isDestroyed()) win.webContents.send('terminal:data', { id, data })
   })
@@ -170,6 +199,11 @@ function createSession(
     if (!win.isDestroyed()) win.webContents.send('terminal:exit', { id, exitCode })
     sessions.delete(id)
     onExit?.()
+    // After a completed Claude agent exits, find and emit its session ID
+    if (session.done && runtime === 'claude' && projectDir && nodeId && !win.isDestroyed()) {
+      const sessionId = resolveClaudeSessionId(projectDir)
+      if (sessionId) win.webContents.send('node:session-saved', { nodeId, sessionId })
+    }
   })
 
   return { id, label, runtime }
@@ -206,6 +240,10 @@ function spawnAgentSession({
   initialPrompt,
   model,
   onExit,
+  projectDir,
+  nodeId,
+  resumeSessionId,
+  completionToken,
 }: SpawnSessionOptions): TerminalInfo {
   const bin = resolveBinary(runtime)
   if (!bin) {
@@ -220,7 +258,7 @@ function spawnAgentSession({
     )
   }
 
-  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model), {
+  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId), {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -228,7 +266,7 @@ function spawnAgentSession({
     env: { ...process.env, ...env } as Record<string, string>,
   })
 
-  return createSession(win, id, label, runtime, ptyProcess, onExit)
+  return createSession(win, id, label, runtime, ptyProcess, onExit, projectDir, nodeId, completionToken)
 }
 
 export function writeToTerminal(id: string, data: string) {
@@ -440,6 +478,17 @@ function ensureArchitectWorkspace(projectDir: string) {
   for (const dir of ['tasks', 'outputs', 'prompts'].map(name => join(base, name))) {
     fs.mkdirSync(dir, { recursive: true })
   }
+}
+
+function buildResumePrompt(node: GraphNode, completionToken: string): string {
+  const statusLog = getOutputFilePathForNode(node)
+  const additionalChanges = node.data.additionalChanges?.trim()
+
+  if (additionalChanges) {
+    return `## Additional Requested Changes\n${additionalChanges}\n\nApply these changes to your existing work.\n\nWrite progress notes and your final summary to ${statusLog}.\nCreate real code and project files in the project root, not inside ARCHITECT/.\n\nWhen you have finished ALL work, run this exact shell command as your last action:\n\`\`\`\necho ${completionToken}\n\`\`\``
+  }
+
+  return `Review your previous work logged in ${statusLog} and continue any unfinished tasks.\n\nWhen you have finished ALL work, run this exact shell command as your last action:\n\`\`\`\necho ${completionToken}\n\`\`\``
 }
 
 function buildDirectTaskLaunchPrompt(node: GraphNode, taskMarkdown: string): string {
@@ -693,6 +742,26 @@ export async function runGraph(
       }
 
       const taskMarkdown = fs.readFileSync(taskFile, 'utf-8')
+      const savedSessionId = runtime === 'claude' ? (node.data.claudeSessionId?.trim() || null) : null
+
+      if (savedSessionId) {
+        // Generate a unique completion token so history replay doesn't trigger it
+        const completionToken = `ARCHITECT_COMPLETE_${randomUUID().slice(0, 8)}`
+        return spawnAgentSession({
+          win,
+          id: node.id,
+          label: node.data.label,
+          runtime,
+          env,
+          cwd: projectDir,
+          initialPrompt: buildResumePrompt(node, completionToken),
+          model: getNodeModel(node, runtime),
+          resumeSessionId: savedSessionId,
+          completionToken,
+          projectDir,
+          nodeId: node.id,
+        })
+      }
 
       return spawnAgentSession({
         win,
@@ -703,6 +772,8 @@ export async function runGraph(
         cwd: projectDir,
         initialPrompt: buildDirectTaskLaunchPrompt(node, taskMarkdown),
         model: getNodeModel(node, runtime),
+        projectDir,
+        nodeId: node.id,
       })
     })
   }
@@ -764,6 +835,8 @@ export async function runGraph(
       cwd: projectDir,
       initialPrompt: prompt,
       model,
+      projectDir,
+      nodeId: node.id,
     })
 
     onSessionDone(node.id, () => {

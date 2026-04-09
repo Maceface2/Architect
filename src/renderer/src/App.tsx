@@ -180,6 +180,24 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   // Cleanup auto-save timer on unmount
   useEffect(() => () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }, [])
 
+  // Save Claude session IDs back to node data when agents complete
+  useEffect(() => {
+    return window.electron.terminal.onNodeSessionSaved(({ nodeId, sessionId }) => {
+      setNodes(prev => {
+        const updated = prev.map(n =>
+          n.id === nodeId ? { ...n, data: { ...n.data, claudeSessionId: sessionId } } : n
+        )
+        void window.electron.saveCanvas(projectDir, JSON.stringify({
+          nodes: updated,
+          edges,
+          settings: projectSettings,
+          savedAt: new Date().toISOString(),
+        }))
+        return updated
+      })
+    })
+  }, [setNodes, projectDir, edges, projectSettings])
+
   // Auto-load canvas on mount
   useEffect(() => {
     window.electron.loadCanvas(projectDir).then((raw: string | null) => {

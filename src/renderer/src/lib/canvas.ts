@@ -111,6 +111,7 @@ export function normalizeNodeData(raw: unknown, settings: ProjectSettings): Arch
       ? (rawData.permissions as ArchitectNodeData['permissions'])
       : defaultConfig.permissions,
     envVars: Array.isArray(rawData.envVars) ? (rawData.envVars as ArchitectNodeData['envVars']) : defaultConfig.envVars,
+    claudeSessionId: typeof rawData.claudeSessionId === 'string' && rawData.claudeSessionId ? rawData.claudeSessionId : undefined,
   }
 }
 

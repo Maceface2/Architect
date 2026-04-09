@@ -52,5 +52,11 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('terminal:exit', handler)
       return () => ipcRenderer.removeListener('terminal:exit', handler)
     },
+
+    onNodeSessionSaved: (cb: (event: { nodeId: string; sessionId: string }) => void) => {
+      const handler = (_: unknown, event: { nodeId: string; sessionId: string }) => cb(event)
+      ipcRenderer.on('node:session-saved', handler)
+      return () => ipcRenderer.removeListener('node:session-saved', handler)
+    },
   },
 })

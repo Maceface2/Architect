@@ -50,6 +50,7 @@ function ArchitectNode({ id, data, selected }: ArchitectNodeProps) {
   const label = data.label as string
   const prompt = (data.prompt ?? '') as string
   const additionalChanges = (data.additionalChanges ?? '') as string
+  const claudeSessionId = (data.claudeSessionId ?? '') as string
   const status = data.status as NodeStatus
   const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
   const configuredRuntime = (data.agentRuntime ?? projectSettings.defaultRuntime) as AgentRuntime
@@ -186,6 +187,7 @@ function ArchitectNode({ id, data, selected }: ArchitectNodeProps) {
           label={label}
           prompt={prompt}
           additionalChanges={additionalChanges}
+          claudeSessionId={claudeSessionId}
           runtimeMode={runtimeMode}
           configuredRuntime={configuredRuntime}
           effectiveRuntime={effectiveRuntime}
@@ -214,6 +216,7 @@ interface ModalProps {
   label: string
   prompt: string
   additionalChanges: string
+  claudeSessionId: string
   runtimeMode: AgentRuntimeMode
   configuredRuntime: AgentRuntime
   effectiveRuntime: AgentRuntime
@@ -237,6 +240,7 @@ function NodeConfigModal({
   label,
   prompt,
   additionalChanges,
+  claudeSessionId,
   runtimeMode,
   configuredRuntime,
   effectiveRuntime,
@@ -364,6 +368,29 @@ function NodeConfigModal({
                     placeholder="Optional follow-up changes to apply when relaunching this component..."
                     className="w-full min-h-28 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono resize-y"
                   />
+                </div>
+                <div className="mt-4">
+                  <div className="flex items-center justify-between mb-2">
+                    <p className="text-[10px] uppercase tracking-widest text-slate-600">Resume Session</p>
+                    {claudeSessionId && (
+                      <button
+                        onClick={() => patch({ claudeSessionId: '' })}
+                        className="text-[10px] text-slate-600 hover:text-red-400 transition-colors"
+                      >
+                        Clear
+                      </button>
+                    )}
+                  </div>
+                  <input
+                    type="text"
+                    value={claudeSessionId}
+                    onChange={event => patch({ claudeSessionId: event.target.value })}
+                    placeholder="Session ID auto-saved after completion..."
+                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[11px] text-slate-400 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                  />
+                  {claudeSessionId && (
+                    <p className="text-[10px] text-slate-600 mt-1">Relaunch will resume this session instead of re-injecting the full prompt.</p>
+                  )}
                 </div>
               </div>
             ) : (

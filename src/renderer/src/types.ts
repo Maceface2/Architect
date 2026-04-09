@@ -59,6 +59,7 @@ export interface ArchitectNodeData {
   status: NodeStatus
   prompt: string
   additionalChanges: string
+  claudeSessionId?: string
   agentRuntimeMode: AgentRuntimeMode
   agentRuntime: AgentRuntime
   providerModels: RuntimeModelMap
