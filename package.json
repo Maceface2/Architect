@@ -2,7 +2,7 @@
   "name": "architect",
   "productName": "Architect",
   "version": "0.1.0",
-  "description": "Visual architecture builder powered by Claude AI agents",
+  "description": "Visual architecture builder for agentic coding CLIs",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",

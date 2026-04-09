@@ -3,6 +3,14 @@ import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
 import { execFileSync } from 'child_process'
+import {
+  DEFAULT_AGENT_RUNTIME,
+  DEFAULT_MODEL_BY_RUNTIME,
+  getAgentRuntime,
+  isAgentRuntime,
+  isAgentRuntimeMode,
+  type AgentRuntime,
+} from '../shared/agentRuntimes'
 
 // Augment PATH with common locations so node-pty can find binaries
 const EXTRA_PATHS = [
@@ -14,28 +22,43 @@ const EXTRA_PATHS = [
 ]
 process.env.PATH = [...EXTRA_PATHS, ...(process.env.PATH || '').split(':')].join(':')
 
-// Resolve claude binary — try shell first, fall back to known locations
-function resolveClaude(): string {
-  const candidates = [
-    '/opt/homebrew/bin/claude',
-    '/usr/local/bin/claude',
-  ]
-  for (const p of candidates) {
-    if (fs.existsSync(p)) return p
-  }
-  try {
-    const shell = process.env.SHELL || '/bin/zsh'
-    return execFileSync(shell, ['-l', '-c', 'which claude'], { encoding: 'utf-8' }).trim()
-  } catch {
-    return 'claude'
+interface ProjectSettings {
+  defaultRuntime: AgentRuntime
+}
+
+function normalizeProjectSettings(raw: unknown): ProjectSettings {
+  const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  return {
+    defaultRuntime: isAgentRuntime(settings.defaultRuntime) ? settings.defaultRuntime : DEFAULT_AGENT_RUNTIME,
   }
 }
 
-const CLAUDE_BIN = resolveClaude()
+function resolveBinary(runtime: AgentRuntime): string | null {
+  const { binary } = getAgentRuntime(runtime)
+  const candidates = [
+    `/opt/homebrew/bin/${binary}`,
+    `/usr/local/bin/${binary}`,
+    `/usr/bin/${binary}`,
+    `/bin/${binary}`,
+  ]
+
+  for (const candidate of candidates) {
+    if (fs.existsSync(candidate)) return candidate
+  }
+
+  try {
+    const shell = process.env.SHELL || '/bin/zsh'
+    const resolved = execFileSync(shell, ['-l', '-c', `which ${binary}`], { encoding: 'utf-8' }).trim()
+    return resolved || null
+  } catch {
+    return null
+  }
+}
 
 export interface TerminalInfo {
   id: string
   label: string
+  runtime: AgentRuntime
 }
 
 export interface GraphNode {
@@ -45,6 +68,9 @@ export interface GraphNode {
     tag: string
     description: string
     prompt: string
+    agentRuntimeMode?: 'inherit' | 'override'
+    agentRuntime?: AgentRuntime
+    providerModels?: Partial<Record<AgentRuntime, string>>
     model?: string
     skills: Array<{ name: string; path: string; builtin: boolean }>
     tools: Record<string, boolean>
@@ -63,52 +89,67 @@ export interface GraphEdge {
 interface Session {
   pty: pty.IPty
   buffer: string
-  ready: boolean
-  callbacks: (() => void)[]
   done: boolean
   doneCallbacks: (() => void)[]
+}
+
+interface SpawnSessionOptions {
+  win: BrowserWindow
+  id: string
+  label: string
+  runtime: AgentRuntime
+  env: Record<string, string>
+  cwd: string
+  initialPrompt?: string
+  model?: string
+  onExit?: () => void
 }
 
 const sessions = new Map<string, Session>()
 let activeWatcher: fs.FSWatcher | null = null
 
-// ── PTY management ─────────────────────────────────────────────────────────
+function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string): string[] {
+  switch (runtime) {
+    case 'claude': {
+      const args: string[] = ['--dangerously-skip-permissions']
+      if (model) args.push('--model', model)
+      if (prompt) args.push(prompt)
+      return args
+    }
+    case 'codex': {
+      const args: string[] = ['--no-alt-screen', '-a', 'never', '-s', 'workspace-write']
+      if (model) args.push('--model', model)
+      if (prompt) args.push(prompt)
+      return args
+    }
+    case 'gemini': {
+      const args: string[] = ['--approval-mode', 'yolo']
+      if (model) args.push('--model', model)
+      if (prompt) args.push('--prompt-interactive', prompt)
+      return args
+    }
+    case 'opencode': {
+      const args: string[] = []
+      if (prompt) args.push('--prompt', prompt)
+      if (model) args.push('--model', model)
+      return args
+    }
+  }
+}
 
-// Spawns a Claude Code interactive session.
-// initialPrompt — passed as a positional arg so Claude starts immediately: claude "prompt"
-// model         — Claude model ID (e.g. claude-haiku-4-5-20251001); defaults to sonnet
-// onExit        — optional hook called after the IPC exit event (used for cleanup)
-function spawnClaude(
+function createSession(
   win: BrowserWindow,
   id: string,
   label: string,
-  env: Record<string, string>,
-  cwd: string,
-  initialPrompt?: string,
-  model?: string,
-  onExit?: () => void,
+  runtime: AgentRuntime,
+  ptyProcess: pty.IPty,
+  onExit?: () => void
 ): TerminalInfo {
-  const args: string[] = ['--dangerously-skip-permissions']
-  if (model) args.push('--model', model)
-  if (initialPrompt) args.push(initialPrompt)
-
-  const ptyProcess = pty.spawn(CLAUDE_BIN, args, {
-    name: 'xterm-256color',
-    cols: 220,
-    rows: 50,
-    cwd,
-    env: { ...process.env, ...env } as Record<string, string>,
-  })
-
-  const session: Session = { pty: ptyProcess, buffer: '', ready: false, callbacks: [], done: false, doneCallbacks: [] }
+  const session: Session = { pty: ptyProcess, buffer: '', done: false, doneCallbacks: [] }
   sessions.set(id, session)
 
   ptyProcess.onData(data => {
     session.buffer += data
-    if (!session.ready && /[>❯]\s*$/.test(session.buffer)) {
-      session.ready = true
-      session.callbacks.splice(0).forEach(cb => cb())
-    }
     if (!session.done && session.buffer.includes('ARCHITECT_COMPLETE')) {
       session.done = true
       session.doneCallbacks.splice(0).forEach(cb => cb())
@@ -122,20 +163,63 @@ function spawnClaude(
     onExit?.()
   })
 
-  return { id, label }
+  return { id, label, runtime }
 }
 
-function waitForReady(id: string, timeout = 30_000): Promise<void> {
-  return new Promise(resolve => {
-    const s = sessions.get(id)
-    if (!s || s.ready) { resolve(); return }
-    s.callbacks.push(resolve)
-    setTimeout(() => {
-      const s2 = sessions.get(id)
-      if (s2 && !s2.ready) { s2.ready = true; s2.callbacks.splice(0).forEach(cb => cb()) }
-      resolve()
-    }, timeout)
+function spawnErrorSession(
+  win: BrowserWindow,
+  id: string,
+  label: string,
+  runtime: AgentRuntime,
+  cwd: string,
+  message: string,
+  onExit?: () => void
+): TerminalInfo {
+  const shell = process.env.SHELL || '/bin/zsh'
+  const ptyProcess = pty.spawn(shell, ['-lc', `echo ${JSON.stringify(message)}; exit 127`], {
+    name: 'xterm-256color',
+    cols: 220,
+    rows: 50,
+    cwd,
+    env: process.env as Record<string, string>,
   })
+
+  return createSession(win, id, label, runtime, ptyProcess, onExit)
+}
+
+function spawnAgentSession({
+  win,
+  id,
+  label,
+  runtime,
+  env,
+  cwd,
+  initialPrompt,
+  model,
+  onExit,
+}: SpawnSessionOptions): TerminalInfo {
+  const bin = resolveBinary(runtime)
+  if (!bin) {
+    return spawnErrorSession(
+      win,
+      id,
+      label,
+      runtime,
+      cwd,
+      `Architect could not find the ${getAgentRuntime(runtime).label} binary (${getAgentRuntime(runtime).binary}) on PATH.`,
+      onExit,
+    )
+  }
+
+  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model), {
+    name: 'xterm-256color',
+    cols: 220,
+    rows: 50,
+    cwd,
+    env: { ...process.env, ...env } as Record<string, string>,
+  })
+
+  return createSession(win, id, label, runtime, ptyProcess, onExit)
 }
 
 export function writeToTerminal(id: string, data: string) {
@@ -146,22 +230,22 @@ export function resizeTerminal(id: string, cols: number, rows: number) {
   try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
 }
 
-
 function onSessionDone(id: string, cb: () => void) {
-  const s = sessions.get(id)
-  if (!s) return
-  if (s.done) { cb(); return }
-  s.doneCallbacks.push(cb)
+  const session = sessions.get(id)
+  if (!session) return
+  if (session.done) {
+    cb()
+    return
+  }
+  session.doneCallbacks.push(cb)
 }
 
 export function killAll() {
   activeWatcher?.close()
   activeWatcher = null
-  sessions.forEach(s => { try { s.pty.kill() } catch {} })
+  sessions.forEach(session => { try { session.pty.kill() } catch {} })
   sessions.clear()
 }
-
-// ── Helpers ────────────────────────────────────────────────────────────────
 
 function sanitize(label: string) {
   return label.replace(/[^a-zA-Z0-9-_]/g, '-')
@@ -180,59 +264,81 @@ function readSkillContent(skillPath: string): string {
 }
 
 function topoSort(nodes: GraphNode[], edges: GraphEdge[]): GraphNode[] {
-  const inDegree = new Map(nodes.map(n => [n.id, 0]))
-  const adj      = new Map(nodes.map(n => [n.id, [] as string[]]))
-  edges.forEach(e => {
-    inDegree.set(e.target, (inDegree.get(e.target) ?? 0) + 1)
-    adj.get(e.source)?.push(e.target)
+  const inDegree = new Map(nodes.map(node => [node.id, 0]))
+  const adj = new Map(nodes.map(node => [node.id, [] as string[]]))
+
+  edges.forEach(edge => {
+    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1)
+    adj.get(edge.source)?.push(edge.target)
   })
-  const queue  = nodes.filter(n => inDegree.get(n.id) === 0)
+
+  const queue = nodes.filter(node => inDegree.get(node.id) === 0)
   const result: GraphNode[] = []
+
   while (queue.length) {
     const node = queue.shift()!
     result.push(node)
-    for (const nid of adj.get(node.id) ?? []) {
-      const d = (inDegree.get(nid) ?? 1) - 1
-      inDegree.set(nid, d)
-      if (d === 0) queue.push(nodes.find(n => n.id === nid)!)
+
+    for (const nextId of adj.get(node.id) ?? []) {
+      const degree = (inDegree.get(nextId) ?? 1) - 1
+      inDegree.set(nextId, degree)
+      if (degree === 0) queue.push(nodes.find(candidate => candidate.id === nextId)!)
     }
   }
-  nodes.forEach(n => { if (!result.find(r => r.id === n.id)) result.push(n) })
+
+  nodes.forEach(node => {
+    if (!result.find(candidate => candidate.id === node.id)) result.push(node)
+  })
+
   return result
 }
 
-// ── Prompt builders ────────────────────────────────────────────────────────
+function getNodeRuntime(node: GraphNode, settings: ProjectSettings): AgentRuntime {
+  return isAgentRuntimeMode(node.data.agentRuntimeMode) && node.data.agentRuntimeMode === 'override' && isAgentRuntime(node.data.agentRuntime)
+    ? node.data.agentRuntime
+    : settings.defaultRuntime
+}
+
+function getNodeModel(node: GraphNode, runtime: AgentRuntime): string {
+  return node.data.providerModels?.[runtime] || node.data.model || DEFAULT_MODEL_BY_RUNTIME[runtime]
+}
 
 function buildMermaidDiagram(nodes: GraphNode[], edges: GraphEdge[]): string {
-  const nodeLines = nodes.map(n => `  ${n.id}["${n.data.label} [${n.data.tag}]"]`)
-  const edgeLines = edges.map(e => `  ${e.source} --> ${e.target}`)
+  const nodeLines = nodes.map(node => `  ${node.id}["${node.data.label} [${node.data.tag}]"]`)
+  const edgeLines = edges.map(edge => `  ${edge.source} --> ${edge.target}`)
   return ['```mermaid', 'graph TD', ...nodeLines, ...edgeLines, '```'].join('\n')
 }
 
 function buildArchitectPrompt(
   nodes: GraphNode[],
   edges: GraphEdge[],
+  settings: ProjectSettings,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
 ): string {
-  const agentList = nodes.map(n => {
-    const up   = edges.filter(e => e.target === n.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
-    const down = edges.filter(e => e.source === n.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean)
+  const agentList = nodes.map(node => {
+    const upstream = edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean)
+    const downstream = edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean)
+    const runtime = getNodeRuntime(node, settings)
+    const model = getNodeModel(node, runtime)
+
     return [
-      `### ${n.data.label} [${n.data.tag}]`,
-      `Description: ${n.data.description}`,
-      n.data.prompt ? `User goal: ${n.data.prompt}` : '',
-      up.length   ? `Upstream: ${up.join(', ')}`   : '',
-      down.length ? `Downstream: ${down.join(', ')}` : '',
-      `Task file: ARCHITECT/tasks/${sanitize(n.data.label)}.md`,
-      `Status log: ARCHITECT/outputs/${sanitize(n.data.label)}.md (progress notes only — actual code goes in the project root)`,
+      `### ${node.data.label} [${node.data.tag}]`,
+      `Description: ${node.data.description}`,
+      `Runtime: ${getAgentRuntime(runtime).label}`,
+      `Model: ${model}`,
+      node.data.prompt ? `User goal: ${node.data.prompt}` : '',
+      upstream.length ? `Upstream: ${upstream.join(', ')}` : '',
+      downstream.length ? `Downstream: ${downstream.join(', ')}` : '',
+      `Task file: ARCHITECT/tasks/${sanitize(node.data.label)}.md`,
+      `Status log: ARCHITECT/outputs/${sanitize(node.data.label)}.md (progress notes only — actual code goes in the project root)`,
     ].filter(Boolean).join('\n')
   }).join('\n\n')
 
   const flowLines = edges.length
-    ? edges.map(e => `  ${nodes.find(n => n.id === e.source)?.data.label} → ${nodes.find(n => n.id === e.target)?.data.label}`).join('\n')
+    ? edges.map(edge => `  ${nodes.find(node => node.id === edge.source)?.data.label} → ${nodes.find(node => node.id === edge.target)?.data.label}`).join('\n')
     : '  (agents run independently)'
 
-  return `You are the Architect agent coordinating a multi-agent system. The other agents are already running as interactive Claude Code sessions. Each agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
+  return `You are the Architect agent coordinating a multi-agent system. The other agents are already running as interactive coding CLI sessions. Each agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
 
 DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem.
 
@@ -260,29 +366,31 @@ ${flowLines}
 
 IMPORTANT: Agents must create all real project files (source code, configs, etc.) directly in the project root working directory, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination files (manifests, prompts, tasks, status logs).
 
-Start immediately. Write the task files now.${
-    dispatchContext?.isRedispatch
-      ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/.\n${
-          dispatchContext.changedNodeLabels.length > 0
-            ? `Only the following agents have changed and MUST be re-run: ${dispatchContext.changedNodeLabels.join(', ')}.\nDo NOT re-run unchanged agents unless their upstream inputs changed.`
-            : 'No agent configurations changed. Only re-run agents that previously failed or need updating.'
-        }`
-      : ''
-  }`
+Start immediately. Write the task files now.${dispatchContext?.isRedispatch
+    ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/.\n${dispatchContext.changedNodeLabels.length > 0
+        ? `Only the following agents have changed and MUST be re-run: ${dispatchContext.changedNodeLabels.join(', ')}.\nDo NOT re-run unchanged agents unless their upstream inputs changed.`
+        : 'No agent configurations changed. Only re-run agents that previously failed or need updating.'}`
+    : ''}`
 }
 
 function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]): string {
-  const safe      = sanitize(node.data.label)
+  const safe = sanitize(node.data.label)
   const statusLog = `ARCHITECT/outputs/${safe}.md`
 
-  const upstream   = edges.filter(e => e.target === node.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
-  const downstream = edges.filter(e => e.source === node.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean)
-  const tools      = Object.entries(node.data.tools ?? {}).filter(([, v]) => v).map(([k]) => k)
-  const skills     = (node.data.skills ?? []).map(s => { const c = readSkillContent(s.path); return c ? `### ${s.name}\n${c}` : '' }).filter(Boolean).join('\n\n')
+  const upstream = edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean)
+  const downstream = edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean)
+  const tools = Object.entries(node.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key)
+  const skills = (node.data.skills ?? [])
+    .map(skill => {
+      const content = readSkillContent(skill.path)
+      return content ? `### ${skill.name}\n${content}` : ''
+    })
+    .filter(Boolean)
+    .join('\n\n')
 
   return `You are the ${node.data.label} agent [${node.data.tag}] — ${node.data.description}.
 ${node.data.prompt ? `\nUser goal: ${node.data.prompt}\n` : ''}
-${upstream.length   ? `Upstream agents (read their status logs first): ${upstream.map(u => `ARCHITECT/outputs/${sanitize(u as string)}.md`).join(', ')}\n` : ''}
+${upstream.length ? `Upstream agents (read their status logs first): ${upstream.map(label => `ARCHITECT/outputs/${sanitize(label as string)}.md`).join(', ')}\n` : ''}
 ${downstream.length ? `Downstream agents depending on you: ${downstream.join(', ')}\n` : ''}
 ${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ${skills ? `${skills}\n` : ''}
@@ -305,110 +413,125 @@ echo ARCHITECT_COMPLETE
 \`\`\``
 }
 
-// ── Workspace setup ────────────────────────────────────────────────────────
-
 function setupWorkspace(
   projectDir: string,
   nodes: GraphNode[],
   edges: GraphEdge[],
+  settings: ProjectSettings,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
 ) {
   const base = join(projectDir, 'ARCHITECT')
-  for (const d of ['tasks', 'outputs', 'prompts'].map(s => join(base, s))) {
-    fs.mkdirSync(d, { recursive: true })
+  for (const dir of ['tasks', 'outputs', 'prompts'].map(name => join(base, name))) {
+    fs.mkdirSync(dir, { recursive: true })
   }
 
-  // Manifest
   fs.writeFileSync(join(base, 'manifest.json'), JSON.stringify({
     generated: new Date().toISOString(),
-    agents: nodes.map(n => ({
-      label: n.data.label, tag: n.data.tag, description: n.data.description,
-      userPrompt: n.data.prompt || null,
-      taskFile:   `ARCHITECT/tasks/${sanitize(n.data.label)}.md`,
-      outputFile: `ARCHITECT/outputs/${sanitize(n.data.label)}.md`,
-      enabledTools: Object.entries(n.data.tools ?? {}).filter(([, v]) => v).map(([k]) => k),
-      upstream:   edges.filter(e => e.target === n.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean),
-      downstream: edges.filter(e => e.source === n.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean),
-    })),
+    defaultRuntime: settings.defaultRuntime,
+    agents: nodes.map(node => {
+      const runtime = getNodeRuntime(node, settings)
+      return {
+        label: node.data.label,
+        tag: node.data.tag,
+        description: node.data.description,
+        runtime,
+        runtimeLabel: getAgentRuntime(runtime).label,
+        model: getNodeModel(node, runtime),
+        userPrompt: node.data.prompt || null,
+        taskFile: `ARCHITECT/tasks/${sanitize(node.data.label)}.md`,
+        outputFile: `ARCHITECT/outputs/${sanitize(node.data.label)}.md`,
+        enabledTools: Object.entries(node.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key),
+        upstream: edges.filter(edge => edge.target === node.id).map(edge => nodes.find(candidate => candidate.id === edge.source)?.data.label).filter(Boolean),
+        downstream: edges.filter(edge => edge.source === node.id).map(edge => nodes.find(candidate => candidate.id === edge.target)?.data.label).filter(Boolean),
+      }
+    }),
   }, null, 2))
 
-  // Prompt files — one per agent so we never paste multi-line text into the terminal
   fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(nodes, edges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges, dispatchContext))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(nodes, edges, settings, dispatchContext))
   for (const node of nodes) {
     fs.writeFileSync(join(base, 'prompts', `${sanitize(node.data.label)}.md`), buildNodePrompt(node, edges, nodes))
   }
 }
-
-// ── Main entry point ───────────────────────────────────────────────────────
-// Each agent is started as: claude --dangerously-skip-permissions "<prompt>"
-// The prompt is passed as a positional arg so Claude begins executing immediately —
-// no waiting for the interactive prompt, no inject step.
-// Node agents are spawned lazily when their task file is ready and all upstreams are done.
 
 export async function runGraph(
   win: BrowserWindow,
   nodes: GraphNode[],
   edges: GraphEdge[],
   projectDir: string,
+  rawSettings: unknown,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   killAll()
-  setupWorkspace(projectDir, nodes, edges, dispatchContext)
+  const settings = normalizeProjectSettings(rawSettings)
+  setupWorkspace(projectDir, nodes, edges, settings, dispatchContext)
 
-  const sorted     = topoSort(nodes, edges)
+  const sorted = topoSort(nodes, edges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
-  const tasksDir   = join(projectDir, 'ARCHITECT', 'tasks')
+  const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
 
-  // Return all terminal infos up-front so the renderer shows tabs immediately;
-  // the actual PTYs for node agents are spawned lazily below.
   const allInfo: TerminalInfo[] = [
-    { id: 'architect-agent', label: 'Architect' },
-    ...sorted.map(n => ({ id: n.id, label: n.data.label })),
+    { id: 'architect-agent', label: 'Architect', runtime: settings.defaultRuntime },
+    ...sorted.map(node => ({ id: node.id, label: node.data.label, runtime: getNodeRuntime(node, settings) })),
   ]
 
-  const nodeMap       = new Map(sorted.map(n => [sanitize(n.data.label), n]))
-  const triggered     = new Set<string>()
-  const taskReady     = new Set<string>()
-  const agentDone     = new Set<string>()
+  const nodeMap = new Map(sorted.map(node => [sanitize(node.data.label), node]))
+  const triggered = new Set<string>()
+  const taskReady = new Set<string>()
+  const agentDone = new Set<string>()
 
-  // Build adjacency maps
-  const upstreamMap   = new Map<string, string[]>()
+  const upstreamMap = new Map<string, string[]>()
   const downstreamMap = new Map<string, string[]>()
   for (const node of sorted) {
     const safe = sanitize(node.data.label)
     upstreamMap.set(safe, edges
-      .filter(e => e.target === node.id)
-      .map(e => nodes.find(n => n.id === e.source))
-      .filter(Boolean).map(n => sanitize(n!.data.label)))
+      .filter(edge => edge.target === node.id)
+      .map(edge => nodes.find(candidate => candidate.id === edge.source))
+      .filter(Boolean)
+      .map(candidate => sanitize(candidate!.data.label)))
     downstreamMap.set(safe, edges
-      .filter(e => e.source === node.id)
-      .map(e => nodes.find(n => n.id === e.target))
-      .filter(Boolean).map(n => sanitize(n!.data.label)))
+      .filter(edge => edge.source === node.id)
+      .map(edge => nodes.find(candidate => candidate.id === edge.target))
+      .filter(Boolean)
+      .map(candidate => sanitize(candidate!.data.label)))
   }
 
   function trySpawnNode(safe: string) {
-    if (triggered.has(safe)) return
-    if (!taskReady.has(safe)) return
-    // Wait for all upstream agents to complete before spawning
-    if ((upstreamMap.get(safe) ?? []).some(up => !agentDone.has(up))) return
+    if (triggered.has(safe) || !taskReady.has(safe)) return
+    if ((upstreamMap.get(safe) ?? []).some(upstream => !agentDone.has(upstream))) return
 
     triggered.add(safe)
     const node = nodeMap.get(safe)!
     const env: Record<string, string> = {}
-    for (const { key, value } of node.data.envVars ?? []) { if (key) env[key] = value }
+    for (const { key, value } of node.data.envVars ?? []) {
+      if (key) env[key] = value
+    }
 
+    const runtime = getNodeRuntime(node, settings)
+    const model = getNodeModel(node, runtime)
     const prompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
-    spawnClaude(win, node.id, node.data.label, env, projectDir, prompt, node.data.model)
+
+    spawnAgentSession({
+      win,
+      id: node.id,
+      label: node.data.label,
+      runtime,
+      env,
+      cwd: projectDir,
+      initialPrompt: prompt,
+      model,
+    })
 
     onSessionDone(node.id, () => {
       agentDone.add(safe)
-      for (const downSafe of downstreamMap.get(safe) ?? []) trySpawnNode(downSafe)
-      if (triggered.size === nodeMap.size) { activeWatcher?.close(); activeWatcher = null }
+      for (const downstream of downstreamMap.get(safe) ?? []) trySpawnNode(downstream)
+      if (triggered.size === nodeMap.size) {
+        activeWatcher?.close()
+        activeWatcher = null
+      }
     })
   }
 
-  // Watch for task files written by the Architect
   activeWatcher?.close()
   activeWatcher = fs.watch(tasksDir, (_event, filename) => {
     if (!filename?.endsWith('.md')) return
@@ -419,46 +542,53 @@ export async function runGraph(
         taskReady.add(safe)
         trySpawnNode(safe)
       }
-    } catch { /* race: file briefly absent */ }
+    } catch {}
   })
 
-  // Spawn Architect immediately — always uses default model (it's a coordination agent)
   const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
-  spawnClaude(win, 'architect-agent', 'Architect', {}, projectDir, architectPrompt, undefined)
+  spawnAgentSession({
+    win,
+    id: 'architect-agent',
+    label: 'Architect',
+    runtime: settings.defaultRuntime,
+    env: {},
+    cwd: projectDir,
+    initialPrompt: architectPrompt,
+    model: DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
+  })
 
   return allInfo
 }
-
-// ── Architecture assistant ─────────────────────────────────────────────────
 
 export function startAssistant(
   win: BrowserWindow,
   projectDir: string,
   contextMd: string,
+  runtime: AgentRuntime,
 ): TerminalInfo {
-  // Kill any existing assistant session
   const existing = sessions.get('architect-assistant')
   if (existing) {
     try { existing.pty.kill() } catch {}
     sessions.delete('architect-assistant')
   }
 
-  // Write context file — the assistant reads it via the initial prompt
+  const safeRuntime = isAgentRuntime(runtime) ? runtime : DEFAULT_AGENT_RUNTIME
   const architectDir = join(projectDir, 'ARCHITECT')
   fs.mkdirSync(architectDir, { recursive: true })
   const contextFile = join(architectDir, '.assistant-context.md')
   fs.writeFileSync(contextFile, contextMd)
 
-  return spawnClaude(
+  return spawnAgentSession({
     win,
-    'architect-assistant',
-    'Architecture Assistant',
-    {},
-    projectDir,
-    'Read ARCHITECT/.assistant-context.md',
-    undefined,
-    () => { try { fs.unlinkSync(contextFile) } catch {} },
-  )
+    id: 'architect-assistant',
+    label: 'Architecture Assistant',
+    runtime: safeRuntime,
+    env: {},
+    cwd: projectDir,
+    initialPrompt: 'Read ARCHITECT/.assistant-context.md',
+    model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
+    onExit: () => { try { fs.unlinkSync(contextFile) } catch {} },
+  })
 }
 
 export function stopAssistant() {

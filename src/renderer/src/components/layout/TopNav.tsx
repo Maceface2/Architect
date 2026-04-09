@@ -1,4 +1,6 @@
 import { Zap, Loader2, FolderOpen, Save, Bot } from 'lucide-react'
+import { AGENT_RUNTIMES, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import type { ProjectSettings } from '../../types'
 
 interface TopNavProps {
   activeTab: string
@@ -16,6 +18,8 @@ interface TopNavProps {
   assistantOpen: boolean
   isRedispatch: boolean
   changedCount: number
+  projectSettings: ProjectSettings
+  onDefaultRuntimeChange: (runtime: AgentRuntime) => void
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Preview']
@@ -38,6 +42,7 @@ export default function TopNav({
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir, onSave, isDirty,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
+  projectSettings, onDefaultRuntimeChange,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -75,6 +80,21 @@ export default function TopNav({
               {tab}
             </button>
           ))}
+        </div>
+
+        <div className="flex items-center gap-2 ml-2 pl-2 border-l border-white/[0.06]">
+          <span className="text-[10px] uppercase tracking-widest text-slate-600">Default CLI</span>
+          <select
+            value={projectSettings.defaultRuntime}
+            onChange={(event) => onDefaultRuntimeChange(event.target.value as AgentRuntime)}
+            className="bg-node border border-node-border rounded px-2 py-1 text-xs text-slate-200 focus:outline-none"
+          >
+            {AGENT_RUNTIMES.map(runtime => (
+              <option key={runtime.id} value={runtime.id}>
+                {runtime.label}
+              </option>
+            ))}
+          </select>
         </div>
       </div>
 

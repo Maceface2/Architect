@@ -2,10 +2,12 @@ import { useEffect, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 
 interface TerminalInfo {
   id: string
   label: string
+  runtime: AgentRuntime
 }
 
 interface Props {
@@ -174,6 +176,7 @@ export default function TerminalPanel({ sessions, isVisible }: Props) {
         {sessions.map(s => {
           const isArchitect = s.id === 'architect-agent'
           const isActive = s.id === activeId
+          const runtime = getAgentRuntime(s.runtime)
           return (
             <button
               key={s.id}
@@ -189,7 +192,13 @@ export default function TerminalPanel({ sessions, isVisible }: Props) {
                   isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
                 }`}
               />
-              {isArchitect ? '⬡ Architect' : s.label}
+              <span>{isArchitect ? '⬡ Architect' : s.label}</span>
+              <span
+                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
+              >
+                {runtime.shortLabel}
+              </span>
             </button>
           )
         })}

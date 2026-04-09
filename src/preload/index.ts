@@ -18,13 +18,13 @@ contextBridge.exposeInMainWorld('electron', {
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
   // Graph execution
-  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, dispatchContext?: unknown) =>
-    ipcRenderer.invoke('run-graph', nodes, edges, cwd, dispatchContext),
+  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, settings: unknown, dispatchContext?: unknown) =>
+    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatchContext),
 
   // Architecture assistant
   assistant: {
-    start: (projectDir: string, contextMd: string) =>
-      ipcRenderer.invoke('start-assistant', projectDir, contextMd),
+    start: (projectDir: string, contextMd: string, runtime: unknown) =>
+      ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime),
     stop: () =>
       ipcRenderer.send('stop-assistant'),
   },

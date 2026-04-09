@@ -3,6 +3,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { X, Bot } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
+import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 
 const ASSISTANT_ID = 'architect-assistant'
 
@@ -37,13 +38,15 @@ interface CanvasUpdate {
 interface Props {
   onClose: () => void
   onCanvasUpdate: (update: CanvasUpdate) => void
+  runtime: AgentRuntime
 }
 
-export default function AssistantPanel({ onClose, onCanvasUpdate }: Props) {
+export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null)
   const termRef       = useRef<Terminal | null>(null)
   const fitRef        = useRef<FitAddon | null>(null)
   const parseBufferRef = useRef<string>('')
+  const runtimeMeta = getAgentRuntime(runtime)
 
   // Parse the ANSI-stripped data stream for ARCHITECT_CANVAS_UPDATE blocks
   const parseForUpdates = useCallback((raw: string) => {
@@ -137,6 +140,12 @@ export default function AssistantPanel({ onClose, onCanvasUpdate }: Props) {
         <div className="flex items-center gap-2">
           <Bot size={13} className="text-[#c084fc]" />
           <span className="text-xs font-medium text-slate-300">Architecture Assistant</span>
+          <span
+            className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+            style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
+          >
+            {runtimeMeta.shortLabel}
+          </span>
         </div>
         <button
           onClick={onClose}

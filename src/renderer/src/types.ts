@@ -1,11 +1,12 @@
 import type { Node } from '@xyflow/react'
+import type { AgentRuntime, AgentRuntimeMode } from '../../../shared/agentRuntimes'
 
 export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
 export type RunMode = 'sequential' | 'parallel' | 'loop'
 export type OnFailure = 'stop' | 'retry' | 'skip'
 
-// Skills = markdown files pre-injected as agent context (like Claude Code skill files)
+// Skills = markdown files pre-injected as agent context for the selected coding CLI
 export interface NodeSkillFile {
   id: string       // e.g. 'researcher'
   name: string     // display name
@@ -42,15 +43,11 @@ export interface NodeEnvVar {
   value: string
 }
 
-export type ClaudeModel = 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6' | 'claude-opus-4-6'
+export interface ProjectSettings {
+  defaultRuntime: AgentRuntime
+}
 
-export const MODEL_OPTIONS: { id: ClaudeModel; label: string; short: string }[] = [
-  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5',  short: 'haiku'  },
-  { id: 'claude-sonnet-4-6',         label: 'Sonnet 4.6', short: 'sonnet' },
-  { id: 'claude-opus-4-6',           label: 'Opus 4.6',   short: 'opus'   },
-]
-
-export const DEFAULT_MODEL: ClaudeModel = 'claude-sonnet-4-6'
+export type RuntimeModelMap = Partial<Record<AgentRuntime, string>>
 
 export interface ArchitectNodeData {
   label: string
@@ -61,7 +58,9 @@ export interface ArchitectNodeData {
   tag: string
   status: NodeStatus
   prompt: string
-  model: ClaudeModel
+  agentRuntimeMode: AgentRuntimeMode
+  agentRuntime: AgentRuntime
+  providerModels: RuntimeModelMap
   openSections: string[]
   skills: NodeSkillFile[]
   tools: NodeTools
@@ -72,3 +71,14 @@ export interface ArchitectNodeData {
 }
 
 export type ArchitectNodeType = Node<ArchitectNodeData, 'architectNode'>
+
+export interface ArchitectCanvasData {
+  nodes: ArchitectNodeType[]
+  edges: Array<{
+    id: string
+    source: string
+    target: string
+  }>
+  settings: ProjectSettings
+  savedAt?: string
+}
