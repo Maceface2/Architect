@@ -14,7 +14,7 @@ import {
 } from '@xyflow/react'
 
 import TopNav from './components/layout/TopNav'
-import GenerateDiagramModal from './components/layout/GenerateDiagramModal'
+import AssistantPanel from './components/layout/AssistantPanel'
 import Sidebar from './components/layout/Sidebar'
 import AgentLog from './components/layout/AgentLog'
 import FilesPanel from './components/layout/FilesPanel'
@@ -22,11 +22,13 @@ import TerminalPanel from './components/layout/TerminalPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
 import { nodeTypes } from './components/nodes/nodeTypes'
 import type { ArchitectNodeType } from './types'
+import { DEFAULT_MODEL } from './types'
 import type { PaletteItemConfig } from './data/componentPalette'
 
 interface TerminalInfo { id: string; label: string }
 
 const DEFAULT_NODE_CONFIG = {
+  model: DEFAULT_MODEL,
   openSections: [],
   skills: [],
   tools: { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false },
@@ -169,7 +171,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatching, setDispatching] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
-  const [showGenerateModal, setShowGenerateModal] = useState(false)
+  const [assistantOpen, setAssistantOpen] = useState(false)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const { screenToFlowPosition } = useReactFlow()
 
@@ -267,25 +269,69 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     }
   }, [nodes, edges, projectDir, dispatchedGraph, changedNodeLabels])
 
-  const onGenerate = useCallback(async (description: string) => {
-    const result = await window.electron.generateDiagram(description)
-    if (!result || typeof result !== 'object') throw new Error('Invalid response from diagram generator')
-    const rawNodes = (result.nodes ?? []) as Array<Record<string, unknown>>
-    const rawEdges = (result.edges ?? []) as Array<{ id?: string; source: string; target: string }>
+  const buildAssistantContext = useCallback((currentNodes: ArchitectNodeType[], currentEdges: Edge[]) => {
+    const canvasJson = JSON.stringify({
+      nodes: currentNodes.map(n => ({
+        id: n.id,
+        label: n.data.label,
+        description: n.data.description,
+        category: n.data.category,
+        iconName: n.data.iconName,
+        color: n.data.color,
+        tag: n.data.tag,
+        prompt: n.data.prompt,
+      })),
+      edges: currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+    }, null, 2)
+
+    return `You are an architecture assistant embedded in Architect — a tool for visually composing multi-agent and software systems.
+
+## Current Canvas
+${currentNodes.length === 0 ? '(empty canvas — no nodes yet)' : `\`\`\`json\n${canvasJson}\n\`\`\``}
+
+## Your Role
+Help the user design, refine, and reason about their architecture. You can:
+- Discuss design decisions, tradeoffs, and patterns
+- Suggest components to add, remove, or restructure
+- When the user asks to change the diagram, output the complete updated canvas in this exact format (no markdown fences around the block):
+
+ARCHITECT_CANVAS_UPDATE
+{"nodes": [...], "edges": [...]}
+END_ARCHITECT_CANVAS_UPDATE
+
+The canvas replaces everything on each update, so always include ALL nodes and edges.
+Preserve existing node ids whenever possible so the user's layout is not lost.
+
+## Canvas Node Schema
+Each node requires: id (kebab-case), label, description (one sentence), category, iconName, color (hex), tag (≤6 chars uppercase), prompt (agent instructions, may be empty)
+
+Available categories: infrastructure | services | storage | custom
+
+Available iconNames: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitBranch, Webhook, Settings2, Brain, Layers, Cpu, Clock, Mail, Bell, CreditCard, Search, Activity, BarChart2, ToggleLeft, Database, Zap, Archive, Table, Boxes, Share2, TrendingUp, Wrench
+
+Each edge requires: id, source (node id), target (node id)
+
+Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. Otherwise just discuss and advise.`
+  }, [])
+
+  const applyCanvasUpdate = useCallback((update: { nodes: unknown[]; edges: unknown[] }) => {
+    const rawNodes = (update.nodes ?? []) as Array<Record<string, unknown>>
+    const rawEdges = (update.edges ?? []) as Array<{ id?: string; source: string; target: string }>
+    const existingPositions = new Map(nodes.map(n => [n.id, n.position]))
     const positions = computeLayoutPositions(rawNodes.map(n => String(n.id)), rawEdges)
     const newNodes: ArchitectNodeType[] = rawNodes.map((raw, i) => {
       const id = String(raw.id ?? `gen-${Date.now()}-${i}`)
       return {
         id,
         type: 'architectNode' as const,
-        position: positions[id] ?? { x: 80 + (i % 3) * 320, y: 80 + Math.floor(i / 3) * 160 },
+        position: existingPositions.get(id) ?? positions[id] ?? { x: 80 + (i % 3) * 320, y: 80 + Math.floor(i / 3) * 160 },
         data: {
-          label:       String(raw.label       ?? 'Agent'),
+          label:       String(raw.label       ?? 'Node'),
           description: String(raw.description ?? ''),
           category:    (raw.category as ArchitectNodeType['data']['category']) ?? 'services',
           iconName:    String(raw.iconName ?? 'Settings2'),
           color:       String(raw.color   ?? '#60a5fa'),
-          tag:         String(raw.tag     ?? 'AGENT'),
+          tag:         String(raw.tag     ?? 'NODE'),
           status:      'idle' as const,
           prompt:      String(raw.prompt  ?? ''),
           ...DEFAULT_NODE_CONFIG,
@@ -301,7 +347,23 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setEdges(newEdges)
     setIsDirty(true)
     setDispatchedGraph(null)
-  }, [setNodes, setEdges])
+  }, [nodes, setNodes, setEdges])
+
+  const handleAssistantToggle = useCallback(async () => {
+    if (assistantOpen) {
+      window.electron.assistant.stop()
+      setAssistantOpen(false)
+    } else {
+      const contextMd = buildAssistantContext(nodes, edges)
+      await window.electron.assistant.start(projectDir, contextMd)
+      setAssistantOpen(true)
+    }
+  }, [assistantOpen, nodes, edges, projectDir, buildAssistantContext])
+
+  const handleAssistantClose = useCallback(() => {
+    window.electron.assistant.stop()
+    setAssistantOpen(false)
+  }, [])
 
   const isCanvas   = activeTab === 'Canvas'
   const isFiles    = activeTab === 'Files'
@@ -321,16 +383,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         onChangeDir={onChangeDir}
         onSave={onSave}
         isDirty={isDirty}
-        onGenerateClick={() => setShowGenerateModal(true)}
+        onAssistantToggle={handleAssistantToggle}
+        assistantOpen={assistantOpen}
         isRedispatch={dispatchedGraph !== null}
         changedCount={changedNodeLabels.length}
       />
-      {showGenerateModal && (
-        <GenerateDiagramModal
-          onClose={() => setShowGenerateModal(false)}
-          onGenerate={onGenerate}
-        />
-      )}
       <div className="flex flex-1 overflow-hidden">
         <ResizablePanel side="left" defaultWidth={160}>
           <Sidebar />
@@ -367,8 +424,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           </div>
         )}
 
-        <ResizablePanel side="right" defaultWidth={256}>
-          <AgentLog projectDir={projectDir} />
+        <ResizablePanel key={assistantOpen ? 'assistant' : 'agentlog'} side="right" defaultWidth={assistantOpen ? 420 : 256}>
+          {assistantOpen ? (
+            <AssistantPanel
+              onClose={handleAssistantClose}
+              onCanvasUpdate={applyCanvasUpdate}
+            />
+          ) : (
+            <AgentLog projectDir={projectDir} />
+          )}
         </ResizablePanel>
       </div>
     </div>

@@ -45,6 +45,7 @@ export interface GraphNode {
     tag: string
     description: string
     prompt: string
+    model?: string
     skills: Array<{ name: string; path: string; builtin: boolean }>
     tools: Record<string, boolean>
     behavior: { mode: string; retries: number; onFailure: string; timeoutMs: number }
@@ -73,14 +74,25 @@ let activeWatcher: fs.FSWatcher | null = null
 
 // ── PTY management ─────────────────────────────────────────────────────────
 
+// Spawns a Claude Code interactive session.
+// initialPrompt — passed as a positional arg so Claude starts immediately: claude "prompt"
+// model         — Claude model ID (e.g. claude-haiku-4-5-20251001); defaults to sonnet
+// onExit        — optional hook called after the IPC exit event (used for cleanup)
 function spawnClaude(
   win: BrowserWindow,
   id: string,
   label: string,
   env: Record<string, string>,
   cwd: string,
+  initialPrompt?: string,
+  model?: string,
+  onExit?: () => void,
 ): TerminalInfo {
-  const ptyProcess = pty.spawn(CLAUDE_BIN, ['--dangerously-skip-permissions'], {
+  const args: string[] = ['--dangerously-skip-permissions']
+  if (model) args.push('--model', model)
+  if (initialPrompt) args.push(initialPrompt)
+
+  const ptyProcess = pty.spawn(CLAUDE_BIN, args, {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -93,7 +105,6 @@ function spawnClaude(
 
   ptyProcess.onData(data => {
     session.buffer += data
-    // Claude Code's interactive prompt ends with > or ❯
     if (!session.ready && /[>❯]\s*$/.test(session.buffer)) {
       session.ready = true
       session.callbacks.splice(0).forEach(cb => cb())
@@ -108,6 +119,7 @@ function spawnClaude(
   ptyProcess.onExit(({ exitCode }) => {
     if (!win.isDestroyed()) win.webContents.send('terminal:exit', { id, exitCode })
     sessions.delete(id)
+    onExit?.()
   })
 
   return { id, label }
@@ -133,6 +145,7 @@ export function writeToTerminal(id: string, data: string) {
 export function resizeTerminal(id: string, cols: number, rows: number) {
   try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
 }
+
 
 function onSessionDone(id: string, cb: () => void) {
   const s = sessions.get(id)
@@ -211,7 +224,7 @@ function buildArchitectPrompt(
       up.length   ? `Upstream: ${up.join(', ')}`   : '',
       down.length ? `Downstream: ${down.join(', ')}` : '',
       `Task file: ARCHITECT/tasks/${sanitize(n.data.label)}.md`,
-      `Output file: ARCHITECT/outputs/${sanitize(n.data.label)}.md`,
+      `Status log: ARCHITECT/outputs/${sanitize(n.data.label)}.md (progress notes only — actual code goes in the project root)`,
     ].filter(Boolean).join('\n')
   }).join('\n\n')
 
@@ -243,7 +256,9 @@ ${flowLines}
    - Clear acceptance criteria
 
 3. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
-4. Monitor ARCHITECT/outputs/ — when agents complete, coordinate handoffs by updating downstream task files with actual upstream output details
+4. Monitor ARCHITECT/outputs/ — when agents complete (they write their status log there), coordinate handoffs by updating downstream task files with actual details
+
+IMPORTANT: Agents must create all real project files (source code, configs, etc.) directly in the project root working directory, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination files (manifests, prompts, tasks, status logs).
 
 Start immediately. Write the task files now.${
     dispatchContext?.isRedispatch
@@ -257,8 +272,8 @@ Start immediately. Write the task files now.${
 }
 
 function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]): string {
-  const safe       = sanitize(node.data.label)
-  const outputFile = `ARCHITECT/outputs/${safe}.md`
+  const safe      = sanitize(node.data.label)
+  const statusLog = `ARCHITECT/outputs/${safe}.md`
 
   const upstream   = edges.filter(e => e.target === node.id).map(e => nodes.find(x => x.id === e.source)?.data.label).filter(Boolean)
   const downstream = edges.filter(e => e.source === node.id).map(e => nodes.find(x => x.id === e.target)?.data.label).filter(Boolean)
@@ -267,21 +282,24 @@ function buildNodePrompt(node: GraphNode, edges: GraphEdge[], nodes: GraphNode[]
 
   return `You are the ${node.data.label} agent [${node.data.tag}] — ${node.data.description}.
 ${node.data.prompt ? `\nUser goal: ${node.data.prompt}\n` : ''}
-${upstream.length   ? `Upstream agents (read their output files first): ${upstream.map(u => `ARCHITECT/outputs/${sanitize(u as string)}.md`).join(', ')}\n` : ''}
+${upstream.length   ? `Upstream agents (read their status logs first): ${upstream.map(u => `ARCHITECT/outputs/${sanitize(u as string)}.md`).join(', ')}\n` : ''}
 ${downstream.length ? `Downstream agents depending on you: ${downstream.join(', ')}\n` : ''}
 ${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ${skills ? `${skills}\n` : ''}
 ## Instructions
 
-Your task file has already been written and is ready to read. Execute every instruction in it immediately and concretely — create files, write code, implement everything specified.
+Read ARCHITECT/tasks/${safe}.md and execute every instruction in it immediately and concretely.
 
-Write your progress and final output to: ${outputFile}
+**WHERE TO CREATE FILES:**
+- All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
+- ARCHITECT/ is only for coordination: tasks, prompts, and status logs.
+- ${statusLog} is your status log — write brief progress notes and a final summary there, not your actual code.
 
-If you have downstream agents, clearly document your interfaces (ports, schemas, file paths) in your output file.
+If you have downstream agents, document your interfaces (ports, schemas, file paths) in your status log so they can read it.
 
 Work fully autonomously — do not stop or ask for clarification.
 
-When you have finished ALL work and written your final output to ${outputFile}, run this exact shell command as your last action:
+When you have finished ALL work, run this exact shell command as your last action:
 \`\`\`
 echo ARCHITECT_COMPLETE
 \`\`\``
@@ -323,10 +341,10 @@ function setupWorkspace(
 }
 
 // ── Main entry point ───────────────────────────────────────────────────────
-// We write prompts to files and send each terminal a short single-line command.
-// Single-line = no multi-line paste issues. \r = carriage return = Enter in PTY.
-// Overseer gets no \r — user reads the short message and presses Enter once.
-// Node agents get \r — auto-submit, fully hands-off.
+// Each agent is started as: claude --dangerously-skip-permissions "<prompt>"
+// The prompt is passed as a positional arg so Claude begins executing immediately —
+// no waiting for the interactive prompt, no inject step.
+// Node agents are spawned lazily when their task file is ready and all upstreams are done.
 
 export async function runGraph(
   win: BrowserWindow,
@@ -336,57 +354,61 @@ export async function runGraph(
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   killAll()
-
   setupWorkspace(projectDir, nodes, edges, dispatchContext)
 
-  const sorted  = topoSort(nodes, edges)
-  const created: TerminalInfo[] = []
-
-  // Spawn all sessions (they all start loading claude simultaneously)
-  created.push(spawnClaude(win, 'architect-agent', 'Architect', {}, projectDir))
-  for (const node of sorted) {
-    const env: Record<string, string> = {}
-    for (const { key, value } of node.data.envVars ?? []) { if (key) env[key] = value }
-    created.push(spawnClaude(win, node.id, node.data.label, env, projectDir))
-  }
-
-  // Wire up prompts — each session fires as soon as IT is ready, not when all are ready.
+  const sorted     = topoSort(nodes, edges)
+  const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
   const tasksDir   = join(projectDir, 'ARCHITECT', 'tasks')
-  const nodeMap    = new Map(sorted.map(n => [sanitize(n.data.label), n]))
-  const triggered  = new Set<string>()
-  const taskReady  = new Set<string>()
 
-  // Build downstream adjacency so completion tokens can immediately unblock dependents.
+  // Return all terminal infos up-front so the renderer shows tabs immediately;
+  // the actual PTYs for node agents are spawned lazily below.
+  const allInfo: TerminalInfo[] = [
+    { id: 'architect-agent', label: 'Architect' },
+    ...sorted.map(n => ({ id: n.id, label: n.data.label })),
+  ]
+
+  const nodeMap       = new Map(sorted.map(n => [sanitize(n.data.label), n]))
+  const triggered     = new Set<string>()
+  const taskReady     = new Set<string>()
+  const agentDone     = new Set<string>()
+
+  // Build adjacency maps
+  const upstreamMap   = new Map<string, string[]>()
   const downstreamMap = new Map<string, string[]>()
   for (const node of sorted) {
     const safe = sanitize(node.data.label)
-    const downSafes = edges
+    upstreamMap.set(safe, edges
+      .filter(e => e.target === node.id)
+      .map(e => nodes.find(n => n.id === e.source))
+      .filter(Boolean).map(n => sanitize(n!.data.label)))
+    downstreamMap.set(safe, edges
       .filter(e => e.source === node.id)
       .map(e => nodes.find(n => n.id === e.target))
-      .filter(Boolean)
-      .map(n => sanitize(n!.data.label))
-    downstreamMap.set(safe, downSafes)
+      .filter(Boolean).map(n => sanitize(n!.data.label)))
   }
 
-  // Fires only when BOTH the session is ready AND its task file has content.
-  function tryTrigger(safe: string) {
+  function trySpawnNode(safe: string) {
     if (triggered.has(safe)) return
-    const node = nodeMap.get(safe)
-    if (!node) return
-    const session = sessions.get(node.id)
-    if (!session?.ready) return
     if (!taskReady.has(safe)) return
+    // Wait for all upstream agents to complete before spawning
+    if ((upstreamMap.get(safe) ?? []).some(up => !agentDone.has(up))) return
+
     triggered.add(safe)
-    writeToTerminal(node.id,
-      `Read ARCHITECT/prompts/${safe}.md to understand your role, then read ARCHITECT/tasks/${safe}.md and execute every instruction. Write all output to ARCHITECT/outputs/${safe}.md.\r`
-    )
-    if (triggered.size === nodeMap.size) {
-      activeWatcher?.close()
-      activeWatcher = null
-    }
+    const node = nodeMap.get(safe)!
+    const env: Record<string, string> = {}
+    for (const { key, value } of node.data.envVars ?? []) { if (key) env[key] = value }
+
+    const prompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
+    spawnClaude(win, node.id, node.data.label, env, projectDir, prompt, node.data.model)
+
+    onSessionDone(node.id, () => {
+      agentDone.add(safe)
+      for (const downSafe of downstreamMap.get(safe) ?? []) trySpawnNode(downSafe)
+      if (triggered.size === nodeMap.size) { activeWatcher?.close(); activeWatcher = null }
+    })
   }
 
-  // fs.watch fires the instant Architect writes a task file — no polling delay.
+  // Watch for task files written by the Architect
   activeWatcher?.close()
   activeWatcher = fs.watch(tasksDir, (_event, filename) => {
     if (!filename?.endsWith('.md')) return
@@ -395,129 +417,54 @@ export async function runGraph(
     try {
       if (fs.statSync(join(tasksDir, filename)).size > 0) {
         taskReady.add(safe)
-        tryTrigger(safe)
+        trySpawnNode(safe)
       }
     } catch { /* race: file briefly absent */ }
   })
 
-  // Architect gets its prompt the moment it reaches the > prompt.
-  waitForReady('architect-agent', 30_000).then(() => {
-    writeToTerminal('architect-agent',
-      'Read the file ARCHITECT/prompts/architect.md and follow every instruction in it exactly.\r'
-    )
-  })
+  // Spawn Architect immediately — always uses default model (it's a coordination agent)
+  const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
+  spawnClaude(win, 'architect-agent', 'Architect', {}, projectDir, architectPrompt, undefined)
 
-  // Each node agent: trigger as soon as it is ready (task file may already be there).
-  for (const node of sorted) {
-    const safe = sanitize(node.data.label)
+  return allInfo
+}
 
-    waitForReady(node.id, 30_000).then(() => tryTrigger(safe))
+// ── Architecture assistant ─────────────────────────────────────────────────
 
-    // Completion token: when this agent emits ARCHITECT_COMPLETE, immediately unblock
-    // any downstream agents whose task files are already written.
-    onSessionDone(node.id, () => {
-      for (const downSafe of downstreamMap.get(safe) ?? []) {
-        tryTrigger(downSafe)
-      }
-    })
+export function startAssistant(
+  win: BrowserWindow,
+  projectDir: string,
+  contextMd: string,
+): TerminalInfo {
+  // Kill any existing assistant session
+  const existing = sessions.get('architect-assistant')
+  if (existing) {
+    try { existing.pty.kill() } catch {}
+    sessions.delete('architect-assistant')
   }
 
-  return created
+  // Write context file — the assistant reads it via the initial prompt
+  const architectDir = join(projectDir, 'ARCHITECT')
+  fs.mkdirSync(architectDir, { recursive: true })
+  const contextFile = join(architectDir, '.assistant-context.md')
+  fs.writeFileSync(contextFile, contextMd)
+
+  return spawnClaude(
+    win,
+    'architect-assistant',
+    'Architecture Assistant',
+    {},
+    projectDir,
+    'Read ARCHITECT/.assistant-context.md',
+    undefined,
+    () => { try { fs.unlinkSync(contextFile) } catch {} },
+  )
 }
 
-// ── AI diagram generation ──────────────────────────────────────────────────
-
-export function generateDiagramWithClaude(
-  description: string
-): Promise<{ nodes: unknown[]; edges: unknown[] }> {
-  // Write instructions to a temp file so we never paste multi-line text into the PTY.
-  const tmpFile = join('/tmp', `architect-gen-${Date.now()}.md`)
-  const instructions = `You are generating a multi-agent pipeline diagram for an app called Architect.
-Respond with ONLY valid JSON — no markdown fences, no explanation, nothing else.
-Use this exact structure:
-{
-  "nodes": [
-    {
-      "id": "kebab-case-id",
-      "label": "Human Readable Name",
-      "description": "One sentence of what this agent does",
-      "category": "infrastructure",
-      "iconName": "Settings2",
-      "color": "#60a5fa",
-      "tag": "SHORT",
-      "prompt": "Detailed specific instructions for this agent..."
-    }
-  ],
-  "edges": [
-    { "id": "e1", "source": "node-id-a", "target": "node-id-b" }
-  ]
-}
-
-Available categories: infrastructure, services, storage
-Available iconNames: Monitor, Shield, Lock, Settings2, Brain, Layers, Database, Zap, Wrench, BookOpen, Search, Terminal, RefreshCw, GitBranch, Users, ScanLine, Gauge, ClipboardList
-Use 3–7 nodes. Assign each node a distinct hex color. Keep tags under 6 chars.
-
-System to model: ${description}`
-
-  fs.writeFileSync(tmpFile, instructions)
-
-  return new Promise((resolve, reject) => {
-    // Use interactive PTY (subscription auth) — NOT claude -p which needs API credits.
-    const ptyProcess = pty.spawn(CLAUDE_BIN, ['--dangerously-skip-permissions'], {
-      name: 'xterm-256color',
-      cols: 220,
-      rows: 50,
-      cwd: process.env.HOME ?? '/',
-      env: { ...process.env } as Record<string, string>,
-    })
-
-    let buffer = ''
-    let prompted = false
-    let settled = false
-
-    const settle = (fn: () => void) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      try { ptyProcess.kill() } catch {}
-      try { fs.unlinkSync(tmpFile) } catch {}
-      fn()
-    }
-
-    const timer = setTimeout(() => {
-      settle(() => reject('Diagram generation timed out after 60s'))
-    }, 60_000)
-
-    ptyProcess.onData(data => {
-      buffer += data
-
-      // Step 1: wait for the initial > prompt, then send the instruction.
-      if (!prompted && /[>❯]\s*$/.test(buffer)) {
-        prompted = true
-        buffer = '' // reset so we only capture the response going forward
-        ptyProcess.write(`Read the file ${tmpFile} and follow every instruction in it exactly.\r`)
-        return
-      }
-
-      // Step 2: wait for the next > prompt which signals the response is complete.
-      if (prompted && /[>❯]\s*$/.test(buffer)) {
-        settle(() => {
-          const match = buffer.match(/\{[\s\S]*\}/)
-          if (!match) { reject('No JSON found in response'); return }
-          try { resolve(JSON.parse(match[0])) }
-          catch { reject('Failed to parse JSON from response') }
-        })
-      }
-    })
-
-    ptyProcess.onExit(() => {
-      settle(() => {
-        const match = buffer.match(/\{[\s\S]*\}/)
-        if (match) {
-          try { resolve(JSON.parse(match[0])); return } catch {}
-        }
-        reject('Claude session exited before producing a response')
-      })
-    })
-  })
+export function stopAssistant() {
+  const session = sessions.get('architect-assistant')
+  if (session) {
+    try { session.pty.kill() } catch {}
+    sessions.delete('architect-assistant')
+  }
 }

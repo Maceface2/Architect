@@ -42,6 +42,16 @@ export interface NodeEnvVar {
   value: string
 }
 
+export type ClaudeModel = 'claude-haiku-4-5-20251001' | 'claude-sonnet-4-6' | 'claude-opus-4-6'
+
+export const MODEL_OPTIONS: { id: ClaudeModel; label: string; short: string }[] = [
+  { id: 'claude-haiku-4-5-20251001', label: 'Haiku 4.5',  short: 'haiku'  },
+  { id: 'claude-sonnet-4-6',         label: 'Sonnet 4.6', short: 'sonnet' },
+  { id: 'claude-opus-4-6',           label: 'Opus 4.6',   short: 'opus'   },
+]
+
+export const DEFAULT_MODEL: ClaudeModel = 'claude-sonnet-4-6'
+
 export interface ArchitectNodeData {
   label: string
   description: string
@@ -51,6 +61,7 @@ export interface ArchitectNodeData {
   tag: string
   status: NodeStatus
   prompt: string
+  model: ClaudeModel
   openSections: string[]
   skills: NodeSkillFile[]
   tools: NodeTools

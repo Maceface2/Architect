@@ -26,7 +26,10 @@ interface ElectronAPI {
   loadCanvas: (projectDir: string) => Promise<string | null>
   scanComponents: (dirPath: string) => Promise<unknown[]>
   runGraph: (nodes: unknown[], edges: unknown[], cwd: string, dispatchContext?: unknown) => Promise<TerminalInfo[]>
-  generateDiagram: (description: string) => Promise<{ nodes: unknown[]; edges: unknown[] }>
+  assistant: {
+    start: (projectDir: string, contextMd: string) => Promise<TerminalInfo | null>
+    stop: () => void
+  }
   terminal: {
     input: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void

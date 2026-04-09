@@ -21,9 +21,13 @@ contextBridge.exposeInMainWorld('electron', {
   runGraph: (nodes: unknown[], edges: unknown[], cwd: string, dispatchContext?: unknown) =>
     ipcRenderer.invoke('run-graph', nodes, edges, cwd, dispatchContext),
 
-  // AI diagram generation
-  generateDiagram: (description: string) =>
-    ipcRenderer.invoke('generate-diagram', description),
+  // Architecture assistant
+  assistant: {
+    start: (projectDir: string, contextMd: string) =>
+      ipcRenderer.invoke('start-assistant', projectDir, contextMd),
+    stop: () =>
+      ipcRenderer.send('stop-assistant'),
+  },
 
   // Terminal I/O
   terminal: {

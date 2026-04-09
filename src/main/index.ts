@@ -2,10 +2,11 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { runGraph, writeToTerminal, resizeTerminal, killAll, generateDiagramWithClaude } from './terminals'
+import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant } from './terminals'
 
 app.name = 'Architect'
 app.setName('Architect')
+process.title = 'Architect'
 
 const iconPath = join(__dirname, '../../resources/icon.png')
 
@@ -142,8 +143,13 @@ ipcMain.handle('run-graph', (_event, nodes, edges, cwd, dispatchContext) => {
   return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), dispatchContext)
 })
 
-ipcMain.handle('generate-diagram', (_event, description: string) => {
-  return generateDiagramWithClaude(description)
+ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string) => {
+  if (!mainWindow) return null
+  return startAssistant(mainWindow, projectDir, contextMd)
+})
+
+ipcMain.on('stop-assistant', () => {
+  stopAssistant()
 })
 
 ipcMain.on('terminal:input', (_event, id: string, data: string) => {

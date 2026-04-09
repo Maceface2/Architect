@@ -1,4 +1,4 @@
-import { Zap, Loader2, FolderOpen, Save, Sparkles } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save, Bot } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -12,7 +12,8 @@ interface TopNavProps {
   onChangeDir: () => void
   onSave: () => void
   isDirty: boolean
-  onGenerateClick: () => void
+  onAssistantToggle: () => void
+  assistantOpen: boolean
   isRedispatch: boolean
   changedCount: number
 }
@@ -36,7 +37,7 @@ export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir, onSave, isDirty,
-  onGenerateClick, isRedispatch, changedCount,
+  onAssistantToggle, assistantOpen, isRedispatch, changedCount,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -91,12 +92,16 @@ export default function TopNav({
           )}
         </button>
         <button
-          onClick={onGenerateClick}
-          className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
-          title="Generate diagram with AI"
+          onClick={onAssistantToggle}
+          className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border transition-colors ${
+            assistantOpen
+              ? 'text-[#c084fc] border-[#c084fc]/40 bg-[#c084fc]/10 hover:bg-[#c084fc]/20'
+              : 'text-slate-300 border-node-border hover:bg-node'
+          }`}
+          title="Architecture assistant"
         >
-          <Sparkles size={12} />
-          Generate
+          <Bot size={12} />
+          Assistant
         </button>
         <button onClick={onClear} className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors">
           Clear

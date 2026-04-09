@@ -10,9 +10,11 @@ import type {
   NodeBehavior,
   NodePermissions,
   NodeEnvVar,
+  ClaudeModel,
   RunMode,
   OnFailure,
 } from '../../types'
+import { MODEL_OPTIONS, DEFAULT_MODEL } from '../../types'
 
 type ArchitectNodeProps = NodeProps<Node<ArchitectNodeData>>
 
@@ -35,6 +37,7 @@ function ArchitectNode({ id, data }: ArchitectNodeProps) {
   const label       = data.label as string
   const prompt      = (data.prompt ?? '') as string
   const status      = data.status as NodeStatus
+  const model       = (data.model ?? DEFAULT_MODEL) as ClaudeModel
   const skills      = (data.skills ?? []) as NodeSkillFile[]
   const tools       = (data.tools ?? { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false }) as NodeTools
   const behavior    = (data.behavior ?? { mode: 'sequential', retries: 0, onFailure: 'stop', timeoutMs: 30000 }) as NodeBehavior
@@ -65,7 +68,12 @@ function ArchitectNode({ id, data }: ArchitectNodeProps) {
         <div className="pl-[18px] pr-3.5 pt-3 pb-3">
           <div className="flex items-center justify-between mb-1.5">
             <span className="text-[11px] font-bold tracking-widest" style={{ color: nodeColor }}>{tag}</span>
-            <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor(status, nodeColor) }} />
+            <div className="flex items-center gap-1.5">
+              <span className="text-[9px] text-slate-600 font-mono">
+                {MODEL_OPTIONS.find(m => m.id === model)?.short ?? 'sonnet'}
+              </span>
+              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor(status, nodeColor) }} />
+            </div>
           </div>
           <p className="text-[15px] font-semibold text-white leading-snug">{label}</p>
           {prompt && (
@@ -86,6 +94,7 @@ function ArchitectNode({ id, data }: ArchitectNodeProps) {
           tag={tag}
           label={label}
           prompt={prompt}
+          model={model}
           skills={skills}
           tools={tools}
           behavior={behavior}
@@ -107,6 +116,7 @@ interface ModalProps {
   tag: string
   label: string
   prompt: string
+  model: ClaudeModel
   skills: NodeSkillFile[]
   tools: NodeTools
   behavior: NodeBehavior
@@ -117,7 +127,7 @@ interface ModalProps {
 }
 
 function NodeConfigModal({
-  nodeColor, tag, label, prompt, skills, tools, behavior, permissions, envVars, patch, onClose
+  nodeColor, tag, label, prompt, model, skills, tools, behavior, permissions, envVars, patch, onClose
 }: ModalProps) {
   const [labelDraft, setLabelDraft] = useState(label)
   const [customSkillInput, setCustomSkillInput] = useState('')
@@ -209,6 +219,26 @@ function NodeConfigModal({
           {/* Right: all other config, scrollable */}
           <div className="w-[340px] flex-shrink-0 overflow-y-auto">
             <div className="p-6 space-y-6">
+
+              {/* Model */}
+              <Section title="Model">
+                <div className="flex flex-col gap-1.5">
+                  {MODEL_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      onClick={() => patch({ model: opt.id })}
+                      className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
+                        model === opt.id
+                          ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
+                          : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-[12px] font-medium">{opt.label}</span>
+                      <span className="text-[10px] font-mono text-slate-600">{opt.short}</span>
+                    </button>
+                  ))}
+                </div>
+              </Section>
 
               {/* Skills */}
               <Section title="Skills">
