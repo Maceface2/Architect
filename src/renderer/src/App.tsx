@@ -29,7 +29,6 @@ import { createDefaultNodeConfig, createDefaultProjectSettings, migrateCanvasDat
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
 import type { GraphPreflightSummary, LaunchScopeMode, RunGraphOptions } from '../../shared/graphDispatch'
-import type { ProjectBootstrapResult } from '../../shared/projectBootstrap'
 
 interface TerminalInfo {
   id: string
@@ -161,37 +160,6 @@ function computeLayoutPositions(
   return positions
 }
 
-function buildImportedNodes(
-  bootstrap: ProjectBootstrapResult,
-  defaultRuntime: AgentRuntime,
-): ArchitectNodeType[] {
-  const positions = computeLayoutPositions(
-    bootstrap.nodes.map(node => node.id),
-    bootstrap.edges
-  )
-
-  return bootstrap.nodes.map((node, index) => ({
-    id: node.id,
-    type: 'architectNode',
-    position: positions[node.id] ?? { x: 80 + (index % 3) * 320, y: 80 + Math.floor(index / 3) * 160 },
-    data: {
-      label: node.label,
-      description: node.description,
-      category: node.category,
-      iconName: node.iconName,
-      color: node.color,
-      tag: node.tag,
-      status: 'idle',
-      prompt: node.prompt,
-      ...createDefaultNodeConfig(defaultRuntime),
-      ownedPaths: node.ownedPaths,
-      expectedFiles: node.expectedFiles,
-      contracts: node.contracts,
-      reviewHints: node.reviewHints,
-    },
-  }))
-}
-
 function serializeCanvasData(
   nodes: ArchitectNodeType[],
   edges: Edge[],
@@ -203,6 +171,25 @@ function serializeCanvasData(
     settings,
     savedAt: new Date().toISOString(),
   })
+}
+
+function getNestedValue(raw: Record<string, unknown>, key: string) {
+  if (key in raw) return raw[key]
+  const nested = raw.data
+  if (nested && typeof nested === 'object' && key in (nested as Record<string, unknown>)) {
+    return (nested as Record<string, unknown>)[key]
+  }
+  return undefined
+}
+
+function getStringValue(raw: Record<string, unknown>, key: string, fallback = '') {
+  const value = getNestedValue(raw, key)
+  return typeof value === 'string' ? value : fallback
+}
+
+function getStringArrayValue(raw: Record<string, unknown>, key: string, fallback: string[] = []) {
+  const value = getNestedValue(raw, key)
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : fallback
 }
 
 // ── Main flow ──────────────────────────────────────────────────────────────
@@ -218,13 +205,14 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
   const [initializingProject, setInitializingProject] = useState(true)
   const [bootstrapSummary, setBootstrapSummary] = useState<string | null>(null)
-  const [bootstrapStatus, setBootstrapStatus] = useState('Analyzing existing project structure…')
+  const [bootstrapStatus, setBootstrapStatus] = useState('Loading project canvas…')
   const [lastPreflight, setLastPreflight] = useState<GraphPreflightSummary | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [launchRevision, setLaunchRevision] = useState(0)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const lastSyncedCanvasRef = useRef<string | null>(null)
+  const [hasCanvasFile, setHasCanvasFile] = useState(false)
   const { screenToFlowPosition } = useReactFlow()
 
   // Cleanup auto-save timer on unmount
@@ -239,6 +227,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         )
         const serialized = serializeCanvasData(updated, edges, projectSettings)
         lastSyncedCanvasRef.current = serialized
+        setHasCanvasFile(true)
         void window.electron.saveCanvas(projectDir, serialized)
         return updated
       })
@@ -250,9 +239,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     let cancelled = false
     setInitializingProject(true)
     setBootstrapSummary(null)
-    setBootstrapStatus('Analyzing existing project structure…')
+    setBootstrapStatus('Loading project canvas…')
     setLastPreflight(null)
     lastSyncedCanvasRef.current = null
+    setHasCanvasFile(false)
 
     const loadProject = async () => {
       try {
@@ -267,28 +257,16 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
             setEdges(migrated.edges)
             setProjectSettings(migrated.settings)
             lastSyncedCanvasRef.current = raw
+            setHasCanvasFile(true)
           } catch {}
           return
         }
 
-        setBootstrapStatus('Synthesizing architecture from the repo structure…')
-        const bootstrap = await window.electron.bootstrapProject(projectDir, projectSettings.defaultRuntime)
-        if (cancelled) return
-
-        const importedNodes = buildImportedNodes(bootstrap, projectSettings.defaultRuntime)
-        const importedEdges: Edge[] = bootstrap.edges.map(edge => ({
-          id: edge.id,
-          source: edge.source,
-          target: edge.target,
-        }))
-
-        setNodes(importedNodes)
-        setEdges(importedEdges)
-        setBootstrapSummary(bootstrap.summary)
-        const serialized = serializeCanvasData(importedNodes, importedEdges, projectSettings)
-        lastSyncedCanvasRef.current = serialized
-        await window.electron.saveCanvas(projectDir, serialized)
-        if (cancelled) return
+        setNodes([])
+        setEdges([])
+        setHasCanvasFile(false)
+        setBootstrapStatus('No project canvas found.')
+        setBootstrapSummary('No `architect-canvas.json` exists yet. Use the Architecture Assistant to inspect the repo and draft the initial architecture.')
         setIsDirty(false)
         setDispatchedGraph(null)
       } finally {
@@ -312,6 +290,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const serialized = serializeCanvasData(nodes, edges, projectSettings)
     lastSyncedCanvasRef.current = serialized
     await window.electron.saveCanvas(projectDir, serialized)
+    setHasCanvasFile(true)
     setIsDirty(false)
   }, [projectDir, nodes, edges, projectSettings])
 
@@ -359,6 +338,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       autoSaveTimerRef.current = setTimeout(() => {
         const serialized = serializeCanvasData(nodes, edges, projectSettings)
         lastSyncedCanvasRef.current = serialized
+        setHasCanvasFile(true)
         window.electron.saveCanvas(projectDir, serialized)
       }, 1000)
     }
@@ -464,6 +444,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           setBootstrapSummary(null)
           setDispatchedGraph(null)
           lastSyncedCanvasRef.current = raw
+          setHasCanvasFile(true)
         } catch {}
       })
     }, 1200)
@@ -475,19 +456,24 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const canvasJson = JSON.stringify({
       nodes: currentNodes.map(n => ({
         id: n.id,
-        label: n.data.label,
-        description: n.data.description,
-        category: n.data.category,
-        iconName: n.data.iconName,
-        color: n.data.color,
-        tag: n.data.tag,
-        prompt: n.data.prompt,
-        ownedPaths: n.data.ownedPaths,
-        expectedFiles: n.data.expectedFiles,
-        contracts: n.data.contracts,
-        reviewHints: n.data.reviewHints,
+        type: 'architectNode',
+        position: n.position,
+        data: {
+          label: n.data.label,
+          description: n.data.description,
+          category: n.data.category,
+          iconName: n.data.iconName,
+          color: n.data.color,
+          tag: n.data.tag,
+          prompt: n.data.prompt,
+          ownedPaths: n.data.ownedPaths,
+          expectedFiles: n.data.expectedFiles,
+          contracts: n.data.contracts,
+          reviewHints: n.data.reviewHints,
+        },
       })),
       edges: currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+      settings: projectSettings,
     }, null, 2)
     const paletteJson = JSON.stringify(palette.map(item => ({
       label: item.label,
@@ -496,27 +482,56 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       color: item.color,
       tag: item.tag,
     })), null, 2)
+    const noArchitectureYet = !hasCanvasFile || currentNodes.length === 0
 
     return `You are an architecture assistant embedded in Architect — a tool for visually composing multi-agent and software systems.
 
+## Canonical Canvas File
+The architecture for this project lives in \`architect-canvas.json\` at the project root.
+If the architecture needs to be created or changed, edit \`architect-canvas.json\` directly.
+Do not print the full canvas JSON in chat unless the user explicitly asks for it.
+After editing the file, reply with a short summary of the change.
+
 ## Current Canvas
-${currentNodes.length === 0 ? '(empty canvas — no nodes yet)' : `\`\`\`json\n${canvasJson}\n\`\`\``}
+${noArchitectureYet ? '(no saved architecture yet)' : `\`\`\`json\n${canvasJson}\n\`\`\``}
 
 ## Your Role
 Help the user design, refine, and reason about their architecture. You can:
 - Discuss design decisions, tradeoffs, and patterns
 - Suggest components to add, remove, or restructure
-- When the user asks to change the diagram, output the complete updated canvas in this exact format (no markdown fences around the block):
-
-ARCHITECT_CANVAS_UPDATE
-{"nodes": [...], "edges": [...]}
-END_ARCHITECT_CANVAS_UPDATE
-
-The canvas replaces everything on each update, so always include ALL nodes and edges.
+- If \`architect-canvas.json\` does not exist yet or the canvas is empty, inspect the repository and create the initial file.
+- When the user asks to change the architecture, modify \`architect-canvas.json\` directly instead of pasting graph JSON in chat.
+- Keep the file valid JSON at all times.
+- The file should contain the complete canvas, not a partial patch.
 Preserve existing node ids whenever possible so the user's layout is not lost.
+Base the architecture primarily on the repository structure, directory names, file names, and obvious entrypoints.
+Avoid repetitive folder-by-folder clarification. If the repo is messy, prefer fewer stronger nodes instead of many weak guesses.
 
-## Canvas Node Schema
-Each node requires: id (kebab-case), label, description (one sentence), category, iconName, color (hex), tag (≤6 chars uppercase), prompt (agent instructions), ownedPaths (string[]), expectedFiles (string[]), contracts (string), reviewHints (string)
+## architect-canvas.json Shape
+Top-level keys:
+- \`nodes\`: array
+- \`edges\`: array
+- \`settings\`: object containing at least \`defaultRuntime\`
+- \`savedAt\`: ISO timestamp string
+
+Each node object must contain:
+- \`id\`: kebab-case string
+- \`type\`: always \`architectNode\`
+- \`position\`: object with numeric \`x\` and \`y\`
+- \`data\`: object containing the node fields
+
+Each node.data object requires:
+- \`label\`
+- \`description\`
+- \`category\`
+- \`iconName\`
+- \`color\`
+- \`tag\`
+- \`prompt\`
+- \`ownedPaths\`
+- \`expectedFiles\`
+- \`contracts\`
+- \`reviewHints\`
 
 Available categories: infrastructure | services | storage | custom
 
@@ -527,44 +542,54 @@ Available iconNames: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitB
 ${paletteJson}
 \`\`\`
 
-## Valid Example
+## Valid File Example
 \`\`\`json
-{"nodes":[{"id":"frontend","label":"Frontend","description":"Owns the web UI.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI","prompt":"Continue from the existing frontend implementation. Inspect routes and state boundaries before making changes.","ownedPaths":["frontend"],"expectedFiles":["frontend/src/main.tsx"],"contracts":"Routes, UI state boundaries, and integration points.","reviewHints":"Inspect the app entrypoint and API integration points before editing."},{"id":"api-gateway","label":"API Gateway","description":"Owns the API surface.","category":"infrastructure","iconName":"Shield","color":"#fb923c","tag":"API","prompt":"Continue from the existing API implementation. Preserve contracts and only make the next required delta.","ownedPaths":["server"],"expectedFiles":["server/app.ts"],"contracts":"Request/response contracts and public endpoints.","reviewHints":"Inspect route registration and public interfaces before editing."}],"edges":[{"id":"frontend-to-api","source":"frontend","target":"api-gateway"}]}
+{"nodes":[{"id":"frontend","type":"architectNode","position":{"x":100,"y":80},"data":{"label":"Frontend","description":"Owns the web UI.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI","prompt":"Continue from the existing frontend implementation. Inspect routes and state boundaries before making changes.","ownedPaths":["frontend"],"expectedFiles":["frontend/src/main.tsx"],"contracts":"Routes, UI state boundaries, and integration points.","reviewHints":"Inspect the app entrypoint and API integration points before editing."}},{"id":"api-gateway","type":"architectNode","position":{"x":420,"y":80},"data":{"label":"API Gateway","description":"Owns the API surface.","category":"infrastructure","iconName":"Shield","color":"#fb923c","tag":"API","prompt":"Continue from the existing API implementation. Preserve contracts and only make the next required delta.","ownedPaths":["server"],"expectedFiles":["server/app.ts"],"contracts":"Request/response contracts and public endpoints.","reviewHints":"Inspect route registration and public interfaces before editing."}}],"edges":[{"id":"frontend-to-api","source":"frontend","target":"api-gateway"}],"settings":{"defaultRuntime":"${projectSettings.defaultRuntime}"},"savedAt":"2026-04-10T12:00:00.000Z"}
 \`\`\`
 
 Each edge requires: id, source (node id), target (node id)
 
-Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. Otherwise just discuss and advise.`
-  }, [])
+${noArchitectureYet
+    ? 'There is no saved architecture yet, so inspect the repo and create `architect-canvas.json` directly without waiting for extra confirmation.'
+    : 'If the user asks for architecture changes, edit `architect-canvas.json` directly. Otherwise discuss and advise without rewriting the file.'}`
+  }, [hasCanvasFile, projectSettings])
 
   const applyCanvasUpdate = useCallback((update: { nodes: unknown[]; edges: unknown[] }) => {
     const rawNodes = (update.nodes ?? []) as Array<Record<string, unknown>>
     const rawEdges = (update.edges ?? []) as Array<{ id?: string; source: string; target: string }>
     const existingNodes = new Map(nodes.map(node => [node.id, node]))
     const existingPositions = new Map(nodes.map(n => [n.id, n.position]))
-    const positions = computeLayoutPositions(rawNodes.map(n => String(n.id)), rawEdges)
+    const fallbackPrefix = `gen-${Date.now()}`
+    const normalizedIds = rawNodes.map((node, index) => getStringValue(node, 'id', `${fallbackPrefix}-${index}`))
+    const positions = computeLayoutPositions(normalizedIds, rawEdges)
     const newNodes: ArchitectNodeType[] = rawNodes.map((raw, i) => {
-      const id = String(raw.id ?? `gen-${Date.now()}-${i}`)
+      const id = normalizedIds[i] ?? `${fallbackPrefix}-${i}`
       const existing = existingNodes.get(id)
+      const categoryValue = getNestedValue(raw, 'category')
+      const positionValue = raw.position && typeof raw.position === 'object'
+        ? raw.position as { x?: unknown; y?: unknown }
+        : undefined
       return {
         id,
         type: 'architectNode' as const,
-        position: existingPositions.get(id) ?? positions[id] ?? { x: 80 + (i % 3) * 320, y: 80 + Math.floor(i / 3) * 160 },
+        position: typeof positionValue?.x === 'number' && typeof positionValue?.y === 'number'
+          ? { x: positionValue.x, y: positionValue.y }
+          : (existingPositions.get(id) ?? positions[id] ?? { x: 80 + (i % 3) * 320, y: 80 + Math.floor(i / 3) * 160 }),
         data: {
           ...createDefaultNodeConfig(projectSettings.defaultRuntime),
           ...existing?.data,
-          label:       String(raw.label       ?? 'Node'),
-          description: String(raw.description ?? ''),
-          category:    (raw.category as ArchitectNodeType['data']['category']) ?? 'services',
-          iconName:    String(raw.iconName ?? 'Settings2'),
-          color:       String(raw.color   ?? '#60a5fa'),
-          tag:         String(raw.tag     ?? 'NODE'),
+          label:       getStringValue(raw, 'label', 'Node'),
+          description: getStringValue(raw, 'description', ''),
+          category:    (typeof categoryValue === 'string' ? categoryValue : existing?.data.category ?? 'services') as ArchitectNodeType['data']['category'],
+          iconName:    getStringValue(raw, 'iconName', 'Settings2'),
+          color:       getStringValue(raw, 'color', '#60a5fa'),
+          tag:         getStringValue(raw, 'tag', 'NODE'),
           status:      'idle' as const,
-          prompt:      String(raw.prompt  ?? ''),
-          ownedPaths: Array.isArray(raw.ownedPaths) ? raw.ownedPaths.filter((value): value is string => typeof value === 'string') : (existing?.data.ownedPaths ?? []),
-          expectedFiles: Array.isArray(raw.expectedFiles) ? raw.expectedFiles.filter((value): value is string => typeof value === 'string') : (existing?.data.expectedFiles ?? []),
-          contracts:   String(raw.contracts   ?? existing?.data.contracts   ?? ''),
-          reviewHints: String(raw.reviewHints ?? existing?.data.reviewHints ?? ''),
+          prompt:      getStringValue(raw, 'prompt', ''),
+          ownedPaths: getStringArrayValue(raw, 'ownedPaths', existing?.data.ownedPaths ?? []),
+          expectedFiles: getStringArrayValue(raw, 'expectedFiles', existing?.data.expectedFiles ?? []),
+          contracts:   getStringValue(raw, 'contracts', existing?.data.contracts ?? ''),
+          reviewHints: getStringValue(raw, 'reviewHints', existing?.data.reviewHints ?? ''),
         },
       }
     })
@@ -576,9 +601,13 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
     setNodes(newNodes)
     setEdges(newEdges)
     setBootstrapSummary(null)
-    setIsDirty(true)
+    setHasCanvasFile(true)
+    const serialized = serializeCanvasData(newNodes, newEdges, projectSettings)
+    lastSyncedCanvasRef.current = serialized
+    void window.electron.saveCanvas(projectDir, serialized)
+    setIsDirty(false)
     setDispatchedGraph(null)
-  }, [nodes, projectSettings.defaultRuntime, setNodes, setEdges])
+  }, [nodes, projectDir, projectSettings, projectSettings.defaultRuntime, setNodes, setEdges])
 
   const handleAssistantToggle = useCallback(async () => {
     if (assistantOpen) {

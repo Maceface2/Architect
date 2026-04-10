@@ -35,6 +35,57 @@ interface CanvasUpdate {
   edges: unknown[]
 }
 
+function repairWrappedJson(input: string) {
+  let result = ''
+  let inString = false
+  let escaped = false
+
+  for (const char of input) {
+    if (escaped) {
+      result += char
+      escaped = false
+      continue
+    }
+
+    if (char === '\\') {
+      result += char
+      escaped = true
+      continue
+    }
+
+    if (char === '"') {
+      result += char
+      inString = !inString
+      continue
+    }
+
+    if (inString && (char === '\n' || char === '\r' || char === '\t')) {
+      result += ' '
+      continue
+    }
+
+    result += char
+  }
+
+  return result
+}
+
+function parseCanvasUpdateBlock(jsonStr: string): CanvasUpdate | null {
+  const candidates = [
+    jsonStr.trim(),
+    repairWrappedJson(jsonStr.trim()),
+  ]
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate)
+      if (parsed?.nodes && parsed?.edges) return parsed as CanvasUpdate
+    } catch {}
+  }
+
+  return null
+}
+
 interface Props {
   onClose: () => void
   onCanvasUpdate: (update: CanvasUpdate) => void
@@ -63,12 +114,8 @@ export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Pro
       const jsonStr = parseBufferRef.current.slice(startIdx + START.length, endIdx).trim()
       parseBufferRef.current = parseBufferRef.current.slice(endIdx + END.length)
 
-      try {
-        const update = JSON.parse(jsonStr)
-        if (update?.nodes && update?.edges) {
-          onCanvasUpdate(update as CanvasUpdate)
-        }
-      } catch { /* malformed — skip */ }
+      const update = parseCanvasUpdateBlock(jsonStr)
+      if (update) onCanvasUpdate(update)
     }
 
     // Prevent unbounded growth

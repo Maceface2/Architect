@@ -1084,7 +1084,6 @@ export function startAssistant(
     env: {},
     cwd: projectDir,
     initialPrompt: 'Read ARCHITECT/.assistant-context.md',
-    model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
     onExit: () => { try { fs.unlinkSync(contextFile) } catch {} },
   })
 }
