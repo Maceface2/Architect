@@ -3,7 +3,6 @@ import { BrowserWindow } from 'electron'
 import { join } from 'path'
 import os from 'os'
 import fs from 'fs'
-import { execFileSync } from 'child_process'
 import { randomUUID } from 'crypto'
 import {
   DEFAULT_AGENT_RUNTIME,
@@ -13,17 +12,22 @@ import {
   isAgentRuntimeMode,
   type AgentRuntime,
 } from '../shared/agentRuntimes'
-import type { DispatchContext, LaunchScope, RunGraphOptions } from '../shared/graphDispatch'
-
-// Augment PATH with common locations so node-pty can find binaries
-const EXTRA_PATHS = [
-  '/opt/homebrew/bin',
-  '/opt/homebrew/sbin',
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin',
-]
-process.env.PATH = [...EXTRA_PATHS, ...(process.env.PATH || '').split(':')].join(':')
+import type {
+  DispatchContext,
+  GraphPreflightSummary,
+  LaunchIntent,
+  LaunchScope,
+  PreflightNodeResult,
+  PreflightNodeStatus,
+  RunGraphOptions,
+  RunGraphResult,
+} from '../shared/graphDispatch'
+import {
+  buildRuntimeArgs,
+  hasStandaloneToken,
+  resolveBinary,
+  stripAnsi,
+} from './agentCli'
 
 interface ProjectSettings {
   defaultRuntime: AgentRuntime
@@ -36,32 +40,15 @@ interface LaunchMetadata {
   omittedConnectedNodeLabels: string[]
 }
 
+interface NodeLaunchPlan {
+  node: GraphNode
+  preflight: PreflightNodeResult
+}
+
 function normalizeProjectSettings(raw: unknown): ProjectSettings {
   const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   return {
     defaultRuntime: isAgentRuntime(settings.defaultRuntime) ? settings.defaultRuntime : DEFAULT_AGENT_RUNTIME,
-  }
-}
-
-function resolveBinary(runtime: AgentRuntime): string | null {
-  const { binary } = getAgentRuntime(runtime)
-  const candidates = [
-    `/opt/homebrew/bin/${binary}`,
-    `/usr/local/bin/${binary}`,
-    `/usr/bin/${binary}`,
-    `/bin/${binary}`,
-  ]
-
-  for (const candidate of candidates) {
-    if (fs.existsSync(candidate)) return candidate
-  }
-
-  try {
-    const shell = process.env.SHELL || '/bin/zsh'
-    const resolved = execFileSync(shell, ['-l', '-c', `which ${binary}`], { encoding: 'utf-8' }).trim()
-    return resolved || null
-  } catch {
-    return null
   }
 }
 
@@ -80,6 +67,10 @@ export interface GraphNode {
     prompt: string
     additionalChanges?: string
     claudeSessionId?: string
+    ownedPaths?: string[]
+    expectedFiles?: string[]
+    contracts?: string
+    reviewHints?: string
     agentRuntimeMode?: 'inherit' | 'override'
     agentRuntime?: AgentRuntime
     providerModels?: Partial<Record<AgentRuntime, string>>
@@ -126,34 +117,8 @@ interface SpawnSessionOptions {
 const sessions = new Map<string, Session>()
 let activeWatcher: fs.FSWatcher | null = null
 
-function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string, resumeSessionId?: string): string[] {
-  switch (runtime) {
-    case 'claude': {
-      const args: string[] = ['--dangerously-skip-permissions']
-      if (resumeSessionId) args.push('--resume', resumeSessionId)
-      if (model) args.push('--model', model)
-      if (prompt) args.push(prompt)
-      return args
-    }
-    case 'codex': {
-      const args: string[] = ['--no-alt-screen', '-a', 'never', '-s', 'workspace-write']
-      if (model) args.push('--model', model)
-      if (prompt) args.push(prompt)
-      return args
-    }
-    case 'gemini': {
-      const args: string[] = ['--approval-mode', 'yolo']
-      if (model) args.push('--model', model)
-      if (prompt) args.push('--prompt-interactive', prompt)
-      return args
-    }
-    case 'opencode': {
-      const args: string[] = []
-      if (prompt) args.push('--prompt', prompt)
-      if (model) args.push('--model', model)
-      return args
-    }
-  }
+function hasCompletionToken(buffer: string, token: string) {
+  return hasStandaloneToken(buffer, token)
 }
 
 function resolveClaudeSessionId(projectDir: string): string | null {
@@ -185,12 +150,15 @@ function createSession(
 
   ptyProcess.onData(data => {
     session.buffer += data
-    if (!session.done && session.buffer.includes(session.completionToken)) {
+    if (!session.done && hasCompletionToken(session.buffer, session.completionToken)) {
       session.done = true
       session.completedAt = Date.now()
       session.doneCallbacks.splice(0).forEach(cb => cb())
       // Kill the PTY now that the agent has signalled completion
       try { session.pty.kill() } catch {}
+    }
+    if (session.buffer.length > 12000) {
+      session.buffer = session.buffer.slice(-12000)
     }
     if (!win.isDestroyed()) win.webContents.send('terminal:data', { id, data })
   })
@@ -316,6 +284,30 @@ function getOutputFilePathForNode(node: Pick<GraphNode, 'id'> | string) {
 
 function getPromptFilePathForNode(node: Pick<GraphNode, 'id'> | string) {
   return `ARCHITECT/prompts/${getNodeFileStem(node)}.md`
+}
+
+function normalizeRelativePaths(values: string[] | undefined) {
+  return [...new Set((values ?? [])
+    .map(value => value.trim().replace(/^\.?\//, '').replace(/\/+$/, ''))
+    .filter(Boolean))]
+}
+
+function pathExists(projectDir: string, relPath: string) {
+  return fs.existsSync(relPath ? join(projectDir, relPath) : projectDir)
+}
+
+function outputExists(projectDir: string, node: GraphNode) {
+  return fs.existsSync(join(projectDir, getOutputFilePathForNode(node)))
+}
+
+function createEmptyPreflightCounts(): GraphPreflightSummary['counts'] {
+  return {
+    missing: 0,
+    adopted: 0,
+    needs_delta: 0,
+    blocked_by_upstream: 0,
+    unchanged: 0,
+  }
 }
 
 function hasUniqueNodeLabel(label: string, nodes: GraphNode[]) {
@@ -467,6 +459,157 @@ function getNodeModel(node: GraphNode, runtime: AgentRuntime): string {
   return node.data.providerModels?.[runtime] || node.data.model || DEFAULT_MODEL_BY_RUNTIME[runtime]
 }
 
+function buildPreflightSummary(
+  projectDir: string,
+  scopedNodes: GraphNode[],
+  scopedEdges: GraphEdge[],
+  dispatchContext?: DispatchContext,
+): GraphPreflightSummary {
+  const changedNodeIds = new Set(dispatchContext?.changedNodeIds ?? [])
+  const counts = createEmptyPreflightCounts()
+  const upstreamById = new Map<string, string[]>()
+
+  for (const node of scopedNodes) {
+    upstreamById.set(
+      node.id,
+      scopedEdges.filter(edge => edge.target === node.id).map(edge => edge.source)
+    )
+  }
+
+  const byId = new Map<string, PreflightNodeResult>()
+  const remaining = new Set(scopedNodes.map(node => node.id))
+
+  while (remaining.size > 0) {
+    let progressed = false
+
+    for (const node of scopedNodes) {
+      if (!remaining.has(node.id)) continue
+
+      const upstreamIds = upstreamById.get(node.id) ?? []
+      if (upstreamIds.some(upstreamId => remaining.has(upstreamId))) continue
+
+      const ownedPaths = normalizeRelativePaths(node.data.ownedPaths)
+      const expectedFiles = normalizeRelativePaths(node.data.expectedFiles)
+      const existingOwnedPaths = ownedPaths.filter(relPath => pathExists(projectDir, relPath))
+      const missingOwnedPaths = ownedPaths.filter(relPath => !pathExists(projectDir, relPath))
+      const existingExpectedFiles = expectedFiles.filter(relPath => pathExists(projectDir, relPath))
+      const missingExpectedFiles = expectedFiles.filter(relPath => !pathExists(projectDir, relPath))
+      const trackedPathCount = ownedPaths.length + expectedFiles.length
+      const totalExisting = existingOwnedPaths.length + existingExpectedFiles.length
+      const hasExistingOutput = outputExists(projectDir, node)
+      const explicitDeltaRequested = Boolean(node.data.additionalChanges?.trim())
+      const upstreamChanged = upstreamIds.some(upstreamId => {
+        const upstream = byId.get(upstreamId)
+        return upstream ? upstream.status !== 'unchanged' : false
+      })
+
+      let status: PreflightNodeStatus
+      let launchIntent: LaunchIntent
+      let reason: string
+
+      if (trackedPathCount === 0) {
+        status = 'adopted'
+        launchIntent = 'plan_delta'
+        reason = 'No ownership metadata is defined yet, so this node will inspect the existing project area and document the next delta before editing.'
+      } else if (totalExisting === 0) {
+        status = 'missing'
+        launchIntent = 'build'
+        reason = 'None of the owned paths or expected files were found in the workspace.'
+      } else if (dispatchContext?.isRedispatch && changedNodeIds.has(node.id)) {
+        status = 'needs_delta'
+        launchIntent = 'plan_delta'
+        reason = 'This node changed since the last full dispatch and should plan the next delta against the current code.'
+      } else if (explicitDeltaRequested) {
+        status = 'needs_delta'
+        launchIntent = 'plan_delta'
+        reason = 'Additional changes are queued for this node, so it should inspect current code and apply only the requested delta.'
+      } else if (upstreamChanged) {
+        status = 'blocked_by_upstream'
+        launchIntent = 'plan_delta'
+        reason = 'An upstream node is changing in this launch, so this node should review downstream impact before editing.'
+      } else if (!hasExistingOutput) {
+        status = 'adopted'
+        launchIntent = 'plan_delta'
+        reason = 'This code already exists in the repo, but Architect has not documented or coordinated it yet.'
+      } else {
+        status = 'unchanged'
+        launchIntent = 'skip'
+        reason = 'The owned implementation already exists and no new delta was detected for this launch.'
+      }
+
+      const result: PreflightNodeResult = {
+        nodeId: node.id,
+        label: node.data.label,
+        status,
+        launchIntent,
+        reason,
+        ownedPaths,
+        existingOwnedPaths,
+        missingOwnedPaths,
+        expectedFiles,
+        existingExpectedFiles,
+        missingExpectedFiles,
+        upstreamChanged,
+        hasExistingOutput,
+      }
+
+      byId.set(node.id, result)
+      counts[status] += 1
+      remaining.delete(node.id)
+      progressed = true
+    }
+
+    if (!progressed) {
+      const nodeId = remaining.values().next().value as string
+      const node = scopedNodes.find(candidate => candidate.id === nodeId)!
+      const ownedPaths = normalizeRelativePaths(node.data.ownedPaths)
+      const expectedFiles = normalizeRelativePaths(node.data.expectedFiles)
+      const existingOwnedPaths = ownedPaths.filter(relPath => pathExists(projectDir, relPath))
+      const existingExpectedFiles = expectedFiles.filter(relPath => pathExists(projectDir, relPath))
+      const result: PreflightNodeResult = {
+        nodeId: node.id,
+        label: node.data.label,
+        status: 'adopted',
+        launchIntent: 'plan_delta',
+        reason: 'Dependency relationships are cyclic or unresolved, so this node will default to a review-first delta plan.',
+        ownedPaths,
+        existingOwnedPaths,
+        missingOwnedPaths: ownedPaths.filter(relPath => !pathExists(projectDir, relPath)),
+        expectedFiles,
+        existingExpectedFiles,
+        missingExpectedFiles: expectedFiles.filter(relPath => !pathExists(projectDir, relPath)),
+        upstreamChanged: true,
+        hasExistingOutput: outputExists(projectDir, node),
+      }
+      byId.set(node.id, result)
+      counts.adopted += 1
+      remaining.delete(node.id)
+    }
+  }
+
+  return {
+    generatedAt: new Date().toISOString(),
+    counts,
+    nodes: scopedNodes.map(node => byId.get(node.id)!),
+  }
+}
+
+function formatPreflightNodeSummary(preflight: PreflightNodeResult) {
+  const evidence = [
+    preflight.existingOwnedPaths.length ? `owned paths present: ${preflight.existingOwnedPaths.join(', ')}` : '',
+    preflight.missingOwnedPaths.length ? `owned paths missing: ${preflight.missingOwnedPaths.join(', ')}` : '',
+    preflight.existingExpectedFiles.length ? `expected files present: ${preflight.existingExpectedFiles.join(', ')}` : '',
+    preflight.missingExpectedFiles.length ? `expected files missing: ${preflight.missingExpectedFiles.join(', ')}` : '',
+  ].filter(Boolean)
+
+  return [
+    `Status: ${preflight.status}`,
+    `Launch intent: ${preflight.launchIntent}`,
+    `Reason: ${preflight.reason}`,
+    ...evidence,
+  ].join('\n')
+}
+
 function buildMermaidDiagram(nodes: GraphNode[], edges: GraphEdge[]): string {
   const nodeLines = nodes.map(node => `  ${node.id}["${node.data.label} [${node.data.tag}]"]`)
   const edgeLines = edges.map(edge => `  ${edge.source} --> ${edge.target}`)
@@ -484,11 +627,17 @@ function buildResumePrompt(node: GraphNode, completionToken: string): string {
   const statusLog = getOutputFilePathForNode(node)
   const additionalChanges = node.data.additionalChanges?.trim()
 
-  if (additionalChanges) {
-    return `## Additional Requested Changes\n${additionalChanges}\n\nApply these changes to your existing work.\n\nWrite progress notes and your final summary to ${statusLog}.\nCreate real code and project files in the project root, not inside ARCHITECT/.\n\nWhen you have finished ALL work, run this exact shell command as your last action:\n\`\`\`\necho ${completionToken}\n\`\`\``
-  }
+  return `Resume your existing session for ${node.data.label}.
 
-  return `Review your previous work logged in ${statusLog} and continue any unfinished tasks.\n\nWhen you have finished ALL work, run this exact shell command as your last action:\n\`\`\`\necho ${completionToken}\n\`\`\``
+First, read ${getTaskFilePathForNode(node)} and align your next actions to the current task file for this launch.
+Review your previous work logged in ${statusLog} before making changes.
+${additionalChanges ? `\nAdditional requested changes:\n${additionalChanges}\n` : ''}
+Preserve working code and apply only the next required delta.
+
+When you have finished ALL work, run this exact shell command as your last action:
+\`\`\`
+echo ${completionToken}
+\`\`\``
 }
 
 function buildDirectTaskLaunchPrompt(node: GraphNode, taskMarkdown: string): string {
@@ -520,6 +669,13 @@ echo ARCHITECT_COMPLETE
 \`\`\``
 }
 
+function buildPreflightOverview(preflight: GraphPreflightSummary) {
+  return preflight.nodes.map(node => [
+    `### ${node.label}`,
+    formatPreflightNodeSummary(node),
+  ].join('\n')).join('\n\n')
+}
+
 function buildArchitectPrompt(
   scopedNodes: GraphNode[],
   scopedEdges: GraphEdge[],
@@ -527,9 +683,11 @@ function buildArchitectPrompt(
   allEdges: GraphEdge[],
   settings: ProjectSettings,
   launchMetadata: LaunchMetadata,
+  preflight: GraphPreflightSummary,
+  launchPlans: NodeLaunchPlan[],
   dispatchContext?: DispatchContext,
 ): string {
-  const agentList = scopedNodes.map(node => {
+  const agentList = launchPlans.map(({ node, preflight: nodePreflight }) => {
     const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
     const runtime = getNodeRuntime(node, settings)
     const model = getNodeModel(node, runtime)
@@ -540,6 +698,12 @@ function buildArchitectPrompt(
       `Runtime: ${getAgentRuntime(runtime).label}`,
       `Model: ${model}`,
       node.data.prompt ? `User goal: ${node.data.prompt}` : '',
+      `Workspace status: ${nodePreflight.status}`,
+      `Launch intent: ${nodePreflight.launchIntent}`,
+      `Reason: ${nodePreflight.reason}`,
+      node.data.ownedPaths?.length ? `Owned paths: ${node.data.ownedPaths.join(', ')}` : '',
+      node.data.expectedFiles?.length ? `Expected files: ${node.data.expectedFiles.join(', ')}` : '',
+      node.data.contracts?.trim() ? `Current contracts: ${node.data.contracts.trim()}` : '',
       relationships.upstreamInScope.length ? `Upstream in this launch: ${relationships.upstreamInScope.join(', ')}` : '',
       relationships.downstreamInScope.length ? `Downstream in this launch: ${relationships.downstreamInScope.join(', ')}` : '',
       relationships.upstreamExternal.length ? `Upstream outside this launch: ${relationships.upstreamExternal.join(', ')}` : '',
@@ -572,6 +736,9 @@ ${omittedSummary}
 ## Architecture Diagram
 ${buildMermaidDiagram(scopedNodes, scopedEdges)}
 
+## Workspace Preflight
+${buildPreflightOverview(preflight)}
+
 ## Agents
 ${agentList}
 
@@ -581,15 +748,18 @@ ${flowLines}
 ## Your job
 
 1. Read ARCHITECT/manifest.json for full details
-2. Write a task file for EVERY agent listed above and only for those agents. Write them in dependency order (upstream first).
+2. Respect the workspace preflight. Preserve existing code by default.
+3. Write a task file for EVERY agent listed above and only for those agents. Write them in dependency order (upstream first).
    Each task file must contain:
-   - Specific files to create and their exact content/structure
+   - The exact launch mode for that node: build from scratch or plan delta against existing code
+   - Specific files to create or modify, scoped to owned paths whenever possible
    - API contracts, ports, endpoints, schemas
    - What to read from upstream agents' output files
    - Clear acceptance criteria
 
-3. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
-4. Monitor ARCHITECT/outputs/ — when agents complete (they write their status log there), coordinate handoffs by updating downstream task files with actual details
+4. For nodes whose launch intent is plan_delta, instruct them to inspect existing code first, summarize current behavior, and then make only the smallest necessary delta. Do NOT recreate working implementations from scratch.
+5. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
+6. Monitor ARCHITECT/outputs/ — when agents complete (they write their status log there), coordinate handoffs by updating downstream task files with actual details
 
 IMPORTANT: Agents must create all real project files (source code, configs, etc.) directly in the project root working directory, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination files (manifests, prompts, tasks, status logs).
 
@@ -606,8 +776,8 @@ function buildNodePrompt(
   allNodes: GraphNode[],
   allEdges: GraphEdge[],
   launchMetadata: LaunchMetadata,
+  preflight: PreflightNodeResult,
 ): string {
-  const safe = getNodeFileStem(node)
   const statusLog = getOutputFilePathForNode(node)
 
   const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
@@ -620,6 +790,12 @@ function buildNodePrompt(
     .filter(Boolean)
     .join('\n\n')
 
+  const ownedPaths = normalizeRelativePaths(node.data.ownedPaths)
+  const expectedFiles = normalizeRelativePaths(node.data.expectedFiles)
+  const launchModeInstructions = preflight.launchIntent === 'build'
+    ? `This node is missing in the workspace. Treat the task as greenfield work inside the owned paths, but still inspect the repo first so you integrate with existing code around it.`
+    : `This node already has implementation in the repo. Inspect owned paths and expected files first, document the current behavior in ${statusLog}, and then make only the smallest concrete delta needed by the task. Do NOT recreate working files from scratch.`
+
   return `You are the ${node.data.label} agent [${node.data.tag}] — ${node.data.description}.
 ${node.data.prompt ? `\nUser goal: ${node.data.prompt}\n` : ''}
 ${launchMetadata.mode === 'all' ? 'This launch includes the full canvas.\n' : `This launch only includes: ${scopedNodes.map(candidate => candidate.data.label).join(', ')}.\n`}
@@ -629,9 +805,18 @@ ${relationships.upstreamExternal.length ? `Upstream agents outside this launch: 
 ${relationships.downstreamExternal.length ? `Downstream agents outside this launch: ${relationships.downstreamExternal.join(', ')}\n` : ''}
 ${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ${skills ? `${skills}\n` : ''}
+## Workspace State
+
+${formatPreflightNodeSummary(preflight)}
+${ownedPaths.length ? `\nOwned paths: ${ownedPaths.join(', ')}` : '\nOwned paths: (not defined yet)'}
+${expectedFiles.length ? `\nExpected files: ${expectedFiles.join(', ')}` : '\nExpected files: (none specified)'}
+${node.data.contracts?.trim() ? `\nKnown contracts: ${node.data.contracts.trim()}` : ''}
+${node.data.reviewHints?.trim() ? `\nReview hints: ${node.data.reviewHints.trim()}` : ''}
+
 ## Instructions
 
 Read ${getTaskFilePathForNode(node)} and execute every instruction in it immediately and concretely.
+${launchModeInstructions}
 
 **WHERE TO CREATE FILES:**
 - All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
@@ -656,6 +841,8 @@ function setupWorkspace(
   allEdges: GraphEdge[],
   settings: ProjectSettings,
   launchMetadata: LaunchMetadata,
+  preflight: GraphPreflightSummary,
+  launchPlans: NodeLaunchPlan[],
   dispatchContext?: DispatchContext,
 ) {
   ensureArchitectWorkspace(projectDir)
@@ -669,9 +856,11 @@ function setupWorkspace(
       activeAgents: launchMetadata.activeNodeLabels,
       omittedConnectedAgents: launchMetadata.omittedConnectedNodeLabels,
     },
+    preflight,
     agents: scopedNodes.map(node => {
       const runtime = getNodeRuntime(node, settings)
       const relationships = getRelationshipLabels(node.id, allNodes, allEdges, launchMetadata.activeNodeIds)
+      const nodePreflight = preflight.nodes.find(candidate => candidate.nodeId === node.id)
       return {
         label: node.data.label,
         tag: node.data.tag,
@@ -680,6 +869,11 @@ function setupWorkspace(
         runtimeLabel: getAgentRuntime(runtime).label,
         model: getNodeModel(node, runtime),
         userPrompt: node.data.prompt || null,
+        ownedPaths: normalizeRelativePaths(node.data.ownedPaths),
+        expectedFiles: normalizeRelativePaths(node.data.expectedFiles),
+        contracts: node.data.contracts?.trim() || null,
+        reviewHints: node.data.reviewHints?.trim() || null,
+        preflight: nodePreflight ?? null,
         taskFile: getTaskFilePathForNode(node),
         outputFile: getOutputFilePathForNode(node),
         enabledTools: Object.entries(node.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key),
@@ -691,10 +885,23 @@ function setupWorkspace(
     }),
   }, null, 2))
 
+  fs.writeFileSync(join(base, 'preflight.json'), JSON.stringify(preflight, null, 2))
   fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(scopedNodes, scopedEdges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(scopedNodes, scopedEdges, allNodes, allEdges, settings, launchMetadata, dispatchContext))
-  for (const node of scopedNodes) {
-    fs.writeFileSync(join(base, 'prompts', `${getNodeFileStem(node)}.md`), buildNodePrompt(node, scopedNodes, allNodes, allEdges, launchMetadata))
+  fs.writeFileSync(join(base, 'outputs', 'Architect.md'), [
+    `Preflight generated: ${preflight.generatedAt}`,
+    `Missing: ${preflight.counts.missing}`,
+    `Adopted: ${preflight.counts.adopted}`,
+    `Needs delta: ${preflight.counts.needs_delta}`,
+    `Blocked by upstream: ${preflight.counts.blocked_by_upstream}`,
+    `Unchanged: ${preflight.counts.unchanged}`,
+    '',
+    ...preflight.nodes.map(node => `## ${node.label}\n${formatPreflightNodeSummary(node)}`),
+  ].join('\n'))
+  if (launchPlans.length > 0) {
+    fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(scopedNodes, scopedEdges, allNodes, allEdges, settings, launchMetadata, preflight, launchPlans, dispatchContext))
+  }
+  for (const { node, preflight: nodePreflight } of launchPlans) {
+    fs.writeFileSync(join(base, 'prompts', `${getNodeFileStem(node)}.md`), buildNodePrompt(node, scopedNodes, allNodes, allEdges, launchMetadata, nodePreflight))
   }
 }
 
@@ -705,107 +912,56 @@ export async function runGraph(
   projectDir: string,
   rawSettings: unknown,
   options?: RunGraphOptions,
-): Promise<TerminalInfo[]> {
+): Promise<RunGraphResult> {
   killAll()
   const settings = normalizeProjectSettings(rawSettings)
 
-  if (options?.launchScope && options.launchScope.mode !== 'all') {
-    const { nodes } = resolveLaunchScope(allNodes, allEdges, options.launchScope)
-    ensureArchitectWorkspace(projectDir)
+  const { nodes, edges, metadata } = resolveLaunchScope(allNodes, allEdges, options?.launchScope)
+  const preflight = buildPreflightSummary(projectDir, nodes, edges, options?.dispatchContext)
+  const actionablePlans = topoSort(
+    nodes.filter(node => preflight.nodes.find(candidate => candidate.nodeId === node.id)?.launchIntent !== 'skip'),
+    edges.filter(edge =>
+      preflight.nodes.find(candidate => candidate.nodeId === edge.source)?.launchIntent !== 'skip'
+      && preflight.nodes.find(candidate => candidate.nodeId === edge.target)?.launchIntent !== 'skip'
+    )
+  ).map(node => ({
+    node,
+    preflight: preflight.nodes.find(candidate => candidate.nodeId === node.id)!,
+  }))
 
-    return nodes.map(node => {
-      const safe = getNodeFileStem(node)
-      let taskFile = join(projectDir, 'ARCHITECT', 'tasks', `${safe}.md`)
-      const runtime = getNodeRuntime(node, settings)
-      const env: Record<string, string> = {}
+  setupWorkspace(projectDir, nodes, edges, allNodes, allEdges, settings, metadata, preflight, actionablePlans, options?.dispatchContext)
 
-      for (const { key, value } of node.data.envVars ?? []) {
-        if (key) env[key] = value
-      }
-
-      if (!fs.existsSync(taskFile) && hasUniqueNodeLabel(node.data.label, allNodes)) {
-        const legacyTaskFile = join(projectDir, getLegacyTaskFilePathForLabel(node.data.label))
-        if (fs.existsSync(legacyTaskFile)) {
-          taskFile = legacyTaskFile
-        }
-      }
-
-      if (!fs.existsSync(taskFile)) {
-        return spawnErrorSession(
-          win,
-          node.id,
-          node.data.label,
-          runtime,
-          projectDir,
-          `Architect could not find ${taskFile}. Run a full launch first so the task markdown exists, then launch the selected component again.`,
-        )
-      }
-
-      const taskMarkdown = fs.readFileSync(taskFile, 'utf-8')
-      const savedSessionId = runtime === 'claude' ? (node.data.claudeSessionId?.trim() || null) : null
-
-      if (savedSessionId) {
-        // Generate a unique completion token so history replay doesn't trigger it
-        const completionToken = `ARCHITECT_COMPLETE_${randomUUID().slice(0, 8)}`
-        return spawnAgentSession({
-          win,
-          id: node.id,
-          label: node.data.label,
-          runtime,
-          env,
-          cwd: projectDir,
-          initialPrompt: buildResumePrompt(node, completionToken),
-          model: getNodeModel(node, runtime),
-          resumeSessionId: savedSessionId,
-          completionToken,
-          projectDir,
-          nodeId: node.id,
-        })
-      }
-
-      return spawnAgentSession({
-        win,
-        id: node.id,
-        label: node.data.label,
-        runtime,
-        env,
-        cwd: projectDir,
-        initialPrompt: buildDirectTaskLaunchPrompt(node, taskMarkdown),
-        model: getNodeModel(node, runtime),
-        projectDir,
-        nodeId: node.id,
-      })
-    })
+  if (actionablePlans.length === 0) {
+    return {
+      sessions: [],
+      preflight,
+    }
   }
 
-  const { nodes, edges, metadata } = resolveLaunchScope(allNodes, allEdges, options?.launchScope)
-  setupWorkspace(projectDir, nodes, edges, allNodes, allEdges, settings, metadata, options?.dispatchContext)
-
-  const sorted = topoSort(nodes, edges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
   const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
 
   const allInfo: TerminalInfo[] = [
     { id: 'architect-agent', label: 'Architect', runtime: settings.defaultRuntime },
-    ...sorted.map(node => ({ id: node.id, label: node.data.label, runtime: getNodeRuntime(node, settings) })),
+    ...actionablePlans.map(({ node }) => ({ id: node.id, label: node.data.label, runtime: getNodeRuntime(node, settings) })),
   ]
 
-  const nodeMap = new Map(sorted.map(node => [getNodeFileStem(node), node]))
+  const nodeMap = new Map(actionablePlans.map(plan => [getNodeFileStem(plan.node), plan]))
   const triggered = new Set<string>()
   const taskReady = new Set<string>()
   const agentDone = new Set<string>()
 
   const upstreamMap = new Map<string, string[]>()
   const downstreamMap = new Map<string, string[]>()
-  for (const node of sorted) {
+  for (const { node } of actionablePlans) {
     const safe = getNodeFileStem(node)
     upstreamMap.set(safe, edges
-      .filter(edge => edge.target === node.id)
+      .filter(edge => edge.target === node.id && nodeMap.has(getNodeFileStem(edge.source)))
       .map(edge => nodes.find(candidate => candidate.id === edge.source))
       .filter(Boolean)
       .map(candidate => getNodeFileStem(candidate!)))
     downstreamMap.set(safe, edges
-      .filter(edge => edge.source === node.id)
+      .filter(edge => edge.source === node.id && nodeMap.has(getNodeFileStem(edge.target)))
       .map(edge => nodes.find(candidate => candidate.id === edge.target))
       .filter(Boolean)
       .map(candidate => getNodeFileStem(candidate!)))
@@ -816,7 +972,8 @@ export async function runGraph(
     if ((upstreamMap.get(safe) ?? []).some(upstream => !agentDone.has(upstream))) return
 
     triggered.add(safe)
-    const node = nodeMap.get(safe)!
+    const plan = nodeMap.get(safe)!
+    const { node, preflight: nodePreflight } = plan
     const env: Record<string, string> = {}
     for (const { key, value } of node.data.envVars ?? []) {
       if (key) env[key] = value
@@ -825,19 +982,40 @@ export async function runGraph(
     const runtime = getNodeRuntime(node, settings)
     const model = getNodeModel(node, runtime)
     const prompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
+    const savedSessionId = runtime === 'claude' && nodePreflight.launchIntent === 'plan_delta'
+      ? (node.data.claudeSessionId?.trim() || null)
+      : null
 
-    spawnAgentSession({
-      win,
-      id: node.id,
-      label: node.data.label,
-      runtime,
-      env,
-      cwd: projectDir,
-      initialPrompt: prompt,
-      model,
-      projectDir,
-      nodeId: node.id,
-    })
+    if (savedSessionId) {
+      const completionToken = `ARCHITECT_COMPLETE_${randomUUID().slice(0, 8)}`
+      spawnAgentSession({
+        win,
+        id: node.id,
+        label: node.data.label,
+        runtime,
+        env,
+        cwd: projectDir,
+        initialPrompt: buildResumePrompt(node, completionToken),
+        model,
+        projectDir,
+        nodeId: node.id,
+        resumeSessionId: savedSessionId,
+        completionToken,
+      })
+    } else {
+      spawnAgentSession({
+        win,
+        id: node.id,
+        label: node.data.label,
+        runtime,
+        env,
+        cwd: projectDir,
+        initialPrompt: prompt,
+        model,
+        projectDir,
+        nodeId: node.id,
+      })
+    }
 
     onSessionDone(node.id, () => {
       agentDone.add(safe)
@@ -874,7 +1052,10 @@ export async function runGraph(
     model: DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
   })
 
-  return allInfo
+  return {
+    sessions: allInfo,
+    preflight,
+  }
 }
 
 export function startAssistant(

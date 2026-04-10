@@ -14,6 +14,7 @@ contextBridge.exposeInMainWorld('electron', {
   // Canvas persistence
   saveCanvas: (projectDir: string, data: string) => ipcRenderer.invoke('save-canvas', projectDir, data),
   loadCanvas: (projectDir: string) => ipcRenderer.invoke('load-canvas', projectDir),
+  bootstrapProject: (projectDir: string, runtime: unknown) => ipcRenderer.invoke('bootstrap-project', projectDir, runtime),
 
   // Custom component discovery
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),

@@ -24,11 +24,12 @@ import { nodeTypes } from './components/nodes/nodeTypes'
 import { DispatchActionsProvider } from './context/DispatchActionsContext'
 import { ProjectDirectoryProvider } from './context/ProjectDirectoryContext'
 import type { ArchitectNodeType, ProjectSettings } from './types'
-import type { PaletteItemConfig } from './data/componentPalette'
+import { palette, type PaletteItemConfig } from './data/componentPalette'
 import { createDefaultNodeConfig, createDefaultProjectSettings, migrateCanvasData } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
-import type { LaunchScopeMode, RunGraphOptions } from '../../shared/graphDispatch'
+import type { GraphPreflightSummary, LaunchScopeMode, RunGraphOptions } from '../../shared/graphDispatch'
+import type { ProjectBootstrapResult } from '../../shared/projectBootstrap'
 
 interface TerminalInfo {
   id: string
@@ -84,7 +85,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
         </svg>
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-white tracking-tight">Architect</h1>
-          <p className="text-sm text-slate-500 mt-1">Open a project folder to get started</p>
+          <p className="text-sm text-slate-500 mt-1">Open a project folder to import existing code or continue where you left off</p>
         </div>
       </div>
 
@@ -160,6 +161,50 @@ function computeLayoutPositions(
   return positions
 }
 
+function buildImportedNodes(
+  bootstrap: ProjectBootstrapResult,
+  defaultRuntime: AgentRuntime,
+): ArchitectNodeType[] {
+  const positions = computeLayoutPositions(
+    bootstrap.nodes.map(node => node.id),
+    bootstrap.edges
+  )
+
+  return bootstrap.nodes.map((node, index) => ({
+    id: node.id,
+    type: 'architectNode',
+    position: positions[node.id] ?? { x: 80 + (index % 3) * 320, y: 80 + Math.floor(index / 3) * 160 },
+    data: {
+      label: node.label,
+      description: node.description,
+      category: node.category,
+      iconName: node.iconName,
+      color: node.color,
+      tag: node.tag,
+      status: 'idle',
+      prompt: node.prompt,
+      ...createDefaultNodeConfig(defaultRuntime),
+      ownedPaths: node.ownedPaths,
+      expectedFiles: node.expectedFiles,
+      contracts: node.contracts,
+      reviewHints: node.reviewHints,
+    },
+  }))
+}
+
+function serializeCanvasData(
+  nodes: ArchitectNodeType[],
+  edges: Edge[],
+  settings: ProjectSettings,
+) {
+  return JSON.stringify({
+    nodes,
+    edges,
+    settings,
+    savedAt: new Date().toISOString(),
+  })
+}
+
 // ── Main flow ──────────────────────────────────────────────────────────────
 
 function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChangeDir: () => void }) {
@@ -171,10 +216,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatching, setDispatching] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
+  const [initializingProject, setInitializingProject] = useState(true)
+  const [bootstrapSummary, setBootstrapSummary] = useState<string | null>(null)
+  const [bootstrapStatus, setBootstrapStatus] = useState('Analyzing existing project structure…')
+  const [lastPreflight, setLastPreflight] = useState<GraphPreflightSummary | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [launchRevision, setLaunchRevision] = useState(0)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const lastSyncedCanvasRef = useRef<string | null>(null)
   const { screenToFlowPosition } = useReactFlow()
 
   // Cleanup auto-save timer on unmount
@@ -187,12 +237,9 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         const updated = prev.map(n =>
           n.id === nodeId ? { ...n, data: { ...n.data, claudeSessionId: sessionId } } : n
         )
-        void window.electron.saveCanvas(projectDir, JSON.stringify({
-          nodes: updated,
-          edges,
-          settings: projectSettings,
-          savedAt: new Date().toISOString(),
-        }))
+        const serialized = serializeCanvasData(updated, edges, projectSettings)
+        lastSyncedCanvasRef.current = serialized
+        void window.electron.saveCanvas(projectDir, serialized)
         return updated
       })
     })
@@ -200,15 +247,60 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   // Auto-load canvas on mount
   useEffect(() => {
-    window.electron.loadCanvas(projectDir).then((raw: string | null) => {
-      if (!raw) return
+    let cancelled = false
+    setInitializingProject(true)
+    setBootstrapSummary(null)
+    setBootstrapStatus('Analyzing existing project structure…')
+    setLastPreflight(null)
+    lastSyncedCanvasRef.current = null
+
+    const loadProject = async () => {
       try {
-        const migrated = migrateCanvasData(JSON.parse(raw))
-        setNodes(migrated.nodes)
-        setEdges(migrated.edges)
-        setProjectSettings(migrated.settings)
-      } catch {}
-    })
+        const raw = await window.electron.loadCanvas(projectDir)
+        if (cancelled) return
+
+        if (raw) {
+          try {
+            const migrated = migrateCanvasData(JSON.parse(raw))
+            if (cancelled) return
+            setNodes(migrated.nodes)
+            setEdges(migrated.edges)
+            setProjectSettings(migrated.settings)
+            lastSyncedCanvasRef.current = raw
+          } catch {}
+          return
+        }
+
+        setBootstrapStatus('Synthesizing architecture from the repo structure…')
+        const bootstrap = await window.electron.bootstrapProject(projectDir, projectSettings.defaultRuntime)
+        if (cancelled) return
+
+        const importedNodes = buildImportedNodes(bootstrap, projectSettings.defaultRuntime)
+        const importedEdges: Edge[] = bootstrap.edges.map(edge => ({
+          id: edge.id,
+          source: edge.source,
+          target: edge.target,
+        }))
+
+        setNodes(importedNodes)
+        setEdges(importedEdges)
+        setBootstrapSummary(bootstrap.summary)
+        const serialized = serializeCanvasData(importedNodes, importedEdges, projectSettings)
+        lastSyncedCanvasRef.current = serialized
+        await window.electron.saveCanvas(projectDir, serialized)
+        if (cancelled) return
+        setIsDirty(false)
+        setDispatchedGraph(null)
+      } finally {
+        if (!cancelled) setInitializingProject(false)
+      }
+    }
+
+    void loadProject()
+
+    return () => {
+      cancelled = true
+    }
   }, [projectDir])
 
   const onConnect = useCallback(
@@ -217,12 +309,9 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   )
 
   const onSave = useCallback(async () => {
-    await window.electron.saveCanvas(projectDir, JSON.stringify({
-      nodes,
-      edges,
-      settings: projectSettings,
-      savedAt: new Date().toISOString(),
-    }))
+    const serialized = serializeCanvasData(nodes, edges, projectSettings)
+    lastSyncedCanvasRef.current = serialized
+    await window.electron.saveCanvas(projectDir, serialized)
     setIsDirty(false)
   }, [projectDir, nodes, edges, projectSettings])
 
@@ -268,12 +357,9 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       // Position/layout changes: auto-save silently after debounce (no dirty indicator)
       if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = setTimeout(() => {
-        window.electron.saveCanvas(projectDir, JSON.stringify({
-          nodes,
-          edges,
-          settings: projectSettings,
-          savedAt: new Date().toISOString(),
-        }))
+        const serialized = serializeCanvasData(nodes, edges, projectSettings)
+        lastSyncedCanvasRef.current = serialized
+        window.electron.saveCanvas(projectDir, serialized)
       }, 1000)
     }
   }, [onNodesChange, projectDir, nodes, edges, projectSettings])
@@ -283,7 +369,12 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setIsDirty(true)
   }, [onEdgesChange])
 
-  const onClear    = useCallback(() => { setNodes([]); setEdges([]); setIsDirty(true) }, [setNodes, setEdges])
+  const onClear    = useCallback(() => {
+    setNodes([])
+    setEdges([])
+    setBootstrapSummary(null)
+    setIsDirty(true)
+  }, [setNodes, setEdges])
   const onLoadDemo = useCallback(() => {
     setNodes(DEMO_NODES.map(node => ({
       ...node,
@@ -293,12 +384,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       },
     })))
     setEdges(DEMO_EDGES)
+    setBootstrapSummary(null)
     setIsDirty(true)
   }, [projectSettings.defaultRuntime, setNodes, setEdges])
 
-  const changedNodeLabels = dispatchedGraph
-    ? nodes.filter(n => nodeHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
+  const changedNodes = dispatchedGraph
+    ? nodes.filter(n => nodeHash(n) !== dispatchedGraph[n.id])
     : []
+  const changedNodeIds = changedNodes.map(node => node.id)
+  const changedNodeLabels = changedNodes.map(node => node.data.label)
   const selectedNodeIds = nodes.filter(node => node.selected).map(node => node.id)
 
   const dispatchGraph = useCallback(async (mode: LaunchScopeMode, nodeIds: string[] = []) => {
@@ -314,19 +408,20 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
     setDispatching(true)
     if (isFullLaunch && dispatchedGraph !== null) {
-      options.dispatchContext = { isRedispatch: true, changedNodeLabels }
+      options.dispatchContext = { isRedispatch: true, changedNodeIds, changedNodeLabels }
     }
 
     try {
-      const sessions = await window.electron.runGraph(
+      const result = await window.electron.runGraph(
         nodes,
         edges,
         projectDir,
         projectSettings,
         Object.keys(options).length > 0 ? options : undefined,
       )
-      setTerminalSessions(sessions)
-      setActiveTab('Terminal')
+      setTerminalSessions(result.sessions as TerminalInfo[])
+      setLastPreflight(result.preflight)
+      if (result.sessions.length > 0) setActiveTab('Terminal')
       setLaunchRevision(current => current + 1)
       if (isFullLaunch) {
         // Snapshot the dispatched graph for incremental re-dispatch detection
@@ -339,7 +434,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     } finally {
       setDispatching(false)
     }
-  }, [nodes, edges, projectDir, projectSettings, dispatchedGraph, changedNodeLabels])
+  }, [nodes, edges, projectDir, projectSettings, dispatchedGraph, changedNodeIds, changedNodeLabels])
 
   const onDispatch = useCallback(() => {
     void dispatchGraph('all')
@@ -353,6 +448,29 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     await dispatchGraph(mode, nodeIds)
   }, [dispatchGraph])
 
+  useEffect(() => {
+    if (initializingProject) return
+
+    const interval = window.setInterval(() => {
+      if (isDirty) return
+
+      void window.electron.loadCanvas(projectDir).then(raw => {
+        if (!raw || raw === lastSyncedCanvasRef.current) return
+        try {
+          const migrated = migrateCanvasData(JSON.parse(raw))
+          setNodes(migrated.nodes)
+          setEdges(migrated.edges)
+          setProjectSettings(migrated.settings)
+          setBootstrapSummary(null)
+          setDispatchedGraph(null)
+          lastSyncedCanvasRef.current = raw
+        } catch {}
+      })
+    }, 1200)
+
+    return () => window.clearInterval(interval)
+  }, [initializingProject, isDirty, projectDir, setNodes, setEdges])
+
   const buildAssistantContext = useCallback((currentNodes: ArchitectNodeType[], currentEdges: Edge[]) => {
     const canvasJson = JSON.stringify({
       nodes: currentNodes.map(n => ({
@@ -364,9 +482,20 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         color: n.data.color,
         tag: n.data.tag,
         prompt: n.data.prompt,
+        ownedPaths: n.data.ownedPaths,
+        expectedFiles: n.data.expectedFiles,
+        contracts: n.data.contracts,
+        reviewHints: n.data.reviewHints,
       })),
       edges: currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
     }, null, 2)
+    const paletteJson = JSON.stringify(palette.map(item => ({
+      label: item.label,
+      category: item.category,
+      iconName: item.iconName,
+      color: item.color,
+      tag: item.tag,
+    })), null, 2)
 
     return `You are an architecture assistant embedded in Architect — a tool for visually composing multi-agent and software systems.
 
@@ -387,11 +516,21 @@ The canvas replaces everything on each update, so always include ALL nodes and e
 Preserve existing node ids whenever possible so the user's layout is not lost.
 
 ## Canvas Node Schema
-Each node requires: id (kebab-case), label, description (one sentence), category, iconName, color (hex), tag (≤6 chars uppercase), prompt (agent instructions, may be empty)
+Each node requires: id (kebab-case), label, description (one sentence), category, iconName, color (hex), tag (≤6 chars uppercase), prompt (agent instructions), ownedPaths (string[]), expectedFiles (string[]), contracts (string), reviewHints (string)
 
 Available categories: infrastructure | services | storage | custom
 
 Available iconNames: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitBranch, Webhook, Settings2, Brain, Layers, Cpu, Clock, Mail, Bell, CreditCard, Search, Activity, BarChart2, ToggleLeft, Database, Zap, Archive, Table, Boxes, Share2, TrendingUp, Wrench
+
+## Palette Reference
+\`\`\`json
+${paletteJson}
+\`\`\`
+
+## Valid Example
+\`\`\`json
+{"nodes":[{"id":"frontend","label":"Frontend","description":"Owns the web UI.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI","prompt":"Continue from the existing frontend implementation. Inspect routes and state boundaries before making changes.","ownedPaths":["frontend"],"expectedFiles":["frontend/src/main.tsx"],"contracts":"Routes, UI state boundaries, and integration points.","reviewHints":"Inspect the app entrypoint and API integration points before editing."},{"id":"api-gateway","label":"API Gateway","description":"Owns the API surface.","category":"infrastructure","iconName":"Shield","color":"#fb923c","tag":"API","prompt":"Continue from the existing API implementation. Preserve contracts and only make the next required delta.","ownedPaths":["server"],"expectedFiles":["server/app.ts"],"contracts":"Request/response contracts and public endpoints.","reviewHints":"Inspect route registration and public interfaces before editing."}],"edges":[{"id":"frontend-to-api","source":"frontend","target":"api-gateway"}]}
+\`\`\`
 
 Each edge requires: id, source (node id), target (node id)
 
@@ -401,15 +540,19 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
   const applyCanvasUpdate = useCallback((update: { nodes: unknown[]; edges: unknown[] }) => {
     const rawNodes = (update.nodes ?? []) as Array<Record<string, unknown>>
     const rawEdges = (update.edges ?? []) as Array<{ id?: string; source: string; target: string }>
+    const existingNodes = new Map(nodes.map(node => [node.id, node]))
     const existingPositions = new Map(nodes.map(n => [n.id, n.position]))
     const positions = computeLayoutPositions(rawNodes.map(n => String(n.id)), rawEdges)
     const newNodes: ArchitectNodeType[] = rawNodes.map((raw, i) => {
       const id = String(raw.id ?? `gen-${Date.now()}-${i}`)
+      const existing = existingNodes.get(id)
       return {
         id,
         type: 'architectNode' as const,
         position: existingPositions.get(id) ?? positions[id] ?? { x: 80 + (i % 3) * 320, y: 80 + Math.floor(i / 3) * 160 },
         data: {
+          ...createDefaultNodeConfig(projectSettings.defaultRuntime),
+          ...existing?.data,
           label:       String(raw.label       ?? 'Node'),
           description: String(raw.description ?? ''),
           category:    (raw.category as ArchitectNodeType['data']['category']) ?? 'services',
@@ -418,7 +561,10 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
           tag:         String(raw.tag     ?? 'NODE'),
           status:      'idle' as const,
           prompt:      String(raw.prompt  ?? ''),
-          ...createDefaultNodeConfig(projectSettings.defaultRuntime),
+          ownedPaths: Array.isArray(raw.ownedPaths) ? raw.ownedPaths.filter((value): value is string => typeof value === 'string') : (existing?.data.ownedPaths ?? []),
+          expectedFiles: Array.isArray(raw.expectedFiles) ? raw.expectedFiles.filter((value): value is string => typeof value === 'string') : (existing?.data.expectedFiles ?? []),
+          contracts:   String(raw.contracts   ?? existing?.data.contracts   ?? ''),
+          reviewHints: String(raw.reviewHints ?? existing?.data.reviewHints ?? ''),
         },
       }
     })
@@ -429,6 +575,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
     }))
     setNodes(newNodes)
     setEdges(newEdges)
+    setBootstrapSummary(null)
     setIsDirty(true)
     setDispatchedGraph(null)
   }, [nodes, projectSettings.defaultRuntime, setNodes, setEdges])
@@ -451,6 +598,10 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
     setAssistantOpen(false)
     setAssistantRuntime(null)
   }, [])
+
+  const preflightSummaryText = lastPreflight
+    ? `${lastPreflight.counts.missing} missing / ${lastPreflight.counts.adopted} adopt / ${lastPreflight.counts.needs_delta} delta / ${lastPreflight.counts.blocked_by_upstream} upstream / ${lastPreflight.counts.unchanged} unchanged`
+    : bootstrapSummary
 
   const isCanvas   = activeTab === 'Canvas'
   const isFiles    = activeTab === 'Files'
@@ -479,6 +630,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
               assistantOpen={assistantOpen}
               isRedispatch={dispatchedGraph !== null}
               changedCount={changedNodeLabels.length}
+              preflightSummary={preflightSummaryText}
               projectSettings={projectSettings}
               onDefaultRuntimeChange={(defaultRuntime) => {
                 setProjectSettings(current => ({ ...current, defaultRuntime }))
@@ -492,18 +644,27 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
               </ResizablePanel>
 
               <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
-                <ReactFlow
-                  nodes={nodes} edges={edges}
-                  onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
-                  onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
-                  nodeTypes={nodeTypes}
-                  defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
-                  proOptions={{ hideAttribution: true }}
-                  fitView
-                >
-                  <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
-                  <Controls />
-                </ReactFlow>
+                {initializingProject ? (
+                  <div className="absolute inset-0 flex items-center justify-center text-center px-6">
+                    <div>
+                      <p className="text-sm text-slate-300">{bootstrapStatus}</p>
+                      <p className="text-xs text-slate-600 mt-2">Architect is building a draft canvas from the repo so relaunches can continue from current code instead of starting from zero.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <ReactFlow
+                    nodes={nodes} edges={edges}
+                    onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
+                    onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
+                    nodeTypes={nodeTypes}
+                    defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
+                    proOptions={{ hideAttribution: true }}
+                    fitView
+                  >
+                    <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
+                    <Controls />
+                  </ReactFlow>
+                )}
               </div>
 
               {isFiles && (
@@ -530,7 +691,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
                     runtime={assistantRuntime ?? projectSettings.defaultRuntime}
                   />
                 ) : (
-                  <AgentLog projectDir={projectDir} />
+                  <AgentLog projectDir={projectDir} preflight={lastPreflight} />
                 )}
               </ResizablePanel>
             </div>

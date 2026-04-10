@@ -60,6 +60,10 @@ export interface ArchitectNodeData {
   prompt: string
   additionalChanges: string
   claudeSessionId?: string
+  ownedPaths: string[]
+  expectedFiles: string[]
+  contracts: string
+  reviewHints: string
   agentRuntimeMode: AgentRuntimeMode
   agentRuntime: AgentRuntime
   providerModels: RuntimeModelMap

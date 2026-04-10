@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import { join } from 'path'
+import type { GraphPreflightSummary } from '../../../../shared/graphDispatch'
 
 interface OutputFile {
   name: string
@@ -9,11 +10,12 @@ interface OutputFile {
 
 interface Props {
   projectDir: string
+  preflight?: GraphPreflightSummary | null
 }
 
 const POLL_INTERVAL = 2000
 
-export default function AgentLog({ projectDir }: Props) {
+export default function AgentLog({ projectDir, preflight }: Props) {
   const [files, setFiles]       = useState<OutputFile[]>([])
   const [active, setActive]     = useState<string | null>(null)
   const [running, setRunning]   = useState(false)
@@ -64,8 +66,20 @@ export default function AgentLog({ projectDir }: Props) {
       <div className="flex flex-col bg-panel border-l border-node-border h-full">
         <Header />
         <div className="flex-1 flex flex-col items-center justify-center gap-2 p-4">
-          <p className="text-xs text-slate-600 text-center">No agents running yet.</p>
-          <p className="text-xs text-slate-700 text-center">Dispatch to start building.</p>
+          {preflight ? (
+            <>
+              <p className="text-xs text-slate-500 text-center">Last preflight</p>
+              <p className="text-xs text-slate-600 text-center">
+                {preflight.counts.missing} missing / {preflight.counts.adopted} adopt / {preflight.counts.needs_delta} delta / {preflight.counts.blocked_by_upstream} upstream / {preflight.counts.unchanged} unchanged
+              </p>
+              <p className="text-xs text-slate-700 text-center">No agent sessions are active right now.</p>
+            </>
+          ) : (
+            <>
+              <p className="text-xs text-slate-600 text-center">No agents running yet.</p>
+              <p className="text-xs text-slate-700 text-center">Dispatch to start building.</p>
+            </>
+          )}
         </div>
       </div>
     )

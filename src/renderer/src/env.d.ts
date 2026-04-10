@@ -1,5 +1,6 @@
 import type { AgentRuntime } from '../../shared/agentRuntimes'
-import type { RunGraphOptions } from '../../shared/graphDispatch'
+import type { ProjectBootstrapResult } from '../../shared/projectBootstrap'
+import type { RunGraphOptions, RunGraphResult } from '../../shared/graphDispatch'
 import type { ProjectSettings } from './types'
 
 interface FileEntry {
@@ -29,6 +30,7 @@ interface ElectronAPI {
   openDirectory: () => Promise<string | null>
   saveCanvas: (projectDir: string, data: string) => Promise<void>
   loadCanvas: (projectDir: string) => Promise<string | null>
+  bootstrapProject: (projectDir: string, runtime: AgentRuntime) => Promise<ProjectBootstrapResult>
   scanComponents: (dirPath: string) => Promise<unknown[]>
   runGraph: (
     nodes: unknown[],
@@ -36,7 +38,7 @@ interface ElectronAPI {
     cwd: string,
     settings: ProjectSettings,
     options?: RunGraphOptions
-  ) => Promise<TerminalInfo[]>
+  ) => Promise<RunGraphResult>
   assistant: {
     start: (projectDir: string, contextMd: string, runtime: AgentRuntime) => Promise<TerminalInfo | null>
     stop: () => void
@@ -47,6 +49,7 @@ interface ElectronAPI {
     killAll: () => void
     onData: (cb: (event: { id: string; data: string }) => void) => () => void
     onExit: (cb: (event: { id: string; exitCode: number }) => void) => () => void
+    onNodeSessionSaved: (cb: (event: { nodeId: string; sessionId: string }) => void) => () => void
   }
 }
 

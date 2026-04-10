@@ -20,6 +20,7 @@ interface TopNavProps {
   assistantOpen: boolean
   isRedispatch: boolean
   changedCount: number
+  preflightSummary: string | null
   projectSettings: ProjectSettings
   onDefaultRuntimeChange: (runtime: AgentRuntime) => void
 }
@@ -43,7 +44,7 @@ export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,
   onDispatch, onDispatchSelected, dispatching, nodeCount, selectedCount,
   projectDir, onChangeDir, onSave, isDirty,
-  onAssistantToggle, assistantOpen, isRedispatch, changedCount,
+  onAssistantToggle, assistantOpen, isRedispatch, changedCount, preflightSummary,
   projectSettings, onDefaultRuntimeChange,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
@@ -152,6 +153,11 @@ export default function TopNav({
               : `Launch all${nodeCount > 0 ? ` (${nodeCount})` : ''}`
           }
         </button>
+        {preflightSummary && (
+          <div className="max-w-[240px] text-[10px] leading-relaxed text-slate-500 border-l border-white/[0.06] pl-2">
+            {preflightSummary}
+          </div>
+        )}
       </div>
     </div>
   )

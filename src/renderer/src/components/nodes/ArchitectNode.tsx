@@ -51,6 +51,10 @@ function ArchitectNode({ id, data, selected }: ArchitectNodeProps) {
   const prompt = (data.prompt ?? '') as string
   const additionalChanges = (data.additionalChanges ?? '') as string
   const claudeSessionId = (data.claudeSessionId ?? '') as string
+  const ownedPaths = (data.ownedPaths ?? []) as string[]
+  const expectedFiles = (data.expectedFiles ?? []) as string[]
+  const contracts = (data.contracts ?? '') as string
+  const reviewHints = (data.reviewHints ?? '') as string
   const status = data.status as NodeStatus
   const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
   const configuredRuntime = (data.agentRuntime ?? projectSettings.defaultRuntime) as AgentRuntime
@@ -188,6 +192,10 @@ function ArchitectNode({ id, data, selected }: ArchitectNodeProps) {
           prompt={prompt}
           additionalChanges={additionalChanges}
           claudeSessionId={claudeSessionId}
+          ownedPaths={ownedPaths}
+          expectedFiles={expectedFiles}
+          contracts={contracts}
+          reviewHints={reviewHints}
           runtimeMode={runtimeMode}
           configuredRuntime={configuredRuntime}
           effectiveRuntime={effectiveRuntime}
@@ -217,6 +225,10 @@ interface ModalProps {
   prompt: string
   additionalChanges: string
   claudeSessionId: string
+  ownedPaths: string[]
+  expectedFiles: string[]
+  contracts: string
+  reviewHints: string
   runtimeMode: AgentRuntimeMode
   configuredRuntime: AgentRuntime
   effectiveRuntime: AgentRuntime
@@ -241,6 +253,10 @@ function NodeConfigModal({
   prompt,
   additionalChanges,
   claudeSessionId,
+  ownedPaths,
+  expectedFiles,
+  contracts,
+  reviewHints,
   runtimeMode,
   configuredRuntime,
   effectiveRuntime,
@@ -416,6 +432,41 @@ function NodeConfigModal({
                   />
                 </Section>
               )}
+
+              <Section title="Implementation Signals">
+                <div className="space-y-3">
+                  <ListField
+                    label="Owned paths"
+                    value={ownedPaths}
+                    placeholder="apps/web\nsrc/server"
+                    onChange={value => patch({ ownedPaths: parseMultiLineList(value) })}
+                  />
+                  <ListField
+                    label="Expected files"
+                    value={expectedFiles}
+                    placeholder="apps/web/package.json\napps/web/src/main.tsx"
+                    onChange={value => patch({ expectedFiles: parseMultiLineList(value) })}
+                  />
+                  <div>
+                    <p className="text-[11px] text-slate-500 mb-1.5">Contracts</p>
+                    <textarea
+                      value={contracts}
+                      onChange={event => patch({ contracts: event.target.value })}
+                      placeholder="Endpoints, schemas, exports, or ownership boundaries this node is expected to preserve."
+                      className="w-full min-h-24 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono resize-y"
+                    />
+                  </div>
+                  <div>
+                    <p className="text-[11px] text-slate-500 mb-1.5">Review hints</p>
+                    <textarea
+                      value={reviewHints}
+                      onChange={event => patch({ reviewHints: event.target.value })}
+                      placeholder="How this node should inspect existing code before applying deltas."
+                      className="w-full min-h-20 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono resize-y"
+                    />
+                  </div>
+                </div>
+              </Section>
 
               <Section title="Runtime">
                 <div className="space-y-3">
@@ -708,8 +759,39 @@ function Seg<T extends string>({ options, value, onChange }: { options: T[]; val
   )
 }
 
+function ListField({
+  label,
+  value,
+  placeholder,
+  onChange,
+}: {
+  label: string
+  value: string[]
+  placeholder: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div>
+      <p className="text-[11px] text-slate-500 mb-1.5">{label}</p>
+      <textarea
+        value={value.join('\n')}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+        className="w-full min-h-20 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono resize-y"
+      />
+    </div>
+  )
+}
+
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
+}
+
+function parseMultiLineList(value: string): string[] {
+  return [...new Set(value
+    .split('\n')
+    .map(line => line.trim())
+    .filter(Boolean))]
 }
 
 function statusColor(status: NodeStatus, defaultColor: string): string {

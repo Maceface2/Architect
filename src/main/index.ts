@@ -3,6 +3,7 @@ import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
 import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant } from './terminals'
+import { bootstrapProjectCanvas } from './projectAnalyzer'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 import type { RunGraphOptions } from '../shared/graphDispatch'
 
@@ -122,6 +123,10 @@ ipcMain.handle('load-canvas', (_event, projectDir: string) => {
   catch { return null }
 })
 
+ipcMain.handle('bootstrap-project', (_event, projectDir: string, runtime: AgentRuntime | undefined) => {
+  return bootstrapProjectCanvas(projectDir, runtime)
+})
+
 ipcMain.handle('scan-components', (_event, dirPath: string) => {
   const results: unknown[] = []
   const walk = (d: string) => {
@@ -141,7 +146,7 @@ ipcMain.handle('scan-components', (_event, dirPath: string) => {
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
 ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, options: RunGraphOptions | undefined) => {
-  if (!mainWindow) return []
+  if (!mainWindow) return { sessions: [], preflight: { generatedAt: new Date().toISOString(), counts: { missing: 0, adopted: 0, needs_delta: 0, blocked_by_upstream: 0, unchanged: 0 }, nodes: [] } }
   return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, options)
 })
 
