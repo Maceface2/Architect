@@ -1,54 +1,55 @@
-import { useState, useEffect } from 'react'
-import { Folder, File, ArrowLeft, FolderOpen } from 'lucide-react'
+import { useState, useEffect } from "react";
+import { Folder, File, ArrowLeft, FolderOpen } from "lucide-react";
 
 interface FileEntry {
-  name: string
-  isDirectory: boolean
-  path: string
+  name: string;
+  isDirectory: boolean;
+  path: string;
 }
 
 interface Props {
-  rootDir: string
+  rootDir: string;
 }
 
 export default function FilesPanel({ rootDir }: Props) {
-  const [currentPath, setCurrentPath] = useState(rootDir)
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [history, setHistory] = useState<string[]>([])
-  const [loading, setLoading] = useState(true)
+  const [currentPath, setCurrentPath] = useState(rootDir);
+  const [entries, setEntries] = useState<FileEntry[]>([]);
+  const [history, setHistory] = useState<string[]>([]);
+  const [loading, setLoading] = useState(true);
 
   // Reset when the root dir changes
   useEffect(() => {
-    setHistory([])
-    setCurrentPath(rootDir)
-  }, [rootDir])
+    setHistory([]);
+    setCurrentPath(rootDir);
+  }, [rootDir]);
 
   useEffect(() => {
-    if (!currentPath) return
-    setLoading(true)
-    window.electron.readDir(currentPath).then(result => {
-      setEntries(result)
-      setLoading(false)
-    })
-  }, [currentPath])
+    if (!currentPath) return;
+    setLoading(true);
+    window.electron.readDir(currentPath).then((result) => {
+      setEntries(result);
+      setLoading(false);
+    });
+  }, [currentPath]);
 
   const navigateTo = (dirPath: string) => {
-    setHistory(h => [...h, currentPath])
-    setCurrentPath(dirPath)
-  }
+    setHistory((h) => [...h, currentPath]);
+    setCurrentPath(dirPath);
+  };
 
   const navigateBack = () => {
     // Don't navigate above rootDir
-    const prev = history[history.length - 1]
+    const prev = history[history.length - 1];
     if (prev !== undefined) {
-      setHistory(h => h.slice(0, -1))
-      setCurrentPath(prev)
+      setHistory((h) => h.slice(0, -1));
+      setCurrentPath(prev);
     }
-  }
+  };
 
-  const canGoBack = history.length > 0
+  const canGoBack = history.length > 0;
 
-  const folderName = currentPath.split('/').filter(Boolean).pop() ?? currentPath
+  const folderName =
+    currentPath.split("/").filter(Boolean).pop() ?? currentPath;
 
   return (
     <div className="h-full flex flex-col bg-canvas">
@@ -62,29 +63,40 @@ export default function FilesPanel({ rootDir }: Props) {
         </button>
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <FolderOpen size={13} className="text-amber-400 flex-shrink-0" />
-          <span className="text-xs text-slate-400 truncate font-mono">{folderName}</span>
+          <span className="text-xs text-slate-400 truncate font-mono">
+            {folderName}
+          </span>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
         {loading ? (
-          <div className="flex items-center justify-center h-24 text-xs text-slate-600">Loading…</div>
+          <div className="flex items-center justify-center h-24 text-xs text-slate-600">
+            Loading…
+          </div>
         ) : entries.length === 0 ? (
-          <div className="flex items-center justify-center h-24 text-xs text-slate-600">Empty directory</div>
+          <div className="flex items-center justify-center h-24 text-xs text-slate-600">
+            Empty directory
+          </div>
         ) : (
-          entries.map(entry => (
+          entries.map((entry) => (
             <button
               key={entry.path}
-              onClick={() => entry.isDirectory ? navigateTo(entry.path) : undefined}
+              onClick={() =>
+                entry.isDirectory ? navigateTo(entry.path) : undefined
+              }
               className={`flex items-center gap-2.5 w-full px-4 py-1.5 text-left hover:bg-white/[0.04] transition-colors ${
-                entry.isDirectory ? 'cursor-pointer' : 'cursor-default'
+                entry.isDirectory ? "cursor-pointer" : "cursor-default"
               }`}
             >
-              {entry.isDirectory
-                ? <Folder size={13} className="text-amber-400 flex-shrink-0" />
-                : <File   size={13} className="text-slate-600 flex-shrink-0" />
-              }
-              <span className={`text-sm truncate ${entry.isDirectory ? 'text-slate-200' : 'text-slate-500'}`}>
+              {entry.isDirectory ? (
+                <Folder size={13} className="text-amber-400 flex-shrink-0" />
+              ) : (
+                <File size={13} className="text-slate-600 flex-shrink-0" />
+              )}
+              <span
+                className={`text-sm truncate ${entry.isDirectory ? "text-slate-200" : "text-slate-500"}`}
+              >
                 {entry.name}
               </span>
             </button>
@@ -92,5 +104,5 @@ export default function FilesPanel({ rootDir }: Props) {
         )}
       </div>
     </div>
-  )
+  );
 }

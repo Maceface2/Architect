@@ -279,7 +279,7 @@ app.get("/health/detailed", async (req, res) => {
     externalApi: await checkExternalApi(),
   };
 
-  const allHealthy = Object.values(checks).every(c => c.status === "ok");
+  const allHealthy = Object.values(checks).every((c) => c.status === "ok");
 
   res.status(allHealthy ? 200 : 503).json({
     status: allHealthy ? "ok" : "degraded",
@@ -325,7 +325,7 @@ startupProbe:
     port: 3000
   initialDelaySeconds: 0
   periodSeconds: 5
-  failureThreshold: 30    # 30 * 5s = 150s max startup time
+  failureThreshold: 30 # 30 * 5s = 150s max startup time
 ```
 
 ## Environment Configuration
@@ -394,6 +394,7 @@ npx prisma migrate resolve --rolled-back <migration-name>
 Before any production deployment:
 
 ### Application
+
 - [ ] All tests pass (unit, integration, E2E)
 - [ ] No hardcoded secrets in code or config files
 - [ ] Error handling covers all edge cases
@@ -401,6 +402,7 @@ Before any production deployment:
 - [ ] Health check endpoint returns meaningful status
 
 ### Infrastructure
+
 - [ ] Docker image builds reproducibly (pinned versions)
 - [ ] Environment variables documented and validated at startup
 - [ ] Resource limits set (CPU, memory)
@@ -408,12 +410,14 @@ Before any production deployment:
 - [ ] SSL/TLS enabled on all endpoints
 
 ### Monitoring
+
 - [ ] Application metrics exported (request rate, latency, errors)
 - [ ] Alerts configured for error rate > threshold
 - [ ] Log aggregation set up (structured logs, searchable)
 - [ ] Uptime monitoring on health endpoint
 
 ### Security
+
 - [ ] Dependencies scanned for CVEs
 - [ ] CORS configured for allowed origins only
 - [ ] Rate limiting enabled on public endpoints
@@ -421,6 +425,7 @@ Before any production deployment:
 - [ ] Security headers set (CSP, HSTS, X-Frame-Options)
 
 ### Operations
+
 - [ ] Rollback plan documented and tested
 - [ ] Database migration tested against production-sized data
 - [ ] Runbook for common failure scenarios

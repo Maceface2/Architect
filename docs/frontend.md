@@ -6,14 +6,14 @@ Phase 1 of Architect: a visual architecture canvas built as an Electron desktop 
 
 ## Tech Stack
 
-| Layer | Technology |
-|---|---|
+| Layer         | Technology                           |
+| ------------- | ------------------------------------ |
 | Desktop shell | Electron (main + preload + renderer) |
-| Bundler | electron-vite |
-| UI framework | React 18 + TypeScript |
-| Canvas | `@xyflow/react` v12 |
-| Styling | Tailwind CSS v3 + PostCSS |
-| Icons | Lucide React |
+| Bundler       | electron-vite                        |
+| UI framework  | React 18 + TypeScript                |
+| Canvas        | `@xyflow/react` v12                  |
+| Styling       | Tailwind CSS v3 + PostCSS            |
+| Icons         | Lucide React                         |
 
 ---
 
@@ -59,21 +59,21 @@ src/
 
 Creates the `BrowserWindow` (1440×900, `backgroundColor: '#111111'`, `contextIsolation: true`) and registers three IPC handlers:
 
-| Channel | Handler | Returns |
-|---|---|---|
-| `get-home-dir` | `app.getPath('home')` | `string` |
-| `read-dir` | `fs.readdirSync` | `{ name, isDirectory, path }[]` sorted dirs-first, no dotfiles |
-| `open-directory` | `dialog.showOpenDialog` | `string \| null` |
+| Channel          | Handler                 | Returns                                                        |
+| ---------------- | ----------------------- | -------------------------------------------------------------- |
+| `get-home-dir`   | `app.getPath('home')`   | `string`                                                       |
+| `read-dir`       | `fs.readdirSync`        | `{ name, isDirectory, path }[]` sorted dirs-first, no dotfiles |
+| `open-directory` | `dialog.showOpenDialog` | `string \| null`                                               |
 
 ### Preload — `src/preload/index.ts`
 
 Exposes a typed `ElectronAPI` object to the renderer via `contextBridge.exposeInMainWorld('electron', ...)`:
 
 ```ts
-window.electron.platform        // OS platform string
-window.electron.getHomeDir()    // Promise<string>
-window.electron.readDir(path)   // Promise<FileEntry[]>
-window.electron.openDirectory() // Promise<string | null>
+window.electron.platform; // OS platform string
+window.electron.getHomeDir(); // Promise<string>
+window.electron.readDir(path); // Promise<FileEntry[]>
+window.electron.openDirectory(); // Promise<string | null>
 ```
 
 ### Renderer Type Declaration — `src/renderer/src/env.d.ts`
@@ -85,22 +85,22 @@ Augments `Window` with the `ElectronAPI` type. The file ends with `export {}` so
 ## Type Definitions — `src/renderer/src/types.ts`
 
 ```ts
-type ComponentCategory = 'infrastructure' | 'services' | 'storage'
-type NodeStatus = 'idle' | 'running' | 'done' | 'error'
+type ComponentCategory = "infrastructure" | "services" | "storage";
+type NodeStatus = "idle" | "running" | "done" | "error";
 
 interface ArchitectNodeData {
-  label: string        // Display name (e.g. "API Gateway")
-  description: string  // Short description (e.g. "Request routing")
-  category: ComponentCategory
-  iconName: string     // Key into the Lucide icon registry
-  color: string        // Hex accent color (e.g. "#fb923c")
-  tag: string          // Short abbreviation shown on the card (e.g. "API")
-  status: NodeStatus   // Current agent execution state
-  prompt: string       // User-written agent prompt
-  promptOpen: boolean  // Whether the prompt textarea is expanded
+  label: string; // Display name (e.g. "API Gateway")
+  description: string; // Short description (e.g. "Request routing")
+  category: ComponentCategory;
+  iconName: string; // Key into the Lucide icon registry
+  color: string; // Hex accent color (e.g. "#fb923c")
+  tag: string; // Short abbreviation shown on the card (e.g. "API")
+  status: NodeStatus; // Current agent execution state
+  prompt: string; // User-written agent prompt
+  promptOpen: boolean; // Whether the prompt textarea is expanded
 }
 
-type ArchitectNodeType = Node<ArchitectNodeData, 'architectNode'>
+type ArchitectNodeType = Node<ArchitectNodeData, "architectNode">;
 ```
 
 ---
@@ -109,16 +109,16 @@ type ArchitectNodeType = Node<ArchitectNodeData, 'architectNode'>
 
 Defines 8 draggable component types across 3 categories:
 
-| Label | Category | Tag | Color | Icon |
-|---|---|---|---|---|
-| Frontend | infrastructure | UI | `#f472b6` | Monitor |
-| API Gateway | infrastructure | API | `#fb923c` | Shield |
-| Auth | infrastructure | AUTH | `#4ade80` | Lock |
-| Service | services | SVC | `#60a5fa` | Settings2 |
-| AI Model | services | AI | `#a78bfa` | Brain |
-| Queue | services | QUEUE | `#fbbf24` | Layers |
-| Database | storage | DB | `#60a5fa` | Database |
-| Cache | storage | CACHE | `#34d399` | Zap |
+| Label       | Category       | Tag   | Color     | Icon      |
+| ----------- | -------------- | ----- | --------- | --------- |
+| Frontend    | infrastructure | UI    | `#f472b6` | Monitor   |
+| API Gateway | infrastructure | API   | `#fb923c` | Shield    |
+| Auth        | infrastructure | AUTH  | `#4ade80` | Lock      |
+| Service     | services       | SVC   | `#60a5fa` | Settings2 |
+| AI Model    | services       | AI    | `#a78bfa` | Brain     |
+| Queue       | services       | QUEUE | `#fbbf24` | Layers    |
+| Database    | storage        | DB    | `#60a5fa` | Database  |
+| Cache       | storage        | CACHE | `#34d399` | Zap       |
 
 Each item is a `PaletteItemConfig` object. `categoryOrder` and `categoryLabels` control the sidebar grouping order and display names.
 
@@ -156,12 +156,12 @@ Right panel. Currently displays a placeholder empty state (ScrollText icon + "No
 
 Wraps the Sidebar and AgentLog. Props:
 
-| Prop | Type | Default |
-|---|---|---|
-| `side` | `'left' \| 'right'` | required |
-| `defaultWidth` | `number` | required |
-| `minWidth` | `number` | `120` |
-| `maxWidth` | `number` | `480` |
+| Prop           | Type                | Default  |
+| -------------- | ------------------- | -------- |
+| `side`         | `'left' \| 'right'` | required |
+| `defaultWidth` | `number`            | required |
+| `minWidth`     | `number`            | `120`    |
+| `maxWidth`     | `number`            | `480`    |
 
 **Drag to resize:** `mousedown` on the 8px drag handle attaches `mousemove`/`mouseup` to `window`. Delta is applied in the correct direction based on `side`. No CSS transitions during drag to avoid lag.
 
@@ -195,12 +195,12 @@ Custom React Flow node. The node card is built with two layers to solve handle c
 
 **Status dot colors:**
 
-| Status | Color |
-|---|---|
-| `idle` | same as `nodeColor` (accent) |
-| `running` | `#fbbf24` (amber) |
-| `done` | `#4ade80` (green) |
-| `error` | `#f87171` (red) |
+| Status    | Color                        |
+| --------- | ---------------------------- |
+| `idle`    | same as `nodeColor` (accent) |
+| `running` | `#fbbf24` (amber)            |
+| `done`    | `#4ade80` (green)            |
+| `error`   | `#f87171` (red)              |
 
 **Prompt dropdown:** clicking "Agent prompt" toggles `promptOpen` in node data via `setNodes`. The `<textarea>` writes back via `updatePrompt`. Both use `useReactFlow().setNodes` so state lives in the React Flow store — no external state manager needed.
 
@@ -226,14 +226,14 @@ Custom React Flow node. The node card is built with two layers to solve handle c
 
 ### Tailwind Color Tokens (`tailwind.config.ts`)
 
-| Token | Hex | Used for |
-|---|---|---|
-| `canvas` | `#111111` | Canvas background |
-| `panel` | `#191919` | Sidebar, top nav, agent log backgrounds |
-| `node` | `#212121` | Node card background, button hover states |
-| `node-border` | `#2d2d2d` | Borders throughout |
-| `node-border-active` | `#5b5bf0` | Selected node borders |
-| `accent` | `#5b5bf0` | Primary action button, edge active state |
+| Token                | Hex       | Used for                                  |
+| -------------------- | --------- | ----------------------------------------- |
+| `canvas`             | `#111111` | Canvas background                         |
+| `panel`              | `#191919` | Sidebar, top nav, agent log backgrounds   |
+| `node`               | `#212121` | Node card background, button hover states |
+| `node-border`        | `#2d2d2d` | Borders throughout                        |
+| `node-border-active` | `#5b5bf0` | Selected node borders                     |
+| `accent`             | `#5b5bf0` | Primary action button, edge active state  |
 
 ### React Flow CSS Overrides (`index.css`)
 

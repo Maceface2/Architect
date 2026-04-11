@@ -3,12 +3,8 @@
   "defaultRuntime": "codex",
   "launchScope": {
     "mode": "single",
-    "activeAgents": [
-      "Desktop App"
-    ],
-    "omittedConnectedAgents": [
-      "IPC Bridge"
-    ]
+    "activeAgents": ["Desktop App"],
+    "omittedConnectedAgents": ["IPC Bridge"]
   },
   "agents": [
     {
@@ -25,9 +21,7 @@
       "upstream": [],
       "downstream": [],
       "upstreamOutsideLaunch": [],
-      "downstreamOutsideLaunch": [
-        "IPC Bridge"
-      ]
+      "downstreamOutsideLaunch": ["IPC Bridge"]
     }
   ]
 }
