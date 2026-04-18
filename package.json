@@ -8,7 +8,37 @@
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null; chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null; true"
+  },
+  "build": {
+    "appId": "com.architect.app",
+    "productName": "Architect",
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/node-pty/prebuilds",
+        "to": "node-pty/prebuilds",
+        "filter": ["**/*"]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        { "target": "dmg", "arch": ["arm64", "x64"] }
+      ],
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "Architect",
+      "background": null,
+      "window": { "width": 540, "height": 380 }
+    },
+    "npmRebuild": true,
+    "nodeGypRebuild": false
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",

@@ -56,7 +56,7 @@ export const palette: PaletteItemConfig[] = [
   { id: 'graph-db',       label: 'Graph DB',       description: 'Nodes & relationships',    category: 'storage',        iconName: 'Share2',       color: '#fb923c', tag: 'GRAPH'   },
   { id: 'time-series-db', label: 'Time Series DB', description: 'Time-stamped metrics',     category: 'storage',        iconName: 'TrendingUp',   color: '#f472b6', tag: 'TSDB'    },
   // Custom
-  { id: 'custom',         label: 'Custom',         description: 'Custom agent',             category: 'custom',         iconName: 'Wrench',       color: '#94a3b8', tag: 'CUSTOM'  },
+  { id: 'custom',         label: 'Custom',         description: 'User-defined component',   category: 'custom',         iconName: 'Wrench',       color: '#94a3b8', tag: 'CUSTOM'  },
 ]
 
 export const categoryOrder: ComponentCategory[] = ['infrastructure', 'services', 'storage', 'custom']
