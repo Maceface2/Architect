@@ -10,8 +10,50 @@ app.setName('Architect')
 process.title = 'Architect'
 
 const iconPath = join(__dirname, '../../resources/icon.png')
+const CANVAS_FILENAME = 'architect-canvas.json'
 
 let mainWindow: BrowserWindow | null = null
+let canvasWatcher: fs.FSWatcher | null = null
+let canvasWatchTimer: ReturnType<typeof setTimeout> | null = null
+let watchedProjectDir: string | null = null
+
+function emitCanvasChanged(projectDir: string) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const raw = fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8')
+    mainWindow.webContents.send('canvas:changed', { projectDir, raw })
+  } catch {}
+}
+
+function stopCanvasWatcher() {
+  if (canvasWatchTimer) {
+    clearTimeout(canvasWatchTimer)
+    canvasWatchTimer = null
+  }
+  canvasWatcher?.close()
+  canvasWatcher = null
+  watchedProjectDir = null
+}
+
+function startCanvasWatcher(projectDir: string) {
+  stopCanvasWatcher()
+  watchedProjectDir = projectDir
+
+  try {
+    canvasWatcher = fs.watch(projectDir, (_eventType, filename) => {
+      if (filename && filename !== CANVAS_FILENAME) return
+      if (canvasWatchTimer) clearTimeout(canvasWatchTimer)
+      canvasWatchTimer = setTimeout(() => {
+        canvasWatchTimer = null
+        if (watchedProjectDir !== projectDir) return
+        emitCanvasChanged(projectDir)
+      }, 120)
+    })
+  } catch {
+    canvasWatcher = null
+    watchedProjectDir = null
+  }
+}
 
 function createWindow(): void {
   const icon = nativeImage.createFromPath(iconPath)
@@ -36,7 +78,7 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', () => mainWindow!.show())
-  mainWindow.on('closed', () => { killAll(); mainWindow = null })
+  mainWindow.on('closed', () => { stopCanvasWatcher(); killAll(); mainWindow = null })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -88,12 +130,20 @@ ipcMain.handle('open-directory', async () => {
 })
 
 ipcMain.handle('save-canvas', (_event, projectDir: string, data: string) => {
-  fs.writeFileSync(path.join(projectDir, 'architect-canvas.json'), data, 'utf-8')
+  fs.writeFileSync(path.join(projectDir, CANVAS_FILENAME), data, 'utf-8')
 })
 
 ipcMain.handle('load-canvas', (_event, projectDir: string) => {
-  try { return fs.readFileSync(path.join(projectDir, 'architect-canvas.json'), 'utf-8') }
+  try { return fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8') }
   catch { return null }
+})
+
+ipcMain.handle('watch-canvas', (_event, projectDir: string) => {
+  startCanvasWatcher(projectDir)
+})
+
+ipcMain.handle('unwatch-canvas', () => {
+  stopCanvasWatcher()
 })
 
 ipcMain.handle('scan-components', (_event, dirPath: string) => {
@@ -155,5 +205,6 @@ app.whenReady().then(() => {
 })
 
 app.on('window-all-closed', () => {
+  stopCanvasWatcher()
   if (process.platform !== 'darwin') app.quit()
 })

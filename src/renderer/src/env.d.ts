@@ -21,6 +21,9 @@ interface ElectronAPI {
   openDirectory: () => Promise<string | null>
   saveCanvas: (projectDir: string, data: string) => Promise<void>
   loadCanvas: (projectDir: string) => Promise<string | null>
+  watchCanvas: (projectDir: string) => Promise<void>
+  unwatchCanvas: () => Promise<void>
+  onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => () => void
   scanComponents: (dirPath: string) => Promise<unknown[]>
   runGraph: (
     nodes: unknown[],

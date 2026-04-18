@@ -12,6 +12,8 @@ contextBridge.exposeInMainWorld('electron', {
   // Canvas persistence
   saveCanvas: (projectDir: string, data: string) => ipcRenderer.invoke('save-canvas', projectDir, data),
   loadCanvas: (projectDir: string) => ipcRenderer.invoke('load-canvas', projectDir),
+  watchCanvas: (projectDir: string) => ipcRenderer.invoke('watch-canvas', projectDir),
+  unwatchCanvas: () => ipcRenderer.invoke('unwatch-canvas'),
 
   // Custom component discovery
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
@@ -26,6 +28,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime),
     stop: () =>
       ipcRenderer.send('stop-assistant'),
+  },
+
+  onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => {
+    const handler = (_: unknown, event: { projectDir: string; raw: string }) => cb(event)
+    ipcRenderer.on('canvas:changed', handler)
+    return () => ipcRenderer.removeListener('canvas:changed', handler)
   },
 
   // Terminal I/O

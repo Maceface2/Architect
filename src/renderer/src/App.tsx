@@ -21,6 +21,7 @@ import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PreviewPanel from './components/layout/PreviewPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
+import { palette, ZONE_PALETTE_ITEM } from './data/componentPalette'
 import { nodeTypes } from './components/nodes/nodeTypes'
 import type {
   CanvasNode,
@@ -43,11 +44,18 @@ interface TerminalInfo {
   runtime: AgentRuntime | 'shell'
 }
 
+interface CanvasUpdate {
+  zones?: unknown[]
+  components?: unknown[]
+  nodes?: unknown[]
+  edges: unknown[]
+}
+
 const ZONE_DEFAULT_WIDTH = 420
 const ZONE_DEFAULT_HEIGHT = 280
-// Approximate measured size of a component card — used for bbox math.
 const COMPONENT_APPROX_W = 180
 const COMPONENT_APPROX_H = 78
+const FIT_VIEW_OPTIONS = { padding: 0.18, duration: 280 }
 
 function buildDemoGraph(defaultRuntime: AgentRuntime): { nodes: CanvasNode[]; edges: Edge[] } {
   const zoneX = 120
@@ -122,6 +130,47 @@ function buildDemoGraph(defaultRuntime: AgentRuntime): { nodes: CanvasNode[]; ed
   return { nodes: [zone, ...comps], edges }
 }
 
+function serializeCanvasData(
+  nodes: CanvasNode[],
+  edges: Edge[],
+  settings: ProjectSettings,
+): string {
+  return JSON.stringify({
+    nodes,
+    edges,
+    settings,
+    savedAt: new Date().toISOString(),
+  })
+}
+
+function buildPaletteContext(): string {
+  return JSON.stringify(
+    {
+      zoneTemplate: {
+        id: ZONE_PALETTE_ITEM.id,
+        label: ZONE_PALETTE_ITEM.label,
+        description: ZONE_PALETTE_ITEM.description,
+        defaults: {
+          color: ZONE_PALETTE_ITEM.color,
+          tag: ZONE_PALETTE_ITEM.tag,
+          kind: ZONE_PALETTE_ITEM.kind,
+        },
+      },
+      components: palette.map(item => ({
+        id: item.id,
+        label: item.label,
+        description: item.description,
+        category: item.category,
+        iconName: item.iconName,
+        color: item.color,
+        tag: item.tag,
+      })),
+    },
+    null,
+    2,
+  )
+}
+
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   const [loading, setLoading] = useState(false)
 
@@ -139,12 +188,12 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
     <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
       <div className="flex flex-col items-center gap-4">
         <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
-          <line x1="40"  y1="360" x2="360" y2="40"  stroke="#58A6FF" strokeWidth="14" strokeLinecap="round"/>
-          <line x1="40"  y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round"/>
-          <line x1="200" y1="360" x2="360" y2="40"  stroke="#58A6FF" strokeWidth="14" strokeLinecap="round"/>
-          <circle cx="40"  cy="360" r="14" fill="#58A6FF"/>
-          <circle cx="200" cy="360" r="14" fill="#58A6FF"/>
-          <circle cx="360" cy="40"  r="14" fill="#58A6FF"/>
+          <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+          <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+          <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+          <circle cx="40" cy="360" r="14" fill="#58A6FF" />
+          <circle cx="200" cy="360" r="14" fill="#58A6FF" />
+          <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-white tracking-tight">Architect</h1>
@@ -167,13 +216,53 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   )
 }
 
+function CanvasConflictModal({
+  onLoadIncoming,
+  onKeepLocal,
+}: {
+  onLoadIncoming: () => void
+  onKeepLocal: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-white">External canvas changes detected</h2>
+          <p className="mt-1 text-xs leading-5 text-slate-400">
+            The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
+          </p>
+        </div>
+
+        <div className="px-5 py-4">
+          <p className="text-xs leading-5 text-slate-500">
+            Choose whether to replace the current canvas with the assistant&apos;s version or keep your local edits and ignore this incoming change.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onKeepLocal}
+            className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
+          >
+            Keep local edits
+          </button>
+          <button
+            onClick={onLoadIncoming}
+            className="px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+          >
+            Load assistant changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function zoneHash(n: ZoneNodeType): string {
   const { data: { status: _s, ...data } } = n
   return JSON.stringify(data)
 }
 
-// Find the smallest zone whose bbox contains the given point — used to auto-layout
-// assistant-generated components with a zoneId hint but no explicit position.
 function zonesContainingPoint(zones: ZoneNodeType[], point: XYPosition): ZoneNodeType[] {
   return zones.filter(zone => {
     const w = zone.width ?? ZONE_DEFAULT_WIDTH
@@ -198,37 +287,130 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
+  const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const { screenToFlowPosition } = useReactFlow()
+  const nodesRef = useRef<CanvasNode[]>([])
+  const edgesRef = useRef<Edge[]>([])
+  const settingsRef = useRef<ProjectSettings>(projectSettings)
+  const isDirtyRef = useRef(false)
+  const lastAppliedCanvasRef = useRef('')
+  const dismissedExternalCanvasRef = useRef<string | null>(null)
+  const { screenToFlowPosition, fitView } = useReactFlow()
 
-  useEffect(() => () => { if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current) }, [])
+  useEffect(() => { nodesRef.current = nodes }, [nodes])
+  useEffect(() => { edgesRef.current = edges }, [edges])
+  useEffect(() => { settingsRef.current = projectSettings }, [projectSettings])
+  useEffect(() => { isDirtyRef.current = isDirty }, [isDirty])
 
-  useEffect(() => {
-    window.electron.loadCanvas(projectDir).then((raw: string | null) => {
-      if (!raw) return
-      try {
-        const migrated = migrateCanvasData(JSON.parse(raw))
-        setNodes(migrated.nodes)
-        setEdges(migrated.edges)
-        setProjectSettings(migrated.settings)
-      } catch {}
+  useEffect(() => () => {
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+  }, [])
+
+  const queueFitView = useCallback(() => {
+    requestAnimationFrame(() => {
+      requestAnimationFrame(() => {
+        void fitView(FIT_VIEW_OPTIONS)
+      })
     })
+  }, [fitView])
+
+  const persistCanvasRaw = useCallback(async (raw: string, clearDirty: boolean) => {
+    lastAppliedCanvasRef.current = raw
+    dismissedExternalCanvasRef.current = null
+    setPendingExternalCanvasRaw(null)
+    await window.electron.saveCanvas(projectDir, raw)
+    if (clearDirty) setIsDirty(false)
   }, [projectDir])
 
+  const applyRawCanvas = useCallback((raw: string, clearDirty: boolean): boolean => {
+    try {
+      const migrated = migrateCanvasData(JSON.parse(raw))
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      lastAppliedCanvasRef.current = raw
+      dismissedExternalCanvasRef.current = null
+      setPendingExternalCanvasRaw(null)
+      setNodes(migrated.nodes)
+      setEdges(migrated.edges)
+      setProjectSettings(migrated.settings)
+      setIsDirty(!clearDirty)
+      setDispatchedGraph(null)
+      setActiveTab('Canvas')
+      queueFitView()
+      return true
+    } catch {
+      return false
+    }
+  }, [queueFitView, setEdges, setNodes])
+
+  useEffect(() => {
+    let disposed = false
+    lastAppliedCanvasRef.current = ''
+    dismissedExternalCanvasRef.current = null
+    setPendingExternalCanvasRaw(null)
+    void window.electron.watchCanvas(projectDir)
+
+    const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedProjectDir, raw }) => {
+      if (changedProjectDir !== projectDir) return
+      if (!raw) return
+      if (raw === lastAppliedCanvasRef.current || raw === dismissedExternalCanvasRef.current) return
+      try {
+        migrateCanvasData(JSON.parse(raw))
+      } catch {
+        return
+      }
+
+      const currentRaw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+      if (raw === currentRaw) {
+        lastAppliedCanvasRef.current = raw
+        dismissedExternalCanvasRef.current = null
+        return
+      }
+
+      if (isDirtyRef.current) {
+        if (autoSaveTimerRef.current) {
+          clearTimeout(autoSaveTimerRef.current)
+          autoSaveTimerRef.current = null
+        }
+        setPendingExternalCanvasRaw(raw)
+        return
+      }
+
+      applyRawCanvas(raw, true)
+    })
+
+    window.electron.loadCanvas(projectDir).then((raw: string | null) => {
+      if (disposed) return
+      if (raw) {
+        if (!applyRawCanvas(raw, true)) {
+          lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+        }
+        return
+      }
+      lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+    })
+
+    return () => {
+      disposed = true
+      unsubscribe()
+      void window.electron.unwatchCanvas()
+    }
+  }, [projectDir, applyRawCanvas])
+
   const onConnect = useCallback(
-    (connection: Connection) => { setEdges(eds => addEdge(connection, eds)); setIsDirty(true) },
+    (connection: Connection) => {
+      setEdges(eds => addEdge(connection, eds))
+      setIsDirty(true)
+    },
     [setEdges]
   )
 
   const onSave = useCallback(async () => {
-    await window.electron.saveCanvas(projectDir, JSON.stringify({
-      nodes,
-      edges,
-      settings: projectSettings,
-      savedAt: new Date().toISOString(),
-    }))
-    setIsDirty(false)
-  }, [projectDir, nodes, edges, projectSettings])
+    const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+    await persistCanvasRaw(raw, true)
+  }, [persistCanvasRaw])
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -265,7 +447,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         return
       }
 
-      // Component drop — free-floating. Zone overlay is decided later by geometry.
       const newComp: ComponentNodeType = {
         id: `${item.id}-${Date.now()}`,
         type: 'component',
@@ -292,31 +473,46 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const hasSubstantive = changes.some(c => c.type !== 'position' && c.type !== 'select' && c.type !== 'dimensions')
     if (hasSubstantive) {
       setIsDirty(true)
-    } else {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
-      autoSaveTimerRef.current = setTimeout(() => {
-        window.electron.saveCanvas(projectDir, JSON.stringify({
-          nodes,
-          edges,
-          settings: projectSettings,
-          savedAt: new Date().toISOString(),
-        }))
-      }, 1000)
+      return
     }
-  }, [onNodesChange, projectDir, nodes, edges, projectSettings])
+
+    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    autoSaveTimerRef.current = setTimeout(() => {
+      autoSaveTimerRef.current = null
+      const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+      void persistCanvasRaw(raw, false)
+    }, 1000)
+  }, [onNodesChange, persistCanvasRaw])
 
   const handleEdgesChange = useCallback((changes: Parameters<typeof onEdgesChange>[0]) => {
     onEdgesChange(changes)
     setIsDirty(true)
   }, [onEdgesChange])
 
-  const onClear = useCallback(() => { setNodes([]); setEdges([]); setIsDirty(true) }, [setNodes, setEdges])
+  const onClear = useCallback(() => {
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    setPendingExternalCanvasRaw(null)
+    dismissedExternalCanvasRef.current = null
+    setNodes([])
+    setEdges([])
+    setIsDirty(true)
+  }, [setEdges, setNodes])
+
   const onLoadDemo = useCallback(() => {
     const demo = buildDemoGraph(projectSettings.defaultRuntime)
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+    setPendingExternalCanvasRaw(null)
+    dismissedExternalCanvasRef.current = null
     setNodes(demo.nodes)
     setEdges(demo.edges)
     setIsDirty(true)
-  }, [projectSettings.defaultRuntime, setNodes, setEdges])
+  }, [projectSettings.defaultRuntime, setEdges, setNodes])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
 
@@ -346,8 +542,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const buildAssistantContext = useCallback((currentNodes: CanvasNode[], currentEdges: Edge[]) => {
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')
     const compList = currentNodes.filter((n): n is ComponentNodeType => n.type === 'component')
+    const paletteJson = buildPaletteContext()
 
-    // Report which components each zone spatially overlays (purely derived; not stored).
     const componentZones = new Map<string, string | null>()
     for (const c of compList) {
       const center = {
@@ -397,38 +593,68 @@ Edges connect any nodes (zones or components) and denote dependencies/data flow.
 ## Current Canvas
 ${zoneList.length === 0 && compList.length === 0 ? '(empty canvas)' : `\`\`\`json\n${canvasJson}\n\`\`\``}
 
+## Component Palette
+Use these as the preferred component presets when creating architectures. Match their \`category\`, \`iconName\`, \`color\`, and default \`tag\` unless the user clearly wants a custom component.
+~~~json
+${paletteJson}
+~~~
+
+## JSON Example
+Write the canvas directly to \`architect-canvas.json\` using the modern Architect format:
+~~~json
+{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","prompt":"Build the React frontend and integrate APIs.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"defaultRuntime":"codex"}}
+~~~
+
 ## Your Role
 Help the user design, refine, and reason about their architecture. You can:
 - Discuss design decisions and tradeoffs
 - Suggest zones/components to add, remove, or restructure
-- When the user explicitly asks to change the diagram, output the complete updated canvas in this exact format (no markdown fences around the block):
-
-ARCHITECT_CANVAS_UPDATE
-{"zones": [...], "components": [...], "edges": [...]}
-END_ARCHITECT_CANVAS_UPDATE
-
-Each zone: id (kebab-case), label, description, color (hex), prompt (may be empty), position {x, y}, width, height.
-Each component: id, label, description, specs (multi-line long-form), category, iconName, color (hex), tag (≤6 chars uppercase), position {x, y}, and OPTIONALLY overlayZoneId (hint — if set and position is missing, the component is auto-placed inside that zone's bbox).
-Each edge: id, source, target.
-
-The canvas replaces everything on each update, so always include ALL zones, components, and edges.
-Preserve existing ids and positions whenever possible so the user's layout is not lost.
-
-To place a component "inside" a zone, position it within the zone's bbox. Zones should be sized large enough to visually cover all their components with some margin.
+- When the user asks you to build, create, generate, update, or change the diagram, directly edit \`architect-canvas.json\` in the project root. Do not wrap the diagram in chat markers and do not print large JSON blocks to the terminal unless the user explicitly asks for them.
+- Replace the full canvas document when making a diagram change. Always write a complete valid top-level object with \`nodes\`, \`edges\`, and \`settings\`.
+- Preserve existing ids, positions, and \`settings\` whenever possible so the user's layout and runtime defaults are not lost.
+- Use \`type: "zone"\` for agent zones and \`type: "component"\` for design components.
+- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`prompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`.
+- For components, include: \`id\`, \`type\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`.
+- To place a component inside a zone, give it a position that falls within the zone's bounding box. Zones should be sized large enough to visually cover their components with margin.
 
 Available categories: infrastructure | services | storage | custom
 Available iconNames: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitBranch, Webhook, Settings2, Brain, Layers, Cpu, Clock, Mail, Bell, CreditCard, Search, Activity, BarChart2, ToggleLeft, Database, Zap, Archive, Table, Boxes, Share2, TrendingUp, Wrench
 
-Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. Otherwise just discuss and advise.`
+The app live-reloads \`architect-canvas.json\`, so saving the file is how you update the visible canvas.
+Only discuss and advise without editing the file when the user is asking for critique or brainstorming rather than asking for a diagram change.`
   }, [])
 
-  const applyCanvasUpdate = useCallback((update: { zones?: unknown[]; components?: unknown[]; nodes?: unknown[]; edges: unknown[] }) => {
+  const applyCanvasUpdate = useCallback((update: CanvasUpdate) => {
+    const rawNodePayload = Array.isArray(update.nodes) ? update.nodes : null
+    if (rawNodePayload && !Array.isArray(update.zones) && !Array.isArray(update.components)) {
+      const migrated = migrateCanvasData({
+        nodes: rawNodePayload,
+        edges: Array.isArray(update.edges) ? update.edges : [],
+        settings: settingsRef.current,
+      })
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      const rawCanvas = serializeCanvasData(migrated.nodes, migrated.edges, migrated.settings)
+      setNodes(migrated.nodes)
+      setEdges(migrated.edges)
+      setProjectSettings(migrated.settings)
+      setIsDirty(false)
+      setDispatchedGraph(null)
+      setPendingExternalCanvasRaw(null)
+      setActiveTab('Canvas')
+      queueFitView()
+      void persistCanvasRaw(rawCanvas, true)
+      return
+    }
+
     const rawZones = Array.isArray(update.zones) ? (update.zones as Array<Record<string, unknown>>) : []
     const rawComponents = Array.isArray(update.components) ? (update.components as Array<Record<string, unknown>>) : []
     const rawEdges = (update.edges ?? []) as Array<{ id?: string; source: string; target: string }>
 
-    const existingZones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
-    const existingComps = nodes.filter((n): n is ComponentNodeType => n.type === 'component')
+    const existingZones = nodesRef.current.filter((n): n is ZoneNodeType => n.type === 'zone')
+    const existingComps = nodesRef.current.filter((n): n is ComponentNodeType => n.type === 'component')
     const existingZoneById = new Map(existingZones.map(z => [z.id, z]))
     const existingCompById = new Map(existingComps.map(c => [c.id, c]))
 
@@ -446,6 +672,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
       return typeof v === 'number' && v > 0 ? v : fallback
     }
 
+    const defaultRuntime = settingsRef.current.defaultRuntime
     const newZones: ZoneNodeType[] = rawZones.map((raw, i) => {
       const id = String(raw.id ?? `gen-zone-${Date.now()}-${i}`)
       const existing = existingZoneById.get(id)
@@ -457,7 +684,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
       const height = readDim(raw, 'height', existing?.height ?? ZONE_DEFAULT_HEIGHT)
       return {
         id,
-        type: 'zone' as const,
+        type: 'zone',
         position,
         width,
         height,
@@ -466,9 +693,9 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
           label: String(raw.label ?? 'Zone'),
           description: String(raw.description ?? ''),
           color: String(raw.color ?? '#58A6FF'),
-          status: 'idle' as const,
+          status: 'idle',
           prompt: String(raw.prompt ?? ''),
-          ...createDefaultZoneAgentConfig(projectSettings.defaultRuntime),
+          ...createDefaultZoneAgentConfig(defaultRuntime),
         },
       }
     })
@@ -480,8 +707,6 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
       const existing = existingCompById.get(id)
       const explicitPos = readPosition(raw)
 
-      // Auto-layout: if the assistant set overlayZoneId (or legacy zoneId) but no position,
-      // place inside that zone's bbox.
       let position: XYPosition
       if (explicitPos) {
         position = explicitPos
@@ -492,7 +717,7 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
         const hintZone = hintZoneId ? zoneById.get(hintZoneId) : undefined
         if (hintZone) {
           const siblings = rawComponents.filter(other =>
-            (other !== raw) && String(other.overlayZoneId ?? other.zoneId ?? '') === hintZoneId
+            other !== raw && String(other.overlayZoneId ?? other.zoneId ?? '') === hintZoneId
           ).length
           const cols = Math.max(1, Math.floor((hintZone.width ?? ZONE_DEFAULT_WIDTH) / (COMPONENT_APPROX_W + 20)))
           const col = i % cols
@@ -502,13 +727,16 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
             y: hintZone.position.y + 64 + row * (COMPONENT_APPROX_H + 28),
           }
         } else {
-          position = { x: 120 + (i % 4) * (COMPONENT_APPROX_W + 40), y: 520 + Math.floor(i / 4) * (COMPONENT_APPROX_H + 40) }
+          position = {
+            x: 120 + (i % 4) * (COMPONENT_APPROX_W + 40),
+            y: 520 + Math.floor(i / 4) * (COMPONENT_APPROX_H + 40),
+          }
         }
       }
 
       return {
         id,
-        type: 'component' as const,
+        type: 'component',
         position,
         zIndex: 1,
         data: {
@@ -529,11 +757,21 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
       target: raw.target,
     }))
 
+    if (autoSaveTimerRef.current) {
+      clearTimeout(autoSaveTimerRef.current)
+      autoSaveTimerRef.current = null
+    }
+
+    const rawCanvas = serializeCanvasData([...newZones, ...newComps], newEdges, settingsRef.current)
     setNodes([...newZones, ...newComps])
     setEdges(newEdges)
-    setIsDirty(true)
+    setIsDirty(false)
     setDispatchedGraph(null)
-  }, [nodes, projectSettings.defaultRuntime, setNodes, setEdges])
+    setPendingExternalCanvasRaw(null)
+    setActiveTab('Canvas')
+    queueFitView()
+    void persistCanvasRaw(rawCanvas, true)
+  }, [persistCanvasRaw, queueFitView, setEdges, setNodes])
 
   const handleAssistantToggle = useCallback(async () => {
     if (assistantOpen) {
@@ -554,6 +792,17 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
     setAssistantOpen(false)
     setAssistantRuntime(null)
   }, [])
+
+  const handleLoadIncomingCanvas = useCallback(() => {
+    if (!pendingExternalCanvasRaw) return
+    applyRawCanvas(pendingExternalCanvasRaw, true)
+  }, [applyRawCanvas, pendingExternalCanvasRaw])
+
+  const handleKeepLocalCanvas = useCallback(() => {
+    if (!pendingExternalCanvasRaw) return
+    dismissedExternalCanvasRef.current = pendingExternalCanvasRaw
+    setPendingExternalCanvasRaw(null)
+  }, [pendingExternalCanvasRaw])
 
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
@@ -593,9 +842,13 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
 
           <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
             <ReactFlow
-              nodes={nodes} edges={edges}
-              onNodesChange={handleNodesChange} onEdgesChange={handleEdgesChange}
-              onConnect={onConnect} onDrop={onDrop} onDragOver={onDragOver}
+              nodes={nodes}
+              edges={edges}
+              onNodesChange={handleNodesChange}
+              onEdgesChange={handleEdgesChange}
+              onConnect={onConnect}
+              onDrop={onDrop}
+              onDragOver={onDragOver}
               nodeTypes={nodeTypes}
               defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
               proOptions={{ hideAttribution: true }}
@@ -604,6 +857,13 @@ Only output ARCHITECT_CANVAS_UPDATE when the user explicitly confirms a change. 
               <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
               <Controls />
             </ReactFlow>
+
+            {pendingExternalCanvasRaw && (
+              <CanvasConflictModal
+                onLoadIncoming={handleLoadIncomingCanvas}
+                onKeepLocal={handleKeepLocalCanvas}
+              />
+            )}
           </div>
 
           {isFiles && (
