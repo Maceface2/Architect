@@ -1,8 +1,9 @@
 import * as pty from 'node-pty'
 import { BrowserWindow } from 'electron'
-import { join } from 'path'
+import { join, basename } from 'path'
 import fs from 'fs'
-import { execFileSync } from 'child_process'
+import { execFileSync, spawn } from 'child_process'
+import { randomBytes } from 'crypto'
 import {
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
@@ -19,14 +20,89 @@ import {
   type ZoneSession,
 } from './sessionCapture'
 
-const EXTRA_PATHS = [
-  '/opt/homebrew/bin',
-  '/opt/homebrew/sbin',
-  '/usr/local/bin',
-  '/usr/bin',
-  '/bin',
-]
-process.env.PATH = [...EXTRA_PATHS, ...(process.env.PATH || '').split(':')].join(':')
+let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
+
+function resolveUnixShellEnv(): Promise<NodeJS.ProcessEnv> {
+  const runAsNode = process.env['ELECTRON_RUN_AS_NODE']
+  const noAttach = process.env['ELECTRON_NO_ATTACH_CONSOLE']
+
+  const mark = randomBytes(6).toString('hex')
+  const regex = new RegExp(mark + '({.*})' + mark)
+
+  const env = {
+    ...process.env,
+    ELECTRON_RUN_AS_NODE: '1',
+    ELECTRON_NO_ATTACH_CONSOLE: '1',
+    VSCODE_RESOLVING_ENVIRONMENT: '1',
+  }
+
+  const shell = process.env.SHELL || '/bin/zsh'
+  const name = basename(shell)
+  const shellArgs = (name === 'tcsh' || name === 'csh') ? ['-ic'] : ['-i', '-l', '-c']
+  const command = `'${process.execPath}' -p '"${mark}" + JSON.stringify(process.env) + "${mark}"'`
+
+  return new Promise((resolve, reject) => {
+    const child = spawn(shell, [...shellArgs, command], {
+      detached: true,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env,
+    })
+
+    const timeout = setTimeout(() => {
+      child.kill()
+      reject(new Error('Shell environment resolution timed out after 10s'))
+    }, 10000)
+
+    child.on('error', err => { clearTimeout(timeout); reject(err) })
+
+    const stdout: Buffer[] = []
+    const stderr: Buffer[] = []
+    child.stdout.on('data', (b: Buffer) => stdout.push(b))
+    child.stderr.on('data', (b: Buffer) => stderr.push(b))
+
+    child.on('close', (code, signal) => {
+      clearTimeout(timeout)
+
+      if (code || signal) {
+        const errText = Buffer.concat(stderr).toString('utf8').trim()
+        reject(new Error(`Shell env spawn exited with code ${code}, signal ${signal}${errText ? `: ${errText}` : ''}`))
+        return
+      }
+
+      const raw = Buffer.concat(stdout).toString('utf8')
+      const match = regex.exec(raw)
+      if (!match) {
+        reject(new Error('Could not find environment marker in shell output'))
+        return
+      }
+
+      try {
+        const resolved = JSON.parse(match[1]) as NodeJS.ProcessEnv
+        if (runAsNode) resolved['ELECTRON_RUN_AS_NODE'] = runAsNode
+        else delete resolved['ELECTRON_RUN_AS_NODE']
+        if (noAttach) resolved['ELECTRON_NO_ATTACH_CONSOLE'] = noAttach
+        else delete resolved['ELECTRON_NO_ATTACH_CONSOLE']
+        delete resolved['VSCODE_RESOLVING_ENVIRONMENT']
+        resolve(resolved)
+      } catch (err) {
+        reject(err)
+      }
+    })
+  })
+}
+
+export async function initShellEnv(): Promise<void> {
+  if (!shellEnvPromise) shellEnvPromise = resolveUnixShellEnv()
+  try {
+    const resolved = await shellEnvPromise
+    Object.assign(process.env, resolved)
+    console.log('[shell-env] PATH:', process.env.PATH)
+  } catch (err) {
+    console.warn('[shell-env] resolution failed, using fallback:', err)
+    const fallback = ['/opt/homebrew/bin', '/opt/homebrew/sbin', '/usr/local/bin', '/usr/bin', '/bin']
+    process.env.PATH = [...fallback, ...(process.env.PATH || '').split(':')].join(':')
+  }
+}
 
 interface ProjectSettings {
   defaultRuntime: AgentRuntime
@@ -41,20 +117,18 @@ function normalizeProjectSettings(raw: unknown): ProjectSettings {
 
 function resolveBinary(runtime: AgentRuntime): string | null {
   const { binary } = getAgentRuntime(runtime)
-  const candidates = [
-    `/opt/homebrew/bin/${binary}`,
-    `/usr/local/bin/${binary}`,
-    `/usr/bin/${binary}`,
-    `/bin/${binary}`,
-  ]
 
-  for (const candidate of candidates) {
+  for (const dir of (process.env.PATH || '').split(':')) {
+    const candidate = join(dir, binary)
     if (fs.existsSync(candidate)) return candidate
   }
 
   try {
     const shell = process.env.SHELL || '/bin/zsh'
-    const resolved = execFileSync(shell, ['-l', '-c', `which ${binary}`], { encoding: 'utf-8' }).trim()
+    const resolved = execFileSync(shell, ['-l', '-c', `which ${binary}`], {
+      encoding: 'utf-8',
+      timeout: 5000,
+    }).trim()
     return resolved || null
   } catch {
     return null

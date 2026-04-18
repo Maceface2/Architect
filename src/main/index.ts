@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions } from './terminals'
+import { initShellEnv, runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions } from './terminals'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -206,7 +206,8 @@ ipcMain.handle('zone:resume', (_event, opts: ResumeZoneOptions) => {
 
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  await initShellEnv()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
