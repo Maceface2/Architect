@@ -68,6 +68,20 @@ All renderer ↔ main communication goes through `window.electron` (defined in p
 
 Tailwind CSS with custom colors defined in `index.css`: `bg-canvas` (`#111111`), `bg-surface`, `bg-accent` (`#3d3dbf`), etc.
 
+## VS Code reference
+
+Architect is an Electron app and shares many low-level concerns with VS Code (shell env resolution, PTY management, IPC patterns, packaged-app PATH issues, etc.). When solving a non-trivial Electron/Node problem, check how VS Code handles it first:
+
+- Source: https://github.com/microsoft/vscode (fetch raw files via `https://raw.githubusercontent.com/microsoft/vscode/main/<path>`)
+- Useful areas:
+  - `src/vs/platform/shell/node/shellEnv.ts` — login shell environment resolution (already ported)
+  - `src/vs/platform/terminal/node/` — PTY lifecycle, environment, shell detection
+  - `src/vs/workbench/contrib/terminal/` — terminal UI patterns
+  - `src/vs/base/node/` — Node.js utilities (shell detection, fs helpers, processes)
+  - `src/vs/platform/environment/node/` — packaged-app path resolution
+
+Before implementing anything related to: shell spawning, PATH resolution, PTY management, app packaging, IPC design, or file watching — check the VS Code source for a proven approach.
+
 ## graphify
 
 This project has a graphify knowledge graph at graphify-out/.
