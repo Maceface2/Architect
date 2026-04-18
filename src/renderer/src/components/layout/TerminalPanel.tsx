@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Terminal as TerminalIcon } from 'lucide-react'
+import { RotateCcw, Terminal as TerminalIcon } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -127,6 +127,96 @@ function TermTab({
 export default function TerminalPanel({ sessions, isVisible, projectDir }: Props) {
   const [shellSession, setShellSession] = useState<TerminalInfo | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
+  // id → exited state. id → sessionId presence (string when a saved session exists).
+  const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
+  const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
+  const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
+
+  // Track which tabs have exited so we can offer Resume.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onExit(({ id }) => {
+      setExitedIds(prev => {
+        if (prev.has(id)) return prev
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  // Listen for newly captured sessions so the Resume button lights up
+  // as soon as Claude writes its session file.
+  useEffect(() => {
+    const unsub = window.electron.zone.onSessionCaptured(({ zoneId, sessionId }) => {
+      setResumableIds(prev => {
+        if (prev.get(zoneId) === sessionId) return prev
+        const next = new Map(prev)
+        next.set(zoneId, sessionId)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  // Backfill saved sessions for any agent tab on mount / when sessions change.
+  useEffect(() => {
+    if (!projectDir) return
+    let cancelled = false
+    Promise.all(
+      sessions
+        .filter(s => s.runtime !== 'shell')
+        .map(s =>
+          window.electron.zone.getSession(projectDir, s.label).then(saved => ({
+            id: s.id,
+            sessionId: saved?.sessionId ?? null,
+          })),
+        ),
+    ).then(results => {
+      if (cancelled) return
+      setResumableIds(prev => {
+        const next = new Map(prev)
+        for (const { id, sessionId } of results) {
+          if (sessionId) next.set(id, sessionId)
+        }
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [projectDir, sessions.map(s => s.id).join('|')])
+
+  const handleResume = async (info: TerminalInfo) => {
+    if (info.runtime === 'shell' || resumingIds.has(info.id)) return
+    setResumingIds(prev => {
+      const next = new Set(prev)
+      next.add(info.id)
+      return next
+    })
+    try {
+      const result = await window.electron.zone.resume({
+        projectDir,
+        zoneId: info.id,
+        label: info.label,
+        runtime: info.runtime as AgentRuntime,
+      })
+      if (result?.ok) {
+        // Same id → same xterm tab; clear it before resumed output streams in.
+        termInstances.get(info.id)?.term.clear()
+        setExitedIds(prev => {
+          if (!prev.has(info.id)) return prev
+          const next = new Set(prev)
+          next.delete(info.id)
+          return next
+        })
+      }
+    } finally {
+      setResumingIds(prev => {
+        const next = new Set(prev)
+        next.delete(info.id)
+        return next
+      })
+    }
+  }
 
   // Spawn a persistent shell session on mount / when projectDir changes
   useEffect(() => {
@@ -187,35 +277,64 @@ export default function TerminalPanel({ sessions, isVisible, projectDir }: Props
           const isArchitect = s.id === 'architect-agent'
           const isActive = s.id === activeId
           const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
+          const canResume =
+            !isShell &&
+            s.runtime === 'claude' &&
+            exitedIds.has(s.id) &&
+            resumableIds.has(s.id)
+          const isResuming = resumingIds.has(s.id)
           return (
-            <button
+            <div
               key={s.id}
-              onClick={() => setActiveId(s.id)}
-              className={`flex items-center gap-2 px-4 py-2 text-xs whitespace-nowrap border-b-2 transition-colors flex-shrink-0 ${
+              className={`flex items-center border-b-2 transition-colors flex-shrink-0 ${
                 isActive
-                  ? 'border-[#58A6FF] text-white bg-white/[0.04]'
-                  : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/[0.02]'
+                  ? 'border-[#58A6FF] bg-white/[0.04]'
+                  : 'border-transparent hover:bg-white/[0.02]'
               }`}
             >
-              {isShell ? (
-                <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
-              ) : (
-                <span
-                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                    isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
-                  }`}
-                />
-              )}
-              <span>{isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}</span>
-              {runtime && (
-                <span
-                  className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                  style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
-                >
-                  {runtime.shortLabel}
+              <button
+                onClick={() => setActiveId(s.id)}
+                className={`flex items-center gap-2 pl-4 pr-2 py-2 text-xs whitespace-nowrap ${
+                  isActive ? 'text-white' : 'text-slate-500 hover:text-slate-300'
+                }`}
+              >
+                {isShell ? (
+                  <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                      isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                    } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
+                  />
+                )}
+                <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
+                  {isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}
                 </span>
+                {runtime && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                    style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
+                  >
+                    {runtime.shortLabel}
+                  </span>
+                )}
+              </button>
+              {canResume && (
+                <button
+                  onClick={() => handleResume(s)}
+                  disabled={isResuming}
+                  className={`flex items-center justify-center w-6 h-6 mr-2 rounded text-[10px] transition-colors ${
+                    isResuming
+                      ? 'text-slate-600 cursor-wait'
+                      : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
+                  }`}
+                  title={isResuming ? 'Resuming…' : 'Resume saved Claude session'}
+                  aria-label="Resume saved Claude session"
+                >
+                  <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
+                </button>
               )}
-            </button>
+            </div>
           )
         })}
       </div>

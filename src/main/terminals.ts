@@ -11,6 +11,13 @@ import {
   isAgentRuntimeMode,
   type AgentRuntime,
 } from '../shared/agentRuntimes'
+import {
+  captureNewClaudeSession,
+  loadZoneSession,
+  saveZoneSession,
+  snapshotClaudeSessions,
+  type ZoneSession,
+} from './sessionCapture'
 
 const EXTRA_PATHS = [
   '/opt/homebrew/bin',
@@ -132,6 +139,12 @@ interface SpawnAgentOptions {
   initialPrompt?: string
   model?: string
   onExit?: () => void
+  resumeSessionId?: string
+  // When set and runtime is claude, capture the new session ID and persist it.
+  capture?: { projectDir: string; zoneSafe: string }
+  // Defaults to true (preserves zone-agent autonomy). Set false for the
+  // interactive assistant so the user gets normal permission prompts.
+  skipPermissions?: boolean
 }
 
 const sessions = new Map<string, Session>()
@@ -139,12 +152,21 @@ let activeWatcher: fs.FSWatcher | null = null
 
 const SHELL_ID_PREFIX = 'shell-'
 
-function buildRuntimeArgs(runtime: AgentRuntime, prompt?: string, model?: string): string[] {
+function buildRuntimeArgs(
+  runtime: AgentRuntime,
+  prompt?: string,
+  model?: string,
+  resumeSessionId?: string,
+  skipPermissions = true,
+): string[] {
   switch (runtime) {
     case 'claude': {
-      const args: string[] = ['--dangerously-skip-permissions']
+      const args: string[] = []
+      if (skipPermissions) args.push('--dangerously-skip-permissions')
+      if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
-      if (prompt) args.push(prompt)
+      // On resume, history already contains the prompt — don't replay it.
+      if (prompt && !resumeSessionId) args.push(prompt)
       return args
     }
     case 'codex': {
@@ -188,7 +210,8 @@ function createSession(
 
   ptyProcess.onExit(({ exitCode }) => {
     if (!win.isDestroyed()) win.webContents.send('terminal:exit', { id, exitCode })
-    sessions.delete(id)
+    // Identity-check: a resume may have already replaced this entry.
+    if (sessions.get(id) === session) sessions.delete(id)
     onExit?.()
   })
 }
@@ -225,6 +248,9 @@ function spawnAgentSession({
   initialPrompt,
   model,
   onExit,
+  resumeSessionId,
+  capture,
+  skipPermissions = true,
 }: SpawnAgentOptions): TerminalInfo {
   const bin = resolveBinary(runtime)
   if (!bin) {
@@ -239,7 +265,13 @@ function spawnAgentSession({
     )
   }
 
-  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model), {
+  // Snapshot existing claude sessions BEFORE spawn so capture can identify the new one.
+  const claudeSnapshot =
+    runtime === 'claude' && capture && !resumeSessionId
+      ? snapshotClaudeSessions(cwd)
+      : null
+
+  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions), {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -248,6 +280,35 @@ function spawnAgentSession({
   })
 
   createSession(win, id, ptyProcess, onExit)
+
+  if (claudeSnapshot && capture) {
+    console.log(`[session-capture] ${capture.zoneSafe}: snapshot ${claudeSnapshot.size} existing, polling…`)
+    void captureNewClaudeSession(cwd, claudeSnapshot).then(sessionId => {
+      if (!sessionId) {
+        console.warn(`[session-capture] ${capture.zoneSafe}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
+        return
+      }
+      try {
+        saveZoneSession(capture.projectDir, capture.zoneSafe, {
+          runtime: 'claude',
+          sessionId,
+          capturedAt: new Date().toISOString(),
+        })
+        console.log(`[session-capture] ${capture.zoneSafe}: saved session ${sessionId}`)
+        if (!win.isDestroyed()) {
+          win.webContents.send('zone:session-captured', {
+            zoneSafe: capture.zoneSafe,
+            zoneId: id,
+            sessionId,
+            runtime: 'claude',
+          })
+        }
+      } catch (err) {
+        console.error(`[session-capture] ${capture.zoneSafe}: failed to save`, err)
+      }
+    })
+  }
+
   return { id, label, runtime }
 }
 
@@ -588,7 +649,7 @@ function setupWorkspace(
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
 ) {
   const base = join(projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts'].map(name => join(base, name))) {
+  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions'].map(name => join(base, name))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
@@ -712,6 +773,7 @@ export async function runGraph(
       cwd: projectDir,
       initialPrompt: prompt,
       model,
+      capture: { projectDir, zoneSafe: safe },
     })
 
     onSessionDone(zone.id, () => {
@@ -747,10 +809,13 @@ export async function runGraph(
     cwd: projectDir,
     initialPrompt: architectPrompt,
     model: DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
+    capture: { projectDir, zoneSafe: 'Architect' },
   })
 
   return allInfo
 }
+
+const ASSISTANT_ZONE_SAFE = sanitize('Architecture Assistant')
 
 export function startAssistant(
   win: BrowserWindow,
@@ -767,8 +832,19 @@ export function startAssistant(
   const safeRuntime = isAgentRuntime(runtime) ? runtime : DEFAULT_AGENT_RUNTIME
   const architectDir = join(projectDir, 'ARCHITECT')
   fs.mkdirSync(architectDir, { recursive: true })
+  // Always keep the context file fresh so the assistant can re-read on demand
+  // ("re-read ARCHITECT/.assistant-context.md"), but don't auto-inject it.
   const contextFile = join(architectDir, '.assistant-context.md')
   fs.writeFileSync(contextFile, contextMd)
+
+  // Resume the prior Claude session if one exists for this assistant on this
+  // project — avoids re-injecting the context file on every reopen.
+  const saved = loadZoneSession(projectDir, ASSISTANT_ZONE_SAFE)
+  const canResume =
+    saved && saved.runtime === 'claude' && safeRuntime === 'claude'
+  console.log(
+    `[assistant] runtime=${safeRuntime} saved=${saved ? saved.sessionId : 'none'} → ${canResume ? 'RESUMING' : 'fresh start'}`,
+  )
 
   return spawnAgentSession({
     win,
@@ -777,9 +853,12 @@ export function startAssistant(
     runtime: safeRuntime,
     env: {},
     cwd: projectDir,
-    initialPrompt: 'Read ARCHITECT/.assistant-context.md',
+    initialPrompt: canResume ? undefined : 'Read ARCHITECT/.assistant-context.md',
+    resumeSessionId: canResume ? saved!.sessionId : undefined,
     model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
-    onExit: () => { try { fs.unlinkSync(contextFile) } catch {} },
+    capture: { projectDir, zoneSafe: ASSISTANT_ZONE_SAFE },
+    // Interactive: keep normal permission prompts. The user is sitting here.
+    skipPermissions: false,
   })
 }
 
@@ -789,4 +868,62 @@ export function stopAssistant() {
     try { session.pty.kill() } catch {}
     sessions.delete('architect-assistant')
   }
+}
+
+export interface ResumeZoneOptions {
+  projectDir: string
+  zoneId: string
+  label: string
+  runtime: AgentRuntime
+  model?: string
+  envVars?: Array<{ key: string; value: string }>
+}
+
+export interface ResumeResult {
+  ok: boolean
+  reason?: string
+  info?: TerminalInfo
+  sessionId?: string
+}
+
+// Re-spawns a zone agent using its persisted session ID, replacing any
+// existing PTY for that zone (same id keeps the same renderer tab).
+export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeResult {
+  const zoneSafe = sanitize(opts.label)
+  const saved: ZoneSession | null = loadZoneSession(opts.projectDir, zoneSafe)
+  if (!saved) return { ok: false, reason: 'no-saved-session' }
+  if (saved.runtime !== opts.runtime) {
+    return { ok: false, reason: `session-runtime-mismatch:${saved.runtime}` }
+  }
+  if (opts.runtime !== 'claude') {
+    return { ok: false, reason: `resume-not-supported:${opts.runtime}` }
+  }
+
+  const existing = sessions.get(opts.zoneId)
+  if (existing) {
+    try { existing.pty.kill() } catch {}
+    sessions.delete(opts.zoneId)
+  }
+
+  const env: Record<string, string> = {}
+  for (const { key, value } of opts.envVars ?? []) {
+    if (key) env[key] = value
+  }
+
+  const info = spawnAgentSession({
+    win,
+    id: opts.zoneId,
+    label: opts.label,
+    runtime: opts.runtime,
+    env,
+    cwd: opts.projectDir,
+    model: opts.model,
+    resumeSessionId: saved.sessionId,
+  })
+
+  return { ok: true, info, sessionId: saved.sessionId }
+}
+
+export function getZoneSession(projectDir: string, label: string): ZoneSession | null {
+  return loadZoneSession(projectDir, sanitize(label))
 }

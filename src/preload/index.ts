@@ -62,4 +62,27 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('terminal:exit', handler)
     },
   },
+
+  // Per-zone Claude session capture/resume
+  zone: {
+    getSession: (projectDir: string, label: string) =>
+      ipcRenderer.invoke('zone:get-session', projectDir, label),
+
+    resume: (opts: {
+      projectDir: string
+      zoneId: string
+      label: string
+      runtime: string
+      model?: string
+      envVars?: Array<{ key: string; value: string }>
+    }) => ipcRenderer.invoke('zone:resume', opts),
+
+    onSessionCaptured: (
+      cb: (event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: string }) => void,
+    ) => {
+      const handler = (_: unknown, event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: string }) => cb(event)
+      ipcRenderer.on('zone:session-captured', handler)
+      return () => ipcRenderer.removeListener('zone:session-captured', handler)
+    },
+  },
 })

@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession } from './terminals'
+import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions } from './terminals'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -193,6 +193,15 @@ ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) =
 
 ipcMain.on('terminal:kill-all', () => {
   killAll()
+})
+
+ipcMain.handle('zone:get-session', (_event, projectDir: string, label: string) => {
+  return getZoneSession(projectDir, label)
+})
+
+ipcMain.handle('zone:resume', (_event, opts: ResumeZoneOptions) => {
+  if (!mainWindow) return { ok: false, reason: 'no-window' }
+  return resumeZone(mainWindow, opts)
 })
 
 // ── App lifecycle ──────────────────────────────────────────────────────────

@@ -44,6 +44,23 @@ interface ElectronAPI {
     onData: (cb: (event: { id: string; data: string }) => void) => () => void
     onExit: (cb: (event: { id: string; exitCode: number }) => void) => () => void
   }
+  zone: {
+    getSession: (
+      projectDir: string,
+      label: string,
+    ) => Promise<{ runtime: AgentRuntime; sessionId: string; capturedAt: string } | null>
+    resume: (opts: {
+      projectDir: string
+      zoneId: string
+      label: string
+      runtime: AgentRuntime
+      model?: string
+      envVars?: Array<{ key: string; value: string }>
+    }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo; sessionId?: string }>
+    onSessionCaptured: (
+      cb: (event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: AgentRuntime }) => void,
+    ) => () => void
+  }
 }
 
 declare global {
