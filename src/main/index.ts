@@ -2,7 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant } from './terminals'
+import { runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession } from './terminals'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -56,31 +56,6 @@ ipcMain.handle('get-home-dir', () => app.getPath('home'))
 
 ipcMain.handle('read-file', (_event, filePath: string) => {
   try { return fs.readFileSync(filePath, 'utf-8') } catch { return null }
-})
-
-ipcMain.handle('read-outputs', (_event, outputsDir: string) => {
-  try {
-    const files = fs.readdirSync(outputsDir)
-      .filter(f => f.endsWith('.md'))
-      .map(f => {
-        const full = path.join(outputsDir, f)
-        const stat = fs.statSync(full)
-        return {
-          name:    f.replace('.md', ''),
-          content: fs.readFileSync(full, 'utf-8'),
-          mtime:   stat.mtimeMs,
-        }
-      })
-      .sort((a, b) => {
-        // Overseer always first, rest by name
-        if (a.name === 'Architect') return -1
-        if (b.name === 'Architect') return 1
-        return a.name.localeCompare(b.name)
-      })
-    return files
-  } catch {
-    return []
-  }
 })
 
 ipcMain.handle('read-dir', (_event, dirPath: string) => {
@@ -151,6 +126,11 @@ ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string
 
 ipcMain.on('stop-assistant', () => {
   stopAssistant()
+})
+
+ipcMain.handle('terminal:spawn-shell', (_event, cwd: string) => {
+  if (!mainWindow) return null
+  return spawnShellSession(mainWindow, cwd ?? app.getPath('home'))
 })
 
 ipcMain.on('terminal:input', (_event, id: string, data: string) => {

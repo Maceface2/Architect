@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
+import { Terminal as TerminalIcon } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -7,12 +8,13 @@ import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRunt
 interface TerminalInfo {
   id: string
   label: string
-  runtime: AgentRuntime
+  runtime: AgentRuntime | 'shell'
 }
 
 interface Props {
   sessions: TerminalInfo[]
   isVisible: boolean
+  projectDir: string
 }
 
 const TERM_THEME = {
@@ -122,15 +124,31 @@ function TermTab({
   )
 }
 
-export default function TerminalPanel({ sessions, isVisible }: Props) {
+export default function TerminalPanel({ sessions, isVisible, projectDir }: Props) {
+  const [shellSession, setShellSession] = useState<TerminalInfo | null>(null)
   const [activeId, setActiveId] = useState<string | null>(null)
 
-  // When sessions change, default to first (overseer)
+  // Spawn a persistent shell session on mount / when projectDir changes
   useEffect(() => {
-    if (sessions.length > 0 && !sessions.find(s => s.id === activeId)) {
-      setActiveId(sessions[0].id)
+    if (!projectDir) return
+    let cancelled = false
+    window.electron.terminal.spawnShell(projectDir).then(info => {
+      if (cancelled || !info) return
+      setShellSession(info)
+    })
+    return () => { cancelled = true }
+  }, [projectDir])
+
+  // Combine shell (pinned first) with agent sessions
+  const allSessions: TerminalInfo[] = shellSession ? [shellSession, ...sessions] : sessions
+
+  // Default active tab: shell if present, else first agent
+  useEffect(() => {
+    if (allSessions.length === 0) return
+    if (!activeId || !allSessions.find(s => s.id === activeId)) {
+      setActiveId(allSessions[0].id)
     }
-  }, [sessions])
+  }, [allSessions.map(s => s.id).join('|')])
 
   // Re-fit the active terminal whenever this panel becomes visible.
   // The outer container uses display:none while on another tab, so xterm's
@@ -148,35 +166,27 @@ export default function TerminalPanel({ sessions, isVisible }: Props) {
     return () => cancelAnimationFrame(raf)
   }, [isVisible, activeId])
 
-  // Clean up terminal instances that are no longer in sessions
+  // Clean up terminal instances that are no longer in allSessions
   useEffect(() => {
     return () => {
       termInstances.forEach((instance, id) => {
-        if (!sessions.find(s => s.id === id)) {
+        if (!allSessions.find(s => s.id === id)) {
           instance.term.dispose()
           termInstances.delete(id)
         }
       })
     }
-  }, [sessions])
-
-  if (sessions.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-[#0d0d0d]">
-        <p className="text-xs text-slate-600">No agents running.</p>
-        <p className="text-xs text-slate-700">Build a graph and click Dispatch agents.</p>
-      </div>
-    )
-  }
+  }, [allSessions.map(s => s.id).join('|')])
 
   return (
     <div className="flex flex-col h-full bg-[#0d0d0d]">
       {/* Tab strip */}
       <div className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto">
-        {sessions.map(s => {
+        {allSessions.map(s => {
+          const isShell = s.runtime === 'shell'
           const isArchitect = s.id === 'architect-agent'
           const isActive = s.id === activeId
-          const runtime = getAgentRuntime(s.runtime)
+          const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
           return (
             <button
               key={s.id}
@@ -187,18 +197,24 @@ export default function TerminalPanel({ sessions, isVisible }: Props) {
                   : 'border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/[0.02]'
               }`}
             >
-              <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
-                }`}
-              />
-              <span>{isArchitect ? '⬡ Architect' : s.label}</span>
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
-              >
-                {runtime.shortLabel}
-              </span>
+              {isShell ? (
+                <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
+              ) : (
+                <span
+                  className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                    isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                  }`}
+                />
+              )}
+              <span>{isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}</span>
+              {runtime && (
+                <span
+                  className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                  style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
+                >
+                  {runtime.shortLabel}
+                </span>
+              )}
             </button>
           )
         })}
@@ -206,7 +222,7 @@ export default function TerminalPanel({ sessions, isVisible }: Props) {
 
       {/* Terminal views — all mounted, only active one visible */}
       <div className="flex-1 relative overflow-hidden p-1">
-        {sessions.map(s => (
+        {allSessions.map(s => (
           <div
             key={s.id}
             className="absolute inset-1"

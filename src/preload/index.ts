@@ -6,7 +6,6 @@ contextBridge.exposeInMainWorld('electron', {
   // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('read-dir', dirPath),
   readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
-  readOutputs: (outputsDir: string) => ipcRenderer.invoke('read-outputs', outputsDir),
   getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
   openDirectory: () => ipcRenderer.invoke('open-directory'),
 
@@ -31,6 +30,9 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Terminal I/O
   terminal: {
+    spawnShell: (cwd: string) =>
+      ipcRenderer.invoke('terminal:spawn-shell', cwd),
+
     input: (id: string, data: string) =>
       ipcRenderer.send('terminal:input', id, data),
 

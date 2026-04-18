@@ -31,5 +31,6 @@ function categoryIconColor(category: ComponentCategory): string {
     case 'infrastructure': return 'text-blue-400'
     case 'services':       return 'text-purple-400'
     case 'storage':        return 'text-emerald-400'
+    case 'custom':         return 'text-slate-400'
   }
 }

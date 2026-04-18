@@ -1,6 +1,8 @@
 import type { NodeTypes } from '@xyflow/react'
-import ArchitectNode from './ArchitectNode'
+import ZoneNode from './ZoneNode'
+import ComponentNode from './ComponentNode'
 
 export const nodeTypes: NodeTypes = {
-  architectNode: ArchitectNode,
+  zone: ZoneNode,
+  component: ComponentNode,
 }

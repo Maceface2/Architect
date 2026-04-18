@@ -10,20 +10,13 @@ interface FileEntry {
 interface TerminalInfo {
   id: string
   label: string
-  runtime: AgentRuntime
-}
-
-interface OutputFile {
-  name: string
-  content: string
-  mtime: number
+  runtime: AgentRuntime | 'shell'
 }
 
 interface ElectronAPI {
   platform: string
   readDir: (dirPath: string) => Promise<FileEntry[]>
   readFile: (filePath: string) => Promise<string | null>
-  readOutputs: (outputsDir: string) => Promise<OutputFile[]>
   getHomeDir: () => Promise<string>
   openDirectory: () => Promise<string | null>
   saveCanvas: (projectDir: string, data: string) => Promise<void>
@@ -41,6 +34,7 @@ interface ElectronAPI {
     stop: () => void
   }
   terminal: {
+    spawnShell: (cwd: string) => Promise<TerminalInfo | null>
     input: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
     killAll: () => void

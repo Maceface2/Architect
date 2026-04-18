@@ -1,20 +1,18 @@
 import type { Node } from '@xyflow/react'
-import type { AgentRuntime, AgentRuntimeMode } from '../../../shared/agentRuntimes'
+import type { AgentRuntime, AgentRuntimeMode } from '../../shared/agentRuntimes'
 
 export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
 export type RunMode = 'sequential' | 'parallel' | 'loop'
 export type OnFailure = 'stop' | 'retry' | 'skip'
 
-// Skills = markdown files pre-injected as agent context for the selected coding CLI
 export interface NodeSkillFile {
-  id: string       // e.g. 'researcher'
-  name: string     // display name
-  path: string     // path to .md file, or built-in key
-  builtin: boolean // true = from preset library
+  id: string
+  name: string
+  path: string
+  builtin: boolean
 }
 
-// Tools = concrete runtime capabilities the agent can invoke
 export interface NodeTools {
   webSearch: boolean
   codeExec: boolean
@@ -49,13 +47,11 @@ export interface ProjectSettings {
 
 export type RuntimeModelMap = Partial<Record<AgentRuntime, string>>
 
-export interface ArchitectNodeData {
+// A zone is the agent. It owns a bounded canvas area and drives a single PTY.
+export interface ZoneNodeData {
   label: string
   description: string
-  category: ComponentCategory
-  iconName: string
   color: string
-  tag: string
   status: NodeStatus
   prompt: string
   agentRuntimeMode: AgentRuntimeMode
@@ -70,10 +66,25 @@ export interface ArchitectNodeData {
   [key: string]: unknown
 }
 
-export type ArchitectNodeType = Node<ArchitectNodeData, 'architectNode'>
+// A component is a design artifact. It carries the core context (description, specs)
+// for one part of the system; zones overlay components to add agent behavior.
+export interface ComponentNodeData {
+  label: string
+  description: string  // short tagline
+  specs: string        // long-form description, API contracts, notes, requirements
+  category: ComponentCategory
+  iconName: string
+  color: string
+  tag: string
+  [key: string]: unknown
+}
+
+export type ZoneNodeType = Node<ZoneNodeData, 'zone'>
+export type ComponentNodeType = Node<ComponentNodeData, 'component'>
+export type CanvasNode = ZoneNodeType | ComponentNodeType
 
 export interface ArchitectCanvasData {
-  nodes: ArchitectNodeType[]
+  nodes: CanvasNode[]
   edges: Array<{
     id: string
     source: string

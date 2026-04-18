@@ -31,7 +31,9 @@ const TERM_THEME = {
 }
 
 interface CanvasUpdate {
-  nodes: unknown[]
+  zones?: unknown[]
+  components?: unknown[]
+  nodes?: unknown[]
   edges: unknown[]
 }
 
@@ -65,7 +67,7 @@ export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Pro
 
       try {
         const update = JSON.parse(jsonStr)
-        if (update?.nodes && update?.edges) {
+        if ((update?.zones || update?.nodes) && update?.edges) {
           onCanvasUpdate(update as CanvasUpdate)
         }
       } catch { /* malformed — skip */ }

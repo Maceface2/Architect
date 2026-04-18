@@ -1,5 +1,7 @@
 import type { ComponentCategory } from '../types'
 
+export type PaletteItemKind = 'zone' | 'component'
+
 export interface PaletteItemConfig {
   id: string
   label: string
@@ -8,6 +10,18 @@ export interface PaletteItemConfig {
   iconName: string
   color: string
   tag: string
+  kind?: PaletteItemKind
+}
+
+export const ZONE_PALETTE_ITEM: PaletteItemConfig = {
+  id: 'zone',
+  label: 'Empty Zone',
+  description: 'An agent zone — drop components inside',
+  category: 'custom',
+  iconName: 'Layers',
+  color: '#58A6FF',
+  tag: 'ZONE',
+  kind: 'zone',
 }
 
 export const palette: PaletteItemConfig[] = [

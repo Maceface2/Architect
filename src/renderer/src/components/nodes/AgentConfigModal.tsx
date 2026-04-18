@@ -1,6 +1,4 @@
-import { memo, useState, useRef, useEffect } from 'react'
-import { createPortal } from 'react-dom'
-import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
+import { useEffect, useRef, useState } from 'react'
 import { Plus, X, FileText } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
@@ -10,10 +8,8 @@ import {
   type AgentRuntimeMode,
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
-import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
 import type {
-  ArchitectNodeData,
-  NodeStatus,
+  ZoneNodeData,
   NodeSkillFile,
   NodeTools,
   NodeBehavior,
@@ -24,8 +20,6 @@ import type {
   RuntimeModelMap,
 } from '../../types'
 
-type ArchitectNodeProps = NodeProps<Node<ArchitectNodeData>>
-
 const BUILTIN_SKILLS: Omit<NodeSkillFile, 'id'>[] = [
   { name: 'researcher.md', path: 'builtin:researcher', builtin: true },
   { name: 'planner.md', path: 'builtin:planner', builtin: true },
@@ -35,110 +29,8 @@ const BUILTIN_SKILLS: Omit<NodeSkillFile, 'id'>[] = [
   { name: 'analyst.md', path: 'builtin:analyst', builtin: true },
 ]
 
-function ArchitectNode({ id, data }: ArchitectNodeProps) {
-  const { setNodes } = useReactFlow()
-  const [modalOpen, setModalOpen] = useState(false)
-  const projectSettings = useProjectSettings()
-
-  const nodeColor = data.color as string
-  const tag = data.tag as string
-  const label = data.label as string
-  const prompt = (data.prompt ?? '') as string
-  const status = data.status as NodeStatus
-  const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
-  const configuredRuntime = (data.agentRuntime ?? projectSettings.defaultRuntime) as AgentRuntime
-  const providerModels = (data.providerModels ?? {}) as RuntimeModelMap
-  const effectiveRuntime = getEffectiveRuntime({
-    agentRuntimeMode: runtimeMode,
-    agentRuntime: configuredRuntime,
-  }, projectSettings)
-  const effectiveModel = getEffectiveModel({
-    providerModels,
-    agentRuntimeMode: runtimeMode,
-    agentRuntime: configuredRuntime,
-  }, projectSettings)
-  const skills = (data.skills ?? []) as NodeSkillFile[]
-  const tools = (data.tools ?? { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false }) as NodeTools
-  const behavior = (data.behavior ?? { mode: 'sequential', retries: 0, onFailure: 'stop', timeoutMs: 30000 }) as NodeBehavior
-  const permissions = (data.permissions ?? { readFiles: false, writeFiles: false, network: false, shell: false }) as NodePermissions
-  const envVars = (data.envVars ?? []) as NodeEnvVar[]
-  const runtimeMeta = getAgentRuntime(effectiveRuntime)
-
-  const patch = (partial: Partial<ArchitectNodeData>) =>
-    setNodes(nodes =>
-      nodes.map(node =>
-        node.id === id ? { ...node, data: { ...(node.data as ArchitectNodeData), ...partial } } : node
-      )
-    )
-
-  return (
-    <div className="relative">
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ width: 11, height: 11, background: '#1e1e1e', border: `2px solid ${nodeColor}`, left: -6, zIndex: 10 }}
-      />
-
-      <div
-        className="relative bg-[#1e1e1e] rounded-xl overflow-hidden min-w-[200px] max-w-[240px] border border-white/[0.06] shadow-2xl cursor-pointer hover:border-white/20 transition-colors select-none"
-        onClick={() => setModalOpen(true)}
-      >
-        <div className="absolute left-0 top-0 bottom-0 w-[5px]" style={{ backgroundColor: nodeColor }} />
-        <div className="pl-[18px] pr-3.5 pt-3 pb-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[11px] font-bold tracking-widest" style={{ color: nodeColor }}>{tag}</span>
-            <div className="flex items-center gap-1.5">
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
-              >
-                {runtimeMode === 'inherit' ? `default:${runtimeMeta.shortLabel}` : runtimeMeta.shortLabel}
-              </span>
-              <div className="w-2.5 h-2.5 rounded-full flex-shrink-0" style={{ backgroundColor: statusColor(status, nodeColor) }} />
-            </div>
-          </div>
-          <p className="text-[15px] font-semibold text-white leading-snug">{label}</p>
-          <p className="text-[10px] text-slate-600 mt-1 font-mono truncate">{shortModelLabel(effectiveModel)}</p>
-          {prompt && (
-            <p className="text-[10px] text-slate-500 mt-1.5 leading-relaxed line-clamp-2">{prompt}</p>
-          )}
-        </div>
-      </div>
-
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ width: 11, height: 11, background: '#1e1e1e', border: `2px solid ${nodeColor}`, right: -6, zIndex: 10 }}
-      />
-
-      {modalOpen && createPortal(
-        <NodeConfigModal
-          nodeColor={nodeColor}
-          tag={tag}
-          label={label}
-          prompt={prompt}
-          runtimeMode={runtimeMode}
-          configuredRuntime={configuredRuntime}
-          effectiveRuntime={effectiveRuntime}
-          effectiveModel={effectiveModel}
-          providerModels={providerModels}
-          skills={skills}
-          tools={tools}
-          behavior={behavior}
-          permissions={permissions}
-          envVars={envVars}
-          patch={patch}
-          onClose={() => setModalOpen(false)}
-        />,
-        document.body
-      )}
-    </div>
-  )
-}
-
-interface ModalProps {
-  nodeColor: string
-  tag: string
+interface Props {
+  zoneColor: string
   label: string
   prompt: string
   runtimeMode: AgentRuntimeMode
@@ -151,13 +43,12 @@ interface ModalProps {
   behavior: NodeBehavior
   permissions: NodePermissions
   envVars: NodeEnvVar[]
-  patch: (partial: Partial<ArchitectNodeData>) => void
+  patch: (partial: Partial<ZoneNodeData>) => void
   onClose: () => void
 }
 
-function NodeConfigModal({
-  nodeColor,
-  tag,
+export default function AgentConfigModal({
+  zoneColor,
   label,
   prompt,
   runtimeMode,
@@ -172,7 +63,7 @@ function NodeConfigModal({
   envVars,
   patch,
   onClose,
-}: ModalProps) {
+}: Props) {
   const [labelDraft, setLabelDraft] = useState(label)
   const [customSkillInput, setCustomSkillInput] = useState('')
   const labelInputRef = useRef<HTMLInputElement>(null)
@@ -243,8 +134,8 @@ function NodeConfigModal({
         className="bg-[#161616] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden"
         style={{ width: '90vw', height: '85vh', maxWidth: 1100 }}
       >
-        <div className="flex items-center gap-4 px-6 py-4 border-b border-white/[0.07] flex-shrink-0" style={{ borderLeftColor: nodeColor, borderLeftWidth: 4 }}>
-          <span className="text-[11px] font-bold tracking-widest flex-shrink-0" style={{ color: nodeColor }}>{tag}</span>
+        <div className="flex items-center gap-4 px-6 py-4 border-b border-white/[0.07] flex-shrink-0" style={{ borderLeftColor: zoneColor, borderLeftWidth: 4 }}>
+          <span className="text-[11px] font-bold tracking-widest flex-shrink-0 uppercase" style={{ color: zoneColor }}>Zone</span>
           <input
             ref={labelInputRef}
             value={labelDraft}
@@ -265,7 +156,7 @@ function NodeConfigModal({
             <textarea
               value={prompt}
               onChange={event => patch({ prompt: event.target.value })}
-              placeholder="Describe what this agent should do — its role, goals, constraints, and any specific instructions..."
+              placeholder="Describe what this agent should build — its role, goals, constraints, and instructions for the components inside the zone..."
               autoFocus
               className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
             />
@@ -285,7 +176,7 @@ function NodeConfigModal({
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-slate-400">
                     {runtimeMode === 'inherit'
                       ? `Using project default: ${getAgentRuntime(projectSettings.defaultRuntime).label}`
-                      : 'This node uses its own CLI selection.'}
+                      : 'This zone uses its own CLI selection.'}
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     {AGENT_RUNTIMES.map(runtime => {
@@ -402,8 +293,8 @@ function NodeConfigModal({
                     ['fileWrite', 'File Write'],
                     ['apiCalls', 'API Calls'],
                     ['shell', 'Shell'],
-                  ] as [keyof NodeTools, string][]).map(([key, label]) => (
-                    <Toggle key={key} label={label} value={tools[key]} onChange={() => toggleTool(key)} />
+                  ] as [keyof NodeTools, string][]).map(([key, tLabel]) => (
+                    <Toggle key={key} label={tLabel} value={tools[key]} onChange={() => toggleTool(key)} />
                   ))}
                 </div>
               </Section>
@@ -454,8 +345,8 @@ function NodeConfigModal({
                     ['writeFiles', 'Write files'],
                     ['network', 'Network'],
                     ['shell', 'Shell'],
-                  ] as [keyof NodePermissions, string][]).map(([key, label]) => (
-                    <Toggle key={key} label={label} value={permissions[key]} onChange={() => togglePerm(key)} />
+                  ] as [keyof NodePermissions, string][]).map(([key, pLabel]) => (
+                    <Toggle key={key} label={pLabel} value={permissions[key]} onChange={() => togglePerm(key)} />
                   ))}
                 </div>
               </Section>
@@ -556,14 +447,3 @@ function Seg<T extends string>({ options, value, onChange }: { options: T[]; val
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
 }
-
-function statusColor(status: NodeStatus, defaultColor: string): string {
-  switch (status) {
-    case 'running': return '#fbbf24'
-    case 'done': return '#4ade80'
-    case 'error': return '#f87171'
-    default: return defaultColor
-  }
-}
-
-export default memo(ArchitectNode)

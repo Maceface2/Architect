@@ -8,10 +8,13 @@ import {
 } from '../../../shared/agentRuntimes'
 import type {
   ArchitectCanvasData,
-  ArchitectNodeData,
-  ArchitectNodeType,
+  CanvasNode,
+  ComponentNodeData,
+  ComponentNodeType,
   ProjectSettings,
   RuntimeModelMap,
+  ZoneNodeData,
+  ZoneNodeType,
 } from '../types'
 
 export function createDefaultProjectSettings(): ProjectSettings {
@@ -20,7 +23,7 @@ export function createDefaultProjectSettings(): ProjectSettings {
   }
 }
 
-export function createDefaultNodeConfig(defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME) {
+export function createDefaultZoneAgentConfig(defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME) {
   return {
     agentRuntimeMode: 'inherit' as const,
     agentRuntime: defaultRuntime,
@@ -34,15 +37,26 @@ export function createDefaultNodeConfig(defaultRuntime: AgentRuntime = DEFAULT_A
   }
 }
 
+export function createDefaultZoneData(defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME): ZoneNodeData {
+  return {
+    label: 'Zone',
+    description: '',
+    color: '#58A6FF',
+    status: 'idle',
+    prompt: '',
+    ...createDefaultZoneAgentConfig(defaultRuntime),
+  }
+}
+
 export function getEffectiveRuntime(
-  data: Pick<ArchitectNodeData, 'agentRuntimeMode' | 'agentRuntime'>,
+  data: Pick<ZoneNodeData, 'agentRuntimeMode' | 'agentRuntime'>,
   settings: ProjectSettings
 ): AgentRuntime {
   return data.agentRuntimeMode === 'override' ? data.agentRuntime : settings.defaultRuntime
 }
 
 export function getEffectiveModel(
-  data: Pick<ArchitectNodeData, 'providerModels' | 'agentRuntimeMode' | 'agentRuntime'>,
+  data: Pick<ZoneNodeData, 'providerModels' | 'agentRuntimeMode' | 'agentRuntime'>,
   settings: ProjectSettings
 ): string {
   const runtime = getEffectiveRuntime(data, settings)
@@ -84,31 +98,39 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   return { defaultRuntime }
 }
 
-export function normalizeNodeData(raw: unknown, settings: ProjectSettings): ArchitectNodeData {
-  const rawData = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  const defaultConfig = createDefaultNodeConfig(settings.defaultRuntime)
-  const agentRuntime = isAgentRuntime(rawData.agentRuntime) ? rawData.agentRuntime : DEFAULT_AGENT_RUNTIME
+function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettings): ZoneNodeData {
+  const defaults = createDefaultZoneAgentConfig(settings.defaultRuntime)
+  const agentRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : DEFAULT_AGENT_RUNTIME
 
   return {
-    label: typeof rawData.label === 'string' ? rawData.label : 'Node',
-    description: typeof rawData.description === 'string' ? rawData.description : '',
-    category: (rawData.category as ArchitectNodeData['category']) ?? 'services',
-    iconName: typeof rawData.iconName === 'string' ? rawData.iconName : 'Settings2',
-    color: typeof rawData.color === 'string' ? rawData.color : '#60a5fa',
-    tag: typeof rawData.tag === 'string' ? rawData.tag : 'NODE',
-    status: (rawData.status as ArchitectNodeData['status']) ?? 'idle',
-    prompt: typeof rawData.prompt === 'string' ? rawData.prompt : '',
-    agentRuntimeMode: isAgentRuntimeMode(rawData.agentRuntimeMode) ? rawData.agentRuntimeMode : defaultConfig.agentRuntimeMode,
+    label: typeof raw.label === 'string' ? raw.label : 'Zone',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    color: typeof raw.color === 'string' ? raw.color : '#58A6FF',
+    status: (raw.status as ZoneNodeData['status']) ?? 'idle',
+    prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+    agentRuntimeMode: isAgentRuntimeMode(raw.agentRuntimeMode) ? raw.agentRuntimeMode : defaults.agentRuntimeMode,
     agentRuntime,
-    providerModels: normalizeProviderModels(rawData, settings.defaultRuntime),
-    openSections: Array.isArray(rawData.openSections) ? (rawData.openSections as string[]) : defaultConfig.openSections,
-    skills: Array.isArray(rawData.skills) ? (rawData.skills as ArchitectNodeData['skills']) : defaultConfig.skills,
-    tools: rawData.tools && typeof rawData.tools === 'object' ? (rawData.tools as ArchitectNodeData['tools']) : defaultConfig.tools,
-    behavior: rawData.behavior && typeof rawData.behavior === 'object' ? (rawData.behavior as ArchitectNodeData['behavior']) : defaultConfig.behavior,
-    permissions: rawData.permissions && typeof rawData.permissions === 'object'
-      ? (rawData.permissions as ArchitectNodeData['permissions'])
-      : defaultConfig.permissions,
-    envVars: Array.isArray(rawData.envVars) ? (rawData.envVars as ArchitectNodeData['envVars']) : defaultConfig.envVars,
+    providerModels: normalizeProviderModels(raw, settings.defaultRuntime),
+    openSections: Array.isArray(raw.openSections) ? (raw.openSections as string[]) : defaults.openSections,
+    skills: Array.isArray(raw.skills) ? (raw.skills as ZoneNodeData['skills']) : defaults.skills,
+    tools: raw.tools && typeof raw.tools === 'object' ? (raw.tools as ZoneNodeData['tools']) : defaults.tools,
+    behavior: raw.behavior && typeof raw.behavior === 'object' ? (raw.behavior as ZoneNodeData['behavior']) : defaults.behavior,
+    permissions: raw.permissions && typeof raw.permissions === 'object'
+      ? (raw.permissions as ZoneNodeData['permissions'])
+      : defaults.permissions,
+    envVars: Array.isArray(raw.envVars) ? (raw.envVars as ZoneNodeData['envVars']) : defaults.envVars,
+  }
+}
+
+function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData {
+  return {
+    label: typeof raw.label === 'string' ? raw.label : 'Component',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    specs: typeof raw.specs === 'string' ? raw.specs : '',
+    category: (raw.category as ComponentNodeData['category']) ?? 'services',
+    iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Settings2',
+    color: typeof raw.color === 'string' ? raw.color : '#60a5fa',
+    tag: typeof raw.tag === 'string' ? raw.tag : 'NODE',
   }
 }
 
@@ -118,12 +140,75 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
   const rawNodes = Array.isArray(root.nodes) ? (root.nodes as Array<Record<string, unknown>>) : []
   const rawEdges = Array.isArray(root.edges) ? (root.edges as Array<Record<string, unknown>>) : []
 
-  const nodes: ArchitectNodeType[] = rawNodes.map((node, index) => ({
-    id: typeof node.id === 'string' ? node.id : `node-${index}`,
-    type: 'architectNode',
-    position: (node.position as ArchitectNodeType['position']) ?? { x: 80 + index * 280, y: 80 },
-    data: normalizeNodeData(node.data, settings),
-  }))
+  const nodes: CanvasNode[] = []
+
+  // Path A — legacy "architectNode" save: one zone overlaying a single component, both at absolute positions
+  const isLegacy = rawNodes.length > 0 && rawNodes.every(node => node.type === 'architectNode' || !node.type)
+
+  if (isLegacy) {
+    rawNodes.forEach((node, index) => {
+      const id = typeof node.id === 'string' ? node.id : `node-${index}`
+      const position = (node.position as { x: number; y: number }) ?? { x: 80 + index * 360, y: 80 }
+      const rawData = node.data && typeof node.data === 'object' ? (node.data as Record<string, unknown>) : {}
+      const zonePos = { x: position.x - 20, y: position.y - 40 }
+      nodes.push({
+        id: `zone-${id}`,
+        type: 'zone',
+        position: zonePos,
+        data: normalizeZoneData(rawData, settings),
+        width: 280,
+        height: 200,
+        zIndex: 0,
+      })
+      nodes.push({
+        id,
+        type: 'component',
+        position: { x: zonePos.x + 20, y: zonePos.y + 48 },
+        data: normalizeComponentData(rawData),
+        zIndex: 1,
+      })
+    })
+  } else {
+    // Path B — new format: zones + components. Resolve any legacy parentId/extent to absolute positions.
+    const zonePositionById = new Map<string, { x: number; y: number }>()
+    for (const node of rawNodes) {
+      if (node.type === 'zone' && typeof node.id === 'string') {
+        const pos = (node.position as { x: number; y: number }) ?? { x: 0, y: 0 }
+        zonePositionById.set(node.id, pos)
+      }
+    }
+
+    rawNodes.forEach((node, index) => {
+      const id = typeof node.id === 'string' ? node.id : `node-${index}`
+      const position = (node.position as { x: number; y: number }) ?? { x: 80 + index * 280, y: 80 }
+      const rawData = node.data && typeof node.data === 'object' ? (node.data as Record<string, unknown>) : {}
+
+      if (node.type === 'zone') {
+        nodes.push({
+          id,
+          type: 'zone',
+          position,
+          data: normalizeZoneData(rawData, settings),
+          width: typeof node.width === 'number' ? node.width : 320,
+          height: typeof node.height === 'number' ? node.height : 220,
+          zIndex: 0,
+        })
+      } else {
+        const parentId = typeof node.parentId === 'string' ? node.parentId : undefined
+        const parentPos = parentId ? zonePositionById.get(parentId) : undefined
+        const absolutePosition = parentPos
+          ? { x: parentPos.x + position.x, y: parentPos.y + position.y }
+          : position
+        nodes.push({
+          id,
+          type: 'component',
+          position: absolutePosition,
+          data: normalizeComponentData(rawData),
+          zIndex: 1,
+        })
+      }
+    })
+  }
 
   const edges: Edge[] = rawEdges.map((edge, index) => ({
     id: typeof edge.id === 'string' ? edge.id : `edge-${index}`,
