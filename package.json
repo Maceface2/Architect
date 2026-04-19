@@ -22,20 +22,32 @@
       {
         "from": "node_modules/node-pty/prebuilds",
         "to": "node-pty/prebuilds",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "mac": {
       "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.icns",
       "target": [
-        { "target": "dmg", "arch": ["arm64", "x64"] }
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
       ],
       "hardenedRuntime": false
     },
     "dmg": {
       "title": "Architect",
       "background": null,
-      "window": { "width": 540, "height": 380 }
+      "window": {
+        "width": 540,
+        "height": 380
+      }
     },
     "npmRebuild": true,
     "nodeGypRebuild": false
@@ -47,7 +59,8 @@
     "lucide-react": "^0.468.0",
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^2.1.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -43,7 +43,12 @@ interface ElectronAPI {
     killAll: () => void
     onData: (cb: (event: { id: string; data: string }) => void) => () => void
     onExit: (cb: (event: { id: string; exitCode: number }) => void) => () => void
+    popout: (opts: { id: string; label: string; runtime: string }) => Promise<{ ok: boolean }>
+    dock: (id: string) => Promise<{ ok: boolean }>
+    onPopoutClosed: (cb: (event: { id: string }) => void) => () => void
   }
+  loadTerminalLayout: (projectDir: string) => Promise<unknown>
+  saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>
   zone: {
     getSession: (
       projectDir: string,

@@ -61,7 +61,25 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('terminal:exit', handler)
       return () => ipcRenderer.removeListener('terminal:exit', handler)
     },
+
+    popout: (opts: { id: string; label: string; runtime: string }) =>
+      ipcRenderer.invoke('terminal:popout', opts),
+
+    dock: (id: string) =>
+      ipcRenderer.invoke('terminal:dock', id),
+
+    onPopoutClosed: (cb: (event: { id: string }) => void) => {
+      const handler = (_: unknown, event: { id: string }) => cb(event)
+      ipcRenderer.on('terminal:popout-closed', handler)
+      return () => ipcRenderer.removeListener('terminal:popout-closed', handler)
+    },
   },
+
+  // Terminal layout persistence (per project)
+  loadTerminalLayout: (projectDir: string) =>
+    ipcRenderer.invoke('terminal-layout:load', projectDir),
+  saveTerminalLayout: (projectDir: string, json: unknown) =>
+    ipcRenderer.invoke('terminal-layout:save', projectDir, json),
 
   // Per-zone Claude session capture/resume
   zone: {

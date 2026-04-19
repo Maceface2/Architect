@@ -1,0 +1,4 @@
+Claude:
+d9c0ec3f-b6c6-4cfa-9c89-58cf1f63880e - agent session resuming, turned off dangerously run for the architecture assistant - medium performance
+Codex:
+019d9f79-d4f4-7aa0-aaa8-7be596862a9f - architect agent can live edit the canvas - poor preformance

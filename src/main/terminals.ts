@@ -226,6 +226,13 @@ let activeWatcher: fs.FSWatcher | null = null
 
 const SHELL_ID_PREFIX = 'shell-'
 
+// Send to every live BrowserWindow so popout windows receive the same stream.
+function broadcast(channel: string, payload: unknown): void {
+  for (const w of BrowserWindow.getAllWindows()) {
+    if (!w.isDestroyed()) w.webContents.send(channel, payload)
+  }
+}
+
 function buildRuntimeArgs(
   runtime: AgentRuntime,
   prompt?: string,
@@ -279,11 +286,11 @@ function createSession(
       session.done = true
       session.doneCallbacks.splice(0).forEach(cb => cb())
     }
-    if (!win.isDestroyed()) win.webContents.send('terminal:data', { id, data })
+    broadcast('terminal:data', { id, data })
   })
 
   ptyProcess.onExit(({ exitCode }) => {
-    if (!win.isDestroyed()) win.webContents.send('terminal:exit', { id, exitCode })
+    broadcast('terminal:exit', { id, exitCode })
     // Identity-check: a resume may have already replaced this entry.
     if (sessions.get(id) === session) sessions.delete(id)
     onExit?.()
@@ -369,14 +376,12 @@ function spawnAgentSession({
           capturedAt: new Date().toISOString(),
         })
         console.log(`[session-capture] ${capture.zoneSafe}: saved session ${sessionId}`)
-        if (!win.isDestroyed()) {
-          win.webContents.send('zone:session-captured', {
-            zoneSafe: capture.zoneSafe,
-            zoneId: id,
-            sessionId,
-            runtime: 'claude',
-          })
-        }
+        broadcast('zone:session-captured', {
+          zoneSafe: capture.zoneSafe,
+          zoneId: id,
+          sessionId,
+          runtime: 'claude',
+        })
       } catch (err) {
         console.error(`[session-capture] ${capture.zoneSafe}: failed to save`, err)
       }

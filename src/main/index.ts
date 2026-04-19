@@ -16,6 +16,7 @@ let mainWindow: BrowserWindow | null = null
 let canvasWatcher: fs.FSWatcher | null = null
 let canvasWatchTimer: ReturnType<typeof setTimeout> | null = null
 let watchedProjectDir: string | null = null
+const popouts = new Map<string, BrowserWindow>()
 
 function emitCanvasChanged(projectDir: string) {
   if (!mainWindow || mainWindow.isDestroyed()) return
@@ -202,6 +203,73 @@ ipcMain.handle('zone:get-session', (_event, projectDir: string, label: string) =
 ipcMain.handle('zone:resume', (_event, opts: ResumeZoneOptions) => {
   if (!mainWindow) return { ok: false, reason: 'no-window' }
   return resumeZone(mainWindow, opts)
+})
+
+// ── Terminal popout windows ────────────────────────────────────────────────
+
+ipcMain.handle('terminal:popout', (_event, opts: { id: string; label: string; runtime: string }) => {
+  const existing = popouts.get(opts.id)
+  if (existing && !existing.isDestroyed()) {
+    existing.focus()
+    return { ok: true }
+  }
+
+  const win = new BrowserWindow({
+    width: 800,
+    height: 600,
+    backgroundColor: '#0d0d0d',
+    title: opts.label,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  popouts.set(opts.id, win)
+  win.on('closed', () => {
+    popouts.delete(opts.id)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:popout-closed', { id: opts.id })
+    }
+  })
+
+  const params = `popout=${encodeURIComponent(opts.id)}&label=${encodeURIComponent(opts.label)}&runtime=${encodeURIComponent(opts.runtime)}`
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${params}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search: params })
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('terminal:dock', (_event, id: string) => {
+  const win = popouts.get(id)
+  if (win && !win.isDestroyed()) win.close()
+  return { ok: true }
+})
+
+// ── Terminal layout persistence ────────────────────────────────────────────
+
+ipcMain.handle('terminal-layout:load', (_event, projectDir: string) => {
+  try {
+    const raw = fs.readFileSync(path.join(projectDir, 'ARCHITECT', 'terminal-layout.json'), 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('terminal-layout:save', (_event, projectDir: string, json: unknown) => {
+  try {
+    const dir = path.join(projectDir, 'ARCHITECT')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'terminal-layout.json'), JSON.stringify(json, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
 })
 
 // ── App lifecycle ──────────────────────────────────────────────────────────

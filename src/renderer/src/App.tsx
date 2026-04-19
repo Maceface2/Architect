@@ -19,8 +19,11 @@ import AssistantPanel from './components/layout/AssistantPanel'
 import Sidebar from './components/layout/Sidebar'
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
+import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
 import PreviewPanel from './components/layout/PreviewPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
+import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
+import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { palette, ZONE_PALETTE_ITEM } from './data/componentPalette'
 import { nodeTypes } from './components/nodes/nodeTypes'
 import type {
@@ -288,6 +291,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
+  const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
+  const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
   const edgesRef = useRef<Edge[]>([])
@@ -304,7 +309,34 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   useEffect(() => () => {
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current)
+    if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
   }, [])
+
+  // Load persisted terminal layout when project changes; reset on dir switch.
+  useEffect(() => {
+    let cancelled = false
+    setTerminalLayout(null)
+    window.electron.loadTerminalLayout(projectDir).then(raw => {
+      if (cancelled) return
+      const parsed = raw && typeof raw === 'object' && 'root' in (raw as object)
+        ? (raw as TerminalLayout)
+        : emptyLayout()
+      // Popout windows aren't reopened automatically on project load — drop the list
+      // so those terminals show up in panes again instead of staying invisible.
+      parsed.poppedOut = []
+      setTerminalLayout(parsed)
+    })
+    return () => { cancelled = true }
+  }, [projectDir])
+
+  const handleTerminalLayoutChange = useCallback((next: TerminalLayout) => {
+    setTerminalLayout(next)
+    if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
+    terminalLayoutSaveTimer.current = setTimeout(() => {
+      terminalLayoutSaveTimer.current = null
+      void window.electron.saveTerminalLayout(projectDir, next)
+    }, 400)
+  }, [projectDir])
 
   const queueFitView = useCallback(() => {
     requestAnimationFrame(() => {
@@ -873,7 +905,13 @@ Only discuss and advise without editing the file when the user is asking for cri
           )}
 
           <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
-            <TerminalPanel sessions={terminalSessions} isVisible={isTerminal} projectDir={projectDir} />
+            <TerminalPanel
+              sessions={terminalSessions}
+              isVisible={isTerminal}
+              projectDir={projectDir}
+              layout={terminalLayout}
+              onLayoutChange={handleTerminalLayoutChange}
+            />
           </div>
 
           {isPreview && (
@@ -897,7 +935,7 @@ Only discuss and advise without editing the file when the user is asking for cri
   )
 }
 
-export default function App() {
+function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
 
   if (!projectDir) {
@@ -909,4 +947,13 @@ export default function App() {
       <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
     </ReactFlowProvider>
   )
+}
+
+export default function App() {
+  const params = new URLSearchParams(window.location.search)
+  const popoutId = params.get('popout')
+  if (popoutId) {
+    return <PopoutTerminalApp id={popoutId} label={params.get('label') ?? popoutId} />
+  }
+  return <MainApp />
 }
