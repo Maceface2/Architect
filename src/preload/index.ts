@@ -83,6 +83,12 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('terminal:popout-closed', handler)
       return () => ipcRenderer.removeListener('terminal:popout-closed', handler)
     },
+
+    onSpawned: (cb: (info: { id: string; label: string; runtime: string }) => void) => {
+      const handler = (_: unknown, info: { id: string; label: string; runtime: string }) => cb(info)
+      ipcRenderer.on('terminal:spawned', handler)
+      return () => ipcRenderer.removeListener('terminal:spawned', handler)
+    },
   },
 
   // Terminal layout persistence (per project)

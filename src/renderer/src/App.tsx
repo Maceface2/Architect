@@ -317,6 +317,21 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
   }, [])
 
+  // Pick up ad-hoc PTY spawns (e.g. canvas Play button) so they get a terminal tab.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onSpawned(info => {
+      setTerminalSessions(prev => {
+        const existing = prev.findIndex(s => s.id === info.id)
+        if (existing === -1) return [...prev, info]
+        const next = prev.slice()
+        next[existing] = info
+        return next
+      })
+      setActiveTab('Terminal')
+    })
+    return unsub
+  }, [])
+
   // Load persisted terminal layout when project changes; reset on dir switch.
   useEffect(() => {
     let cancelled = false
@@ -557,12 +572,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     ? zones.filter(n => zoneHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
     : []
 
-  const onDispatch = useCallback(() => {
-    if (zones.length === 0) return
-    setPreselectedZoneIds(null)
-    setDispatchModalOpen(true)
-  }, [zones.length])
-
   const handleDispatchSubmit = useCallback(async (req: DispatchRequest) => {
     if (zones.length === 0) return
     setDispatchModalOpen(false)
@@ -594,6 +603,17 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setDispatching(false)
     }
   }, [zones, nodes, edges, projectDir, projectSettings, dispatchedGraph, changedZoneLabels])
+
+  const onDispatch = useCallback(() => {
+    if (zones.length === 0) return
+    setPreselectedZoneIds(null)
+    // Single zone: skip the prompt modal and just resume/spawn that zone.
+    if (zones.length === 1) {
+      void handleDispatchSubmit({ userPrompt: '', model: '', planMode: false })
+      return
+    }
+    setDispatchModalOpen(true)
+  }, [zones.length, handleDispatchSubmit])
 
   const buildAssistantContext = useCallback((currentNodes: CanvasNode[], currentEdges: Edge[]) => {
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')

@@ -48,6 +48,7 @@ interface ElectronAPI {
     popout: (opts: { id: string; label: string; runtime: string }) => Promise<{ ok: boolean }>
     dock: (id: string) => Promise<{ ok: boolean }>
     onPopoutClosed: (cb: (event: { id: string }) => void) => () => void
+    onSpawned: (cb: (info: TerminalInfo) => void) => () => void
   }
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
   saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>

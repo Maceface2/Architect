@@ -886,12 +886,14 @@ export async function runGraph(
       runtime,
       env,
       cwd: projectDir,
-      initialPrompt: canResume ? undefined : (userPrompt || buildZoneBootstrapPrompt(zone)),
+      initialPrompt: canResume ? undefined : (userPrompt || undefined),
       resumeSessionId: canResume ? saved!.sessionId : undefined,
-      resumeUserPrompt: canResume ? (userPrompt || buildZoneBootstrapPrompt(zone)) : undefined,
+      resumeUserPrompt: canResume && userPrompt ? userPrompt : undefined,
       model,
       planMode: dispatch.planMode === true,
       appendSystemPrompt: canResume ? undefined : systemPrompt,
+      // Single-zone dispatch is interactive — keep normal permission prompts.
+      skipPermissions: false,
       capture: { projectDir, zoneKey: zone.id, legacyKey: sanitize(zone.data.label) },
     })
 
@@ -1169,7 +1171,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     ? loadZoneSession(opts.projectDir, zone.id, safe)
     : null
   const canResume = saved && saved.runtime === 'claude'
-  const userPrompt = (opts.userPrompt ?? '').trim() || buildZoneBootstrapPrompt(zone)
+  const userPrompt = (opts.userPrompt ?? '').trim()
 
   // Replace any existing PTY for this zone so the same renderer tab gets reused.
   const existing = sessions.get(zone.id)
@@ -1178,21 +1180,26 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     sessions.delete(zone.id)
   }
 
-  return spawnAgentSession({
+  const info = spawnAgentSession({
     win,
     id: zone.id,
     label: zone.data.label,
     runtime,
     env,
     cwd: opts.projectDir,
-    initialPrompt: canResume ? undefined : userPrompt,
+    initialPrompt: canResume ? undefined : (userPrompt || undefined),
     resumeSessionId: canResume ? saved!.sessionId : undefined,
-    resumeUserPrompt: canResume ? userPrompt : undefined,
+    resumeUserPrompt: canResume && userPrompt ? userPrompt : undefined,
     appendSystemPrompt: canResume ? undefined : systemPrompt,
     model,
     planMode: opts.planMode === true,
+    // Single-zone canvas Run is interactive — keep normal permission prompts.
+    skipPermissions: false,
     capture: { projectDir: opts.projectDir, zoneKey: zone.id, legacyKey: safe },
   })
+
+  broadcast('terminal:spawned', info)
+  return info
 }
 
 export function resetZoneSession(projectDir: string, zoneId: string, label?: string): boolean {
