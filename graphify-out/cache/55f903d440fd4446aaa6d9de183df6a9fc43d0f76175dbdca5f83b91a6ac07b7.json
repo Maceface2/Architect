@@ -1,1 +1,28 @@
-{"nodes": [{"id": "electronvite_renderer_build_setup", "label": "Electron Vite Renderer Build Setup", "file_type": "code", "source_file": "electron.vite.config.ts", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "electronvite_renderer_build_setup", "target": "app_architect_flow_controller", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.62, "source_file": "electron.vite.config.ts", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "electronvite_renderer_build_setup",
+      "label": "Electron Vite Renderer Build Setup",
+      "file_type": "code",
+      "source_file": "electron.vite.config.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "electronvite_renderer_build_setup",
+      "target": "app_architect_flow_controller",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.62,
+      "source_file": "electron.vite.config.ts",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

@@ -1,1 +1,70 @@
-{"nodes": [{"id": "github_ops_skill", "label": "GitHub Operations", "file_type": "document", "source_file": "skills/github-ops/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "github_ops_gh_cli", "label": "gh CLI", "file_type": "document", "source_file": "skills/github-ops/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "github_ops_pr_management", "label": "PR Management", "file_type": "document", "source_file": "skills/github-ops/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "github_ops_gh_cli", "target": "github_ops_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/github-ops/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "github_ops_pr_management", "target": "github_ops_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/github-ops/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "github_ops_pr_management", "target": "github_ops_gh_cli", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/github-ops/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "github_ops_skill",
+      "label": "GitHub Operations",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "github_ops_gh_cli",
+      "label": "gh CLI",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "github_ops_pr_management",
+      "label": "PR Management",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "github_ops_gh_cli",
+      "target": "github_ops_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "github_ops_pr_management",
+      "target": "github_ops_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "github_ops_pr_management",
+      "target": "github_ops_gh_cli",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

@@ -1,1 +1,178 @@
-{"nodes": [{"id": "hexagonal_architecture_skill", "label": "Hexagonal Architecture", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "hexagonal_architecture_use_cases", "label": "Use Cases", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "hexagonal_architecture_outbound_ports", "label": "Outbound Ports", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "hexagonal_architecture_adapters", "label": "Adapters", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "hexagonal_architecture_composition_root", "label": "Composition Root", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "hexagonal_architecture_maintainability_rationale", "label": "Keep business logic independent from frameworks", "file_type": "document", "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "hexagonal_architecture_use_cases", "target": "hexagonal_architecture_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_outbound_ports", "target": "hexagonal_architecture_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_adapters", "target": "hexagonal_architecture_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_composition_root", "target": "hexagonal_architecture_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_use_cases", "target": "hexagonal_architecture_outbound_ports", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_adapters", "target": "hexagonal_architecture_outbound_ports", "relation": "implements", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_composition_root", "target": "hexagonal_architecture_use_cases", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_composition_root", "target": "hexagonal_architecture_adapters", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "hexagonal_architecture_maintainability_rationale", "target": "hexagonal_architecture_skill", "relation": "rationale_for", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": [{"id": "hexagonal_boundary_stack", "label": "Hexagonal Boundary Stack", "nodes": ["hexagonal_architecture_use_cases", "hexagonal_architecture_outbound_ports", "hexagonal_architecture_adapters", "hexagonal_architecture_composition_root"], "relation": "form", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/hexagonal-architecture/SKILL.md"}]}
+{
+  "nodes": [
+    {
+      "id": "hexagonal_architecture_skill",
+      "label": "Hexagonal Architecture",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_use_cases",
+      "label": "Use Cases",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_outbound_ports",
+      "label": "Outbound Ports",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_adapters",
+      "label": "Adapters",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_composition_root",
+      "label": "Composition Root",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_maintainability_rationale",
+      "label": "Keep business logic independent from frameworks",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "hexagonal_architecture_use_cases",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_outbound_ports",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_adapters",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_use_cases",
+      "target": "hexagonal_architecture_outbound_ports",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_adapters",
+      "target": "hexagonal_architecture_outbound_ports",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_use_cases",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_adapters",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_maintainability_rationale",
+      "target": "hexagonal_architecture_skill",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "hexagonal_boundary_stack",
+      "label": "Hexagonal Boundary Stack",
+      "nodes": [
+        "hexagonal_architecture_use_cases",
+        "hexagonal_architecture_outbound_ports",
+        "hexagonal_architecture_adapters",
+        "hexagonal_architecture_composition_root"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md"
+    }
+  ]
+}

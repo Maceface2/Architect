@@ -1,1 +1,70 @@
-{"nodes": [{"id": "golang_patterns_skill", "label": "Go Development Patterns", "file_type": "document", "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "golang_patterns_zero_value_design", "label": "Useful Zero Value Design", "file_type": "document", "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "golang_patterns_context_cancellation", "label": "Context Cancellation", "file_type": "document", "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "golang_patterns_zero_value_design", "target": "golang_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "golang_patterns_context_cancellation", "target": "golang_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "golang_patterns_context_cancellation", "target": "kotlin_coroutines_flows_structured_concurrency", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.66, "source_file": "skills/golang-patterns/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "golang_patterns_skill",
+      "label": "Go Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_patterns_zero_value_design",
+      "label": "Useful Zero Value Design",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_patterns_context_cancellation",
+      "label": "Context Cancellation",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "golang_patterns_zero_value_design",
+      "target": "golang_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_patterns_context_cancellation",
+      "target": "golang_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_patterns_context_cancellation",
+      "target": "kotlin_coroutines_flows_structured_concurrency",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.66,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

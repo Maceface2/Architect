@@ -1,1 +1,70 @@
-{"nodes": [{"id": "jpa_patterns_skill", "label": "JPA/Hibernate Patterns", "file_type": "document", "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "jpa_patterns_repository_pattern", "label": "JPA Repository Pattern", "file_type": "document", "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "jpa_patterns_n_plus_one_prevention", "label": "N+1 Prevention", "file_type": "document", "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "jpa_patterns_repository_pattern", "target": "jpa_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "jpa_patterns_n_plus_one_prevention", "target": "jpa_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "jpa_patterns_repository_pattern", "target": "kotlin_exposed_patterns_repository_pattern", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.91, "source_file": "skills/jpa-patterns/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "jpa_patterns_skill",
+      "label": "JPA/Hibernate Patterns",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "jpa_patterns_repository_pattern",
+      "label": "JPA Repository Pattern",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "jpa_patterns_n_plus_one_prevention",
+      "label": "N+1 Prevention",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "jpa_patterns_repository_pattern",
+      "target": "jpa_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "jpa_patterns_n_plus_one_prevention",
+      "target": "jpa_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "jpa_patterns_repository_pattern",
+      "target": "kotlin_exposed_patterns_repository_pattern",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.91,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

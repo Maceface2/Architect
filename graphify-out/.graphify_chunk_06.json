@@ -1,1 +1,186 @@
-{"nodes":[{"id":"png_image_service_architecture_diagram","label":"Service Architecture Diagram","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_node_based_canvas_ui","label":"Node-Based Canvas UI","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_auth","label":"Auth","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_database","label":"Database","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_api_layer","label":"API Layer","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_frontend","label":"Frontend","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"png_image_infra","label":"Infra","file_type":"image","source_file":"PNG image.png","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null}],"edges":[{"source":"png_image_service_architecture_diagram","target":"png_image_node_based_canvas_ui","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_service_architecture_diagram","target":"png_image_auth","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_service_architecture_diagram","target":"png_image_database","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_service_architecture_diagram","target":"png_image_api_layer","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_service_architecture_diagram","target":"png_image_frontend","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_service_architecture_diagram","target":"png_image_infra","relation":"references","confidence":"EXTRACTED","confidence_score":0.99,"source_file":"PNG image.png","source_location":null,"weight":1.0},{"source":"png_image_api_layer","target":"png_image_frontend","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":0.98,"source_file":"PNG image.png","source_location":null,"weight":0.97},{"source":"png_image_api_layer","target":"png_image_infra","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":0.98,"source_file":"PNG image.png","source_location":null,"weight":0.97},{"source":"png_image_auth","target":"png_image_api_layer","relation":"conceptually_related_to","confidence":"AMBIGUOUS","confidence_score":0.43,"source_file":"PNG image.png","source_location":null,"weight":0.35},{"source":"png_image_database","target":"png_image_api_layer","relation":"conceptually_related_to","confidence":"AMBIGUOUS","confidence_score":0.43,"source_file":"PNG image.png","source_location":null,"weight":0.35}],"hyperedges":[],"input_tokens":0,"output_tokens":0}
+{
+  "nodes": [
+    {
+      "id": "png_image_service_architecture_diagram",
+      "label": "Service Architecture Diagram",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_node_based_canvas_ui",
+      "label": "Node-Based Canvas UI",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_auth",
+      "label": "Auth",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_database",
+      "label": "Database",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_api_layer",
+      "label": "API Layer",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_frontend",
+      "label": "Frontend",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "png_image_infra",
+      "label": "Infra",
+      "file_type": "image",
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_node_based_canvas_ui",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_auth",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_database",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_api_layer",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_frontend",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_service_architecture_diagram",
+      "target": "png_image_infra",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "png_image_api_layer",
+      "target": "png_image_frontend",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.98,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 0.97
+    },
+    {
+      "source": "png_image_api_layer",
+      "target": "png_image_infra",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.98,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 0.97
+    },
+    {
+      "source": "png_image_auth",
+      "target": "png_image_api_layer",
+      "relation": "conceptually_related_to",
+      "confidence": "AMBIGUOUS",
+      "confidence_score": 0.43,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 0.35
+    },
+    {
+      "source": "png_image_database",
+      "target": "png_image_api_layer",
+      "relation": "conceptually_related_to",
+      "confidence": "AMBIGUOUS",
+      "confidence_score": 0.43,
+      "source_file": "PNG image.png",
+      "source_location": null,
+      "weight": 0.35
+    }
+  ],
+  "hyperedges": [],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

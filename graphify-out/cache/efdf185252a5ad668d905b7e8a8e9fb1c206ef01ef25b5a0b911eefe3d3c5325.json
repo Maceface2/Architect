@@ -1,1 +1,73 @@
-{"nodes": [{"id": "laravel_security_skill", "label": "Laravel Security Best Practices", "file_type": "document", "source_file": "skills/laravel-security/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "laravel_security_rate_limiting", "label": "Laravel Rate Limiting", "file_type": "document", "source_file": "skills/laravel-security/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "laravel_security_skill", "target": "laravel_security_rate_limiting", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/laravel-security/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "laravel_security_rate_limiting", "target": "springboot_security_rate_limiting", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.92, "source_file": "skills/laravel-security/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "laravel_security_rate_limiting", "target": "springboot_patterns_rate_limiting", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.74, "source_file": "skills/laravel-security/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": [{"id": "rate_limiting_across_backend_stacks", "label": "Rate Limiting Across Backend Stacks", "nodes": ["laravel_security_rate_limiting", "springboot_patterns_rate_limiting", "springboot_security_rate_limiting"], "relation": "form", "confidence": "INFERRED", "confidence_score": 0.86, "source_file": "skills/laravel-security/SKILL.md"}]}
+{
+  "nodes": [
+    {
+      "id": "laravel_security_skill",
+      "label": "Laravel Security Best Practices",
+      "file_type": "document",
+      "source_file": "skills/laravel-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "laravel_security_rate_limiting",
+      "label": "Laravel Rate Limiting",
+      "file_type": "document",
+      "source_file": "skills/laravel-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "laravel_security_skill",
+      "target": "laravel_security_rate_limiting",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/laravel-security/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "laravel_security_rate_limiting",
+      "target": "springboot_security_rate_limiting",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.92,
+      "source_file": "skills/laravel-security/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "laravel_security_rate_limiting",
+      "target": "springboot_patterns_rate_limiting",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.74,
+      "source_file": "skills/laravel-security/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "rate_limiting_across_backend_stacks",
+      "label": "Rate Limiting Across Backend Stacks",
+      "nodes": [
+        "laravel_security_rate_limiting",
+        "springboot_patterns_rate_limiting",
+        "springboot_security_rate_limiting"
+      ],
+      "relation": "form",
+      "confidence": "INFERRED",
+      "confidence_score": 0.86,
+      "source_file": "skills/laravel-security/SKILL.md"
+    }
+  ]
+}

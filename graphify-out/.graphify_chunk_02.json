@@ -1,1 +1,1103 @@
-{"nodes":[{"id":"index_canvas_watcher","label":"Canvas Watcher","file_type":"code","source_file":"src/main/index.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"index_filesystem_ipc","label":"File System IPC Surface","file_type":"code","source_file":"src/main/index.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"index_terminal_ipc","label":"Terminal IPC Surface","file_type":"code","source_file":"src/main/index.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_runtime_resolution","label":"Agent Runtime Resolution","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_session_registry","label":"PTY Session Registry","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_graph_indexing","label":"Zone Overlay Graph Index","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_architect_prompt","label":"Architect Coordination Prompt","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_zone_prompt","label":"Zone Agent Prompt","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_workspace_setup","label":"ARCHITECT Workspace Setup","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_run_graph","label":"Graph Dispatch Orchestrator","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"terminals_assistant_session","label":"Architecture Assistant Session","file_type":"code","source_file":"src/main/terminals.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"canvas_project_settings","label":"Project Settings Normalization","file_type":"code","source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"canvas_zone_defaults","label":"Default Zone Agent Config","file_type":"code","source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"canvas_canvas_migration","label":"Canvas Data Migration","file_type":"code","source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"canvas_runtime_model_resolution","label":"Effective Runtime and Model Resolution","file_type":"code","source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"icons_icon_registry","label":"Lucide Icon Registry","file_type":"code","source_file":"src/renderer/src/lib/icons.ts","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_electron_process_architecture","label":"Electron Process Architecture","file_type":"document","source_file":"docs/frontend.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_two_layer_architectnode","label":"Two-Layer ArchitectNode Wrapper","file_type":"document","source_file":"docs/frontend.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_handle_visibility_rationale","label":"Overflow Wrapper Rationale","file_type":"document","source_file":"docs/frontend.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_always_mounted_canvas","label":"Always-Mounted React Flow Canvas","file_type":"document","source_file":"docs/frontend.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_canvas_state_preservation_rationale","label":"Canvas State Preservation Rationale","file_type":"document","source_file":"docs/frontend.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"securityreview_skill","label":"Security Review Skill","file_type":"document","source_file":"skills/security-review/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"securityreview_input_validation","label":"Input Validation","file_type":"document","source_file":"skills/security-review/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"securityreview_secrets_management","label":"Secrets Management","file_type":"document","source_file":"skills/security-review/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"cloudinfrasecurity_skill","label":"Cloud Infrastructure Security Skill","file_type":"document","source_file":"skills/security-review/cloud-infrastructure-security.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"cloudinfrasecurity_least_privilege","label":"Least Privilege IAM","file_type":"document","source_file":"skills/security-review/cloud-infrastructure-security.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"cloudinfrasecurity_cicd_pipeline_security","label":"CI/CD Pipeline Security","file_type":"document","source_file":"skills/security-review/cloud-infrastructure-security.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"apiconnectorbuilder_skill","label":"API Connector Builder","file_type":"document","source_file":"skills/api-connector-builder/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"apidesign_patterns","label":"API Design Patterns","file_type":"document","source_file":"skills/api-design/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"apidesign_cursor_pagination","label":"Cursor Pagination","file_type":"document","source_file":"skills/api-design/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"adr_structured_decision_records","label":"Structured Architecture Decision Records","file_type":"document","source_file":"skills/architecture-decision-records/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"adr_why_rationale","label":"Decisions Should Not Live Only in Chat Threads","file_type":"document","source_file":"skills/architecture-decision-records/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"backendpatterns_skill","label":"Backend Development Patterns","file_type":"document","source_file":"skills/backend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"backendpatterns_repository_pattern","label":"Repository Pattern","file_type":"document","source_file":"skills/backend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"backendpatterns_cache_aside","label":"Cache-Aside Pattern","file_type":"document","source_file":"skills/backend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"browserqa_skill","label":"Browser QA","file_type":"document","source_file":"skills/browser-qa/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"browserqa_visual_regression","label":"Visual Regression Phase","file_type":"document","source_file":"skills/browser-qa/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"bunruntime_skill","label":"Bun Runtime","file_type":"document","source_file":"skills/bun-runtime/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"bunruntime_single_toolchain","label":"Single Bun Toolchain","file_type":"document","source_file":"skills/bun-runtime/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"claudeapi_skill","label":"Claude API","file_type":"document","source_file":"skills/claude-api/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"claudeapi_tool_use","label":"Claude Tool Use","file_type":"document","source_file":"skills/claude-api/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"clickhouseio_skill","label":"ClickHouse Analytics Patterns","file_type":"document","source_file":"skills/clickhouse-io/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"clickhouse_mergetree","label":"MergeTree Table Design","file_type":"document","source_file":"skills/clickhouse-io/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"codetour_skill","label":"Code Tour","file_type":"document","source_file":"skills/code-tour/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"codebaseonboarding_skill","label":"Codebase Onboarding","file_type":"document","source_file":"skills/codebase-onboarding/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"codebaseonboarding_reconnaissance","label":"Reconnaissance Phase","file_type":"document","source_file":"skills/codebase-onboarding/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"codingstandards_skill","label":"Coding Standards","file_type":"document","source_file":"skills/coding-standards/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"codingstandards_readability_first","label":"Readability First","file_type":"document","source_file":"skills/coding-standards/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"csharptesting_skill","label":"C# Testing Patterns","file_type":"document","source_file":"skills/csharp-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"csharptesting_testcontainers","label":"Testcontainers Integration Tests","file_type":"document","source_file":"skills/csharp-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"databasemigrations_skill","label":"Database Migration Patterns","file_type":"document","source_file":"skills/database-migrations/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"databasemigrations_expand_contract","label":"Expand-Contract Migration Pattern","file_type":"document","source_file":"skills/database-migrations/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null}],"edges":[{"source":"index_filesystem_ipc","target":"index_canvas_watcher","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"index_terminal_ipc","target":"terminals_run_graph","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"index_terminal_ipc","target":"terminals_assistant_session","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"index_terminal_ipc","target":"terminals_session_registry","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"terminals_workspace_setup","target":"terminals_graph_indexing","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_workspace_setup","target":"terminals_architect_prompt","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_workspace_setup","target":"terminals_zone_prompt","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_run_graph","target":"terminals_workspace_setup","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_run_graph","target":"terminals_graph_indexing","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_run_graph","target":"terminals_runtime_resolution","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_run_graph","target":"terminals_session_registry","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"terminals_assistant_session","target":"terminals_session_registry","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"canvas_project_settings","target":"terminals_runtime_resolution","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.9,"source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"weight":1.0},{"source":"canvas_zone_defaults","target":"terminals_zone_prompt","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.88,"source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"weight":1.0},{"source":"canvas_runtime_model_resolution","target":"terminals_runtime_resolution","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.9,"source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"weight":1.0},{"source":"canvas_canvas_migration","target":"terminals_graph_indexing","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.85,"source_file":"src/renderer/src/lib/canvas.ts","source_location":null,"weight":1.0},{"source":"icons_icon_registry","target":"canvas_canvas_migration","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.86,"source_file":"src/renderer/src/lib/icons.ts","source_location":null,"weight":1.0},{"source":"index_canvas_watcher","target":"canvas_canvas_migration","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.85,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"index_filesystem_ipc","target":"canvas_canvas_migration","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.86,"source_file":"src/main/index.ts","source_location":null,"weight":1.0},{"source":"terminals_architect_prompt","target":"terminals_zone_prompt","relation":"shares_data_with","confidence":"INFERRED","confidence_score":0.82,"source_file":"src/main/terminals.ts","source_location":null,"weight":1.0},{"source":"frontend_electron_process_architecture","target":"index_filesystem_ipc","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"docs/frontend.md","source_location":null,"weight":1.0},{"source":"frontend_electron_process_architecture","target":"icons_icon_registry","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"docs/frontend.md","source_location":null,"weight":1.0},{"source":"frontend_handle_visibility_rationale","target":"frontend_two_layer_architectnode","relation":"rationale_for","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"docs/frontend.md","source_location":null,"weight":1.0},{"source":"frontend_canvas_state_preservation_rationale","target":"frontend_always_mounted_canvas","relation":"rationale_for","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"docs/frontend.md","source_location":null,"weight":1.0},{"source":"securityreview_skill","target":"securityreview_secrets_management","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/security-review/SKILL.md","source_location":null,"weight":1.0},{"source":"securityreview_skill","target":"securityreview_input_validation","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/security-review/SKILL.md","source_location":null,"weight":1.0},{"source":"cloudinfrasecurity_skill","target":"cloudinfrasecurity_least_privilege","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/security-review/cloud-infrastructure-security.md","source_location":null,"weight":1.0},{"source":"cloudinfrasecurity_skill","target":"cloudinfrasecurity_cicd_pipeline_security","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/security-review/cloud-infrastructure-security.md","source_location":null,"weight":1.0},{"source":"apiconnectorbuilder_skill","target":"backendpatterns_skill","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/api-connector-builder/SKILL.md","source_location":null,"weight":1.0},{"source":"apidesign_patterns","target":"apidesign_cursor_pagination","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/api-design/SKILL.md","source_location":null,"weight":1.0},{"source":"adr_why_rationale","target":"adr_structured_decision_records","relation":"rationale_for","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/architecture-decision-records/SKILL.md","source_location":null,"weight":1.0},{"source":"backendpatterns_skill","target":"backendpatterns_repository_pattern","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/backend-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"backendpatterns_skill","target":"backendpatterns_cache_aside","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/backend-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"browserqa_skill","target":"browserqa_visual_regression","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/browser-qa/SKILL.md","source_location":null,"weight":1.0},{"source":"bunruntime_skill","target":"bunruntime_single_toolchain","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/bun-runtime/SKILL.md","source_location":null,"weight":1.0},{"source":"claudeapi_skill","target":"claudeapi_tool_use","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/claude-api/SKILL.md","source_location":null,"weight":1.0},{"source":"clickhouseio_skill","target":"clickhouse_mergetree","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/clickhouse-io/SKILL.md","source_location":null,"weight":1.0},{"source":"codetour_skill","target":"codebaseonboarding_skill","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/code-tour/SKILL.md","source_location":null,"weight":1.0},{"source":"codebaseonboarding_skill","target":"codebaseonboarding_reconnaissance","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/codebase-onboarding/SKILL.md","source_location":null,"weight":1.0},{"source":"codingstandards_skill","target":"codingstandards_readability_first","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/coding-standards/SKILL.md","source_location":null,"weight":1.0},{"source":"codingstandards_skill","target":"backendpatterns_skill","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/coding-standards/SKILL.md","source_location":null,"weight":1.0},{"source":"codingstandards_skill","target":"apidesign_patterns","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/coding-standards/SKILL.md","source_location":null,"weight":1.0},{"source":"csharptesting_skill","target":"csharptesting_testcontainers","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/csharp-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"databasemigrations_skill","target":"databasemigrations_expand_contract","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/database-migrations/SKILL.md","source_location":null,"weight":1.0},{"source":"securityreview_skill","target":"cloudinfrasecurity_skill","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.88,"source_file":"skills/security-review/SKILL.md","source_location":null,"weight":1.0},{"source":"apidesign_patterns","target":"backendpatterns_skill","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.91,"source_file":"skills/api-design/SKILL.md","source_location":null,"weight":1.0},{"source":"clickhouseio_skill","target":"databasemigrations_skill","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.63,"source_file":"skills/clickhouse-io/SKILL.md","source_location":null,"weight":1.0},{"source":"browserqa_skill","target":"csharptesting_skill","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.64,"source_file":"skills/browser-qa/SKILL.md","source_location":null,"weight":1.0}],"hyperedges":[{"id":"architect_dispatch_pipeline","label":"Architect Dispatch Pipeline","nodes":["terminals_graph_indexing","terminals_workspace_setup","terminals_architect_prompt","terminals_zone_prompt","terminals_run_graph"],"relation":"form","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"src/main/terminals.ts"},{"id":"api_guidance_cluster","label":"API Guidance Cluster","nodes":["apidesign_patterns","backendpatterns_skill","codingstandards_skill"],"relation":"participate_in","confidence":"INFERRED","confidence_score":0.86,"source_file":"skills/coding-standards/SKILL.md"},{"id":"canvas_runtime_contract","label":"Canvas Runtime Contract","nodes":["canvas_canvas_migration","index_canvas_watcher","terminals_graph_indexing"],"relation":"participate_in","confidence":"INFERRED","confidence_score":0.84,"source_file":"src/renderer/src/lib/canvas.ts"}],"input_tokens":0,"output_tokens":0}
+{
+  "nodes": [
+    {
+      "id": "index_canvas_watcher",
+      "label": "Canvas Watcher",
+      "file_type": "code",
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "index_filesystem_ipc",
+      "label": "File System IPC Surface",
+      "file_type": "code",
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "index_terminal_ipc",
+      "label": "Terminal IPC Surface",
+      "file_type": "code",
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_runtime_resolution",
+      "label": "Agent Runtime Resolution",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_session_registry",
+      "label": "PTY Session Registry",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_graph_indexing",
+      "label": "Zone Overlay Graph Index",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_architect_prompt",
+      "label": "Architect Coordination Prompt",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_zone_prompt",
+      "label": "Zone Agent Prompt",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_workspace_setup",
+      "label": "ARCHITECT Workspace Setup",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_run_graph",
+      "label": "Graph Dispatch Orchestrator",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "terminals_assistant_session",
+      "label": "Architecture Assistant Session",
+      "file_type": "code",
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "canvas_project_settings",
+      "label": "Project Settings Normalization",
+      "file_type": "code",
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "canvas_zone_defaults",
+      "label": "Default Zone Agent Config",
+      "file_type": "code",
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "canvas_canvas_migration",
+      "label": "Canvas Data Migration",
+      "file_type": "code",
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "canvas_runtime_model_resolution",
+      "label": "Effective Runtime and Model Resolution",
+      "file_type": "code",
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icons_icon_registry",
+      "label": "Lucide Icon Registry",
+      "file_type": "code",
+      "source_file": "src/renderer/src/lib/icons.ts",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_electron_process_architecture",
+      "label": "Electron Process Architecture",
+      "file_type": "document",
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_two_layer_architectnode",
+      "label": "Two-Layer ArchitectNode Wrapper",
+      "file_type": "document",
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_handle_visibility_rationale",
+      "label": "Overflow Wrapper Rationale",
+      "file_type": "document",
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_always_mounted_canvas",
+      "label": "Always-Mounted React Flow Canvas",
+      "file_type": "document",
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_canvas_state_preservation_rationale",
+      "label": "Canvas State Preservation Rationale",
+      "file_type": "document",
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "securityreview_skill",
+      "label": "Security Review Skill",
+      "file_type": "document",
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "securityreview_input_validation",
+      "label": "Input Validation",
+      "file_type": "document",
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "securityreview_secrets_management",
+      "label": "Secrets Management",
+      "file_type": "document",
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "cloudinfrasecurity_skill",
+      "label": "Cloud Infrastructure Security Skill",
+      "file_type": "document",
+      "source_file": "skills/security-review/cloud-infrastructure-security.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "cloudinfrasecurity_least_privilege",
+      "label": "Least Privilege IAM",
+      "file_type": "document",
+      "source_file": "skills/security-review/cloud-infrastructure-security.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "cloudinfrasecurity_cicd_pipeline_security",
+      "label": "CI/CD Pipeline Security",
+      "file_type": "document",
+      "source_file": "skills/security-review/cloud-infrastructure-security.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "apiconnectorbuilder_skill",
+      "label": "API Connector Builder",
+      "file_type": "document",
+      "source_file": "skills/api-connector-builder/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "apidesign_patterns",
+      "label": "API Design Patterns",
+      "file_type": "document",
+      "source_file": "skills/api-design/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "apidesign_cursor_pagination",
+      "label": "Cursor Pagination",
+      "file_type": "document",
+      "source_file": "skills/api-design/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "adr_structured_decision_records",
+      "label": "Structured Architecture Decision Records",
+      "file_type": "document",
+      "source_file": "skills/architecture-decision-records/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "adr_why_rationale",
+      "label": "Decisions Should Not Live Only in Chat Threads",
+      "file_type": "document",
+      "source_file": "skills/architecture-decision-records/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backendpatterns_skill",
+      "label": "Backend Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/backend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backendpatterns_repository_pattern",
+      "label": "Repository Pattern",
+      "file_type": "document",
+      "source_file": "skills/backend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "backendpatterns_cache_aside",
+      "label": "Cache-Aside Pattern",
+      "file_type": "document",
+      "source_file": "skills/backend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "browserqa_skill",
+      "label": "Browser QA",
+      "file_type": "document",
+      "source_file": "skills/browser-qa/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "browserqa_visual_regression",
+      "label": "Visual Regression Phase",
+      "file_type": "document",
+      "source_file": "skills/browser-qa/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "bunruntime_skill",
+      "label": "Bun Runtime",
+      "file_type": "document",
+      "source_file": "skills/bun-runtime/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "bunruntime_single_toolchain",
+      "label": "Single Bun Toolchain",
+      "file_type": "document",
+      "source_file": "skills/bun-runtime/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "claudeapi_skill",
+      "label": "Claude API",
+      "file_type": "document",
+      "source_file": "skills/claude-api/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "claudeapi_tool_use",
+      "label": "Claude Tool Use",
+      "file_type": "document",
+      "source_file": "skills/claude-api/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "clickhouseio_skill",
+      "label": "ClickHouse Analytics Patterns",
+      "file_type": "document",
+      "source_file": "skills/clickhouse-io/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "clickhouse_mergetree",
+      "label": "MergeTree Table Design",
+      "file_type": "document",
+      "source_file": "skills/clickhouse-io/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "codetour_skill",
+      "label": "Code Tour",
+      "file_type": "document",
+      "source_file": "skills/code-tour/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "codebaseonboarding_skill",
+      "label": "Codebase Onboarding",
+      "file_type": "document",
+      "source_file": "skills/codebase-onboarding/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "codebaseonboarding_reconnaissance",
+      "label": "Reconnaissance Phase",
+      "file_type": "document",
+      "source_file": "skills/codebase-onboarding/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "codingstandards_skill",
+      "label": "Coding Standards",
+      "file_type": "document",
+      "source_file": "skills/coding-standards/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "codingstandards_readability_first",
+      "label": "Readability First",
+      "file_type": "document",
+      "source_file": "skills/coding-standards/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "csharptesting_skill",
+      "label": "C# Testing Patterns",
+      "file_type": "document",
+      "source_file": "skills/csharp-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "csharptesting_testcontainers",
+      "label": "Testcontainers Integration Tests",
+      "file_type": "document",
+      "source_file": "skills/csharp-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "databasemigrations_skill",
+      "label": "Database Migration Patterns",
+      "file_type": "document",
+      "source_file": "skills/database-migrations/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "databasemigrations_expand_contract",
+      "label": "Expand-Contract Migration Pattern",
+      "file_type": "document",
+      "source_file": "skills/database-migrations/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "index_filesystem_ipc",
+      "target": "index_canvas_watcher",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_terminal_ipc",
+      "target": "terminals_run_graph",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_terminal_ipc",
+      "target": "terminals_assistant_session",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_terminal_ipc",
+      "target": "terminals_session_registry",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_workspace_setup",
+      "target": "terminals_graph_indexing",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_workspace_setup",
+      "target": "terminals_architect_prompt",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_workspace_setup",
+      "target": "terminals_zone_prompt",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_run_graph",
+      "target": "terminals_workspace_setup",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_run_graph",
+      "target": "terminals_graph_indexing",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_run_graph",
+      "target": "terminals_runtime_resolution",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_run_graph",
+      "target": "terminals_session_registry",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_assistant_session",
+      "target": "terminals_session_registry",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "canvas_project_settings",
+      "target": "terminals_runtime_resolution",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "canvas_zone_defaults",
+      "target": "terminals_zone_prompt",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.88,
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "canvas_runtime_model_resolution",
+      "target": "terminals_runtime_resolution",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.9,
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "canvas_canvas_migration",
+      "target": "terminals_graph_indexing",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "src/renderer/src/lib/canvas.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "icons_icon_registry",
+      "target": "canvas_canvas_migration",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.86,
+      "source_file": "src/renderer/src/lib/icons.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_canvas_watcher",
+      "target": "canvas_canvas_migration",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "index_filesystem_ipc",
+      "target": "canvas_canvas_migration",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.86,
+      "source_file": "src/main/index.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "terminals_architect_prompt",
+      "target": "terminals_zone_prompt",
+      "relation": "shares_data_with",
+      "confidence": "INFERRED",
+      "confidence_score": 0.82,
+      "source_file": "src/main/terminals.ts",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_electron_process_architecture",
+      "target": "index_filesystem_ipc",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_electron_process_architecture",
+      "target": "icons_icon_registry",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_handle_visibility_rationale",
+      "target": "frontend_two_layer_architectnode",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_canvas_state_preservation_rationale",
+      "target": "frontend_always_mounted_canvas",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "docs/frontend.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "securityreview_skill",
+      "target": "securityreview_secrets_management",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "securityreview_skill",
+      "target": "securityreview_input_validation",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "cloudinfrasecurity_skill",
+      "target": "cloudinfrasecurity_least_privilege",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/security-review/cloud-infrastructure-security.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "cloudinfrasecurity_skill",
+      "target": "cloudinfrasecurity_cicd_pipeline_security",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/security-review/cloud-infrastructure-security.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "apiconnectorbuilder_skill",
+      "target": "backendpatterns_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/api-connector-builder/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "apidesign_patterns",
+      "target": "apidesign_cursor_pagination",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/api-design/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "adr_why_rationale",
+      "target": "adr_structured_decision_records",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/architecture-decision-records/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "backendpatterns_skill",
+      "target": "backendpatterns_repository_pattern",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/backend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "backendpatterns_skill",
+      "target": "backendpatterns_cache_aside",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/backend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "browserqa_skill",
+      "target": "browserqa_visual_regression",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/browser-qa/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "bunruntime_skill",
+      "target": "bunruntime_single_toolchain",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/bun-runtime/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "claudeapi_skill",
+      "target": "claudeapi_tool_use",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/claude-api/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "clickhouseio_skill",
+      "target": "clickhouse_mergetree",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/clickhouse-io/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codetour_skill",
+      "target": "codebaseonboarding_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/code-tour/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codebaseonboarding_skill",
+      "target": "codebaseonboarding_reconnaissance",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/codebase-onboarding/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codingstandards_skill",
+      "target": "codingstandards_readability_first",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/coding-standards/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codingstandards_skill",
+      "target": "backendpatterns_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/coding-standards/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "codingstandards_skill",
+      "target": "apidesign_patterns",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/coding-standards/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "csharptesting_skill",
+      "target": "csharptesting_testcontainers",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/csharp-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "databasemigrations_skill",
+      "target": "databasemigrations_expand_contract",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/database-migrations/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "securityreview_skill",
+      "target": "cloudinfrasecurity_skill",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.88,
+      "source_file": "skills/security-review/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "apidesign_patterns",
+      "target": "backendpatterns_skill",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.91,
+      "source_file": "skills/api-design/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "clickhouseio_skill",
+      "target": "databasemigrations_skill",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.63,
+      "source_file": "skills/clickhouse-io/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "browserqa_skill",
+      "target": "csharptesting_skill",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.64,
+      "source_file": "skills/browser-qa/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "architect_dispatch_pipeline",
+      "label": "Architect Dispatch Pipeline",
+      "nodes": [
+        "terminals_graph_indexing",
+        "terminals_workspace_setup",
+        "terminals_architect_prompt",
+        "terminals_zone_prompt",
+        "terminals_run_graph"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/main/terminals.ts"
+    },
+    {
+      "id": "api_guidance_cluster",
+      "label": "API Guidance Cluster",
+      "nodes": [
+        "apidesign_patterns",
+        "backendpatterns_skill",
+        "codingstandards_skill"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.86,
+      "source_file": "skills/coding-standards/SKILL.md"
+    },
+    {
+      "id": "canvas_runtime_contract",
+      "label": "Canvas Runtime Contract",
+      "nodes": [
+        "canvas_canvas_migration",
+        "index_canvas_watcher",
+        "terminals_graph_indexing"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.84,
+      "source_file": "src/renderer/src/lib/canvas.ts"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

@@ -1,1 +1,60 @@
-{"nodes": [{"id": "golang_testing_skill", "label": "Go Testing Patterns", "file_type": "document", "source_file": "skills/golang-testing/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "golang_testing_red_green_refactor", "label": "Go Red-Green-Refactor Cycle", "file_type": "document", "source_file": "skills/golang-testing/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "golang_testing_table_driven_tests", "label": "Table-Driven Tests", "file_type": "document", "source_file": "skills/golang-testing/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "golang_testing_red_green_refactor", "target": "golang_testing_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/golang-testing/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "golang_testing_table_driven_tests", "target": "golang_testing_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/golang-testing/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "golang_testing_skill",
+      "label": "Go Testing Patterns",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_testing_red_green_refactor",
+      "label": "Go Red-Green-Refactor Cycle",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_testing_table_driven_tests",
+      "label": "Table-Driven Tests",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "golang_testing_red_green_refactor",
+      "target": "golang_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_testing_table_driven_tests",
+      "target": "golang_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

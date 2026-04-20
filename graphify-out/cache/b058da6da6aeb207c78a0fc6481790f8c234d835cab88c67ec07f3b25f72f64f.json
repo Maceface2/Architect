@@ -1,1 +1,64 @@
-{"nodes": [{"id": "django_verification_skill", "label": "Django Verification Loop", "file_type": "document", "source_file": "skills/django-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "django_verification_security_scan_phase", "label": "Security Scan Phase", "file_type": "document", "source_file": "skills/django-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "django_verification_security_scan_phase", "target": "django_verification_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/django-verification/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "django_verification_security_scan_phase", "target": "django_security_production_security_settings", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.88, "source_file": "skills/django-verification/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": [{"id": "delivery_quality_loop", "label": "Delivery Quality Loop", "nodes": ["deployment_patterns_skill", "django_verification_skill", "e2e_testing_ci_integration", "github_ops_pr_management"], "relation": "participate_in", "confidence": "INFERRED", "confidence_score": 0.79, "source_file": "skills/django-verification/SKILL.md"}]}
+{
+  "nodes": [
+    {
+      "id": "django_verification_skill",
+      "label": "Django Verification Loop",
+      "file_type": "document",
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_verification_security_scan_phase",
+      "label": "Security Scan Phase",
+      "file_type": "document",
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "django_verification_security_scan_phase",
+      "target": "django_verification_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_verification_security_scan_phase",
+      "target": "django_security_production_security_settings",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.88,
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "delivery_quality_loop",
+      "label": "Delivery Quality Loop",
+      "nodes": [
+        "deployment_patterns_skill",
+        "django_verification_skill",
+        "e2e_testing_ci_integration",
+        "github_ops_pr_management"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.79,
+      "source_file": "skills/django-verification/SKILL.md"
+    }
+  ]
+}

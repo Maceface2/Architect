@@ -1,1 +1,60 @@
-{"nodes": [{"id": "frontend_patterns_skill", "label": "Frontend Development Patterns", "file_type": "document", "source_file": "skills/frontend-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "frontend_patterns_component_composition", "label": "Component Composition", "file_type": "document", "source_file": "skills/frontend-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "frontend_patterns_performance_optimization", "label": "Frontend Performance Optimization", "file_type": "document", "source_file": "skills/frontend-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "frontend_patterns_component_composition", "target": "frontend_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/frontend-patterns/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "frontend_patterns_performance_optimization", "target": "frontend_patterns_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/frontend-patterns/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "frontend_patterns_skill",
+      "label": "Frontend Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_patterns_component_composition",
+      "label": "Component Composition",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_patterns_performance_optimization",
+      "label": "Frontend Performance Optimization",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "frontend_patterns_component_composition",
+      "target": "frontend_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_patterns_performance_optimization",
+      "target": "frontend_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

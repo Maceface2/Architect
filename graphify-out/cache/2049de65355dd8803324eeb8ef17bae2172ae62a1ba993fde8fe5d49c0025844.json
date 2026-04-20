@@ -1,1 +1,102 @@
-{"nodes": [{"id": "icon_app_icon", "label": "App Icon", "file_type": "image", "source_file": "resources/icon.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "icon_three_node_graph_symbol", "label": "Three-Node Connected Graph Symbol", "file_type": "image", "source_file": "resources/icon.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "icon_node_link_network_concept", "label": "Node-Link Network Concept", "file_type": "image", "source_file": "resources/icon.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "icon_stylized_letter_a", "label": "Stylized Letter A", "file_type": "image", "source_file": "resources/icon.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "icon_dark_rounded_square_background", "label": "Dark Rounded-Square Background", "file_type": "image", "source_file": "resources/icon.png", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "icon_app_icon", "target": "icon_three_node_graph_symbol", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 0.99, "source_file": "resources/icon.png", "source_location": null, "weight": 1.0}, {"source": "icon_three_node_graph_symbol", "target": "icon_node_link_network_concept", "relation": "conceptually_related_to", "confidence": "INFERRED", "confidence_score": 0.94, "source_file": "resources/icon.png", "source_location": null, "weight": 0.96}, {"source": "icon_app_icon", "target": "icon_stylized_letter_a", "relation": "references", "confidence": "AMBIGUOUS", "confidence_score": 0.59, "source_file": "resources/icon.png", "source_location": null, "weight": 0.58}, {"source": "icon_app_icon", "target": "icon_dark_rounded_square_background", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 0.98, "source_file": "resources/icon.png", "source_location": null, "weight": 0.93}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "icon_app_icon",
+      "label": "App Icon",
+      "file_type": "image",
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_three_node_graph_symbol",
+      "label": "Three-Node Connected Graph Symbol",
+      "file_type": "image",
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_node_link_network_concept",
+      "label": "Node-Link Network Concept",
+      "file_type": "image",
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_stylized_letter_a",
+      "label": "Stylized Letter A",
+      "file_type": "image",
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "icon_dark_rounded_square_background",
+      "label": "Dark Rounded-Square Background",
+      "file_type": "image",
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "icon_app_icon",
+      "target": "icon_three_node_graph_symbol",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.99,
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "icon_three_node_graph_symbol",
+      "target": "icon_node_link_network_concept",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.94,
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "weight": 0.96
+    },
+    {
+      "source": "icon_app_icon",
+      "target": "icon_stylized_letter_a",
+      "relation": "references",
+      "confidence": "AMBIGUOUS",
+      "confidence_score": 0.59,
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "weight": 0.58
+    },
+    {
+      "source": "icon_app_icon",
+      "target": "icon_dark_rounded_square_background",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 0.98,
+      "source_file": "resources/icon.png",
+      "source_location": null,
+      "weight": 0.93
+    }
+  ],
+  "hyperedges": []
+}

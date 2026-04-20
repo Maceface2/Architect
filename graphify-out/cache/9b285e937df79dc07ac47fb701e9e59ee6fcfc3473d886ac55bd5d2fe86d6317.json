@@ -1,1 +1,122 @@
-{"nodes": [{"id": "springboot_verification_loop", "label": "Spring Boot Verification Loop", "file_type": "document", "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_verification_tests_coverage_phase", "label": "Tests And Coverage Phase", "file_type": "document", "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_verification_security_scan", "label": "Security Scan Phase", "file_type": "document", "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_verification_diff_review", "label": "Diff Review Phase", "file_type": "document", "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_verification_fast_feedback_rationale", "label": "Fast Feedback Beats Late Surprises Rationale", "file_type": "document", "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "springboot_verification_loop", "target": "springboot_verification_tests_coverage_phase", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_verification_loop", "target": "springboot_verification_security_scan", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_verification_loop", "target": "springboot_verification_diff_review", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_verification_fast_feedback_rationale", "target": "springboot_verification_loop", "relation": "rationale_for", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_verification_loop", "target": "terminal_ops_workflow", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.8, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 0.8}, {"source": "springboot_verification_tests_coverage_phase", "target": "tdd_workflow_coverage_requirement", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.85, "source_file": "skills/springboot-verification/SKILL.md", "source_location": null, "weight": 0.85}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "springboot_verification_loop",
+      "label": "Spring Boot Verification Loop",
+      "file_type": "document",
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_verification_tests_coverage_phase",
+      "label": "Tests And Coverage Phase",
+      "file_type": "document",
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_verification_security_scan",
+      "label": "Security Scan Phase",
+      "file_type": "document",
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_verification_diff_review",
+      "label": "Diff Review Phase",
+      "file_type": "document",
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_verification_fast_feedback_rationale",
+      "label": "Fast Feedback Beats Late Surprises Rationale",
+      "file_type": "document",
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "springboot_verification_loop",
+      "target": "springboot_verification_tests_coverage_phase",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_verification_loop",
+      "target": "springboot_verification_security_scan",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_verification_loop",
+      "target": "springboot_verification_diff_review",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_verification_fast_feedback_rationale",
+      "target": "springboot_verification_loop",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_verification_loop",
+      "target": "terminal_ops_workflow",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 0.8
+    },
+    {
+      "source": "springboot_verification_tests_coverage_phase",
+      "target": "tdd_workflow_coverage_requirement",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.85,
+      "source_file": "skills/springboot-verification/SKILL.md",
+      "source_location": null,
+      "weight": 0.85
+    }
+  ],
+  "hyperedges": []
+}

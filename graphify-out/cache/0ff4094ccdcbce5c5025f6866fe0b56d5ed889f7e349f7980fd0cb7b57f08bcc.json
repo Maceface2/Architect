@@ -1,1 +1,39 @@
-{"nodes": [{"id": "nestjs_patterns_skill", "label": "NestJS Development Patterns", "file_type": "document", "source_file": "skills/nestjs-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "nestjs_patterns_global_validation_pipe", "label": "Global Validation Pipe", "file_type": "document", "source_file": "skills/nestjs-patterns/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "nestjs_patterns_skill", "target": "nestjs_patterns_global_validation_pipe", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/nestjs-patterns/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "nestjs_patterns_skill",
+      "label": "NestJS Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/nestjs-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "nestjs_patterns_global_validation_pipe",
+      "label": "Global Validation Pipe",
+      "file_type": "document",
+      "source_file": "skills/nestjs-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "nestjs_patterns_skill",
+      "target": "nestjs_patterns_global_validation_pipe",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/nestjs-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

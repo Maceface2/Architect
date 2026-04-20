@@ -1,1 +1,101 @@
-{"nodes": [{"id": "springboot_tdd_workflow", "label": "Spring Boot TDD Workflow", "file_type": "document", "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_tdd_testcontainers", "label": "Spring Boot Testcontainers Strategy", "file_type": "document", "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_tdd_jacoco_coverage", "label": "JaCoCo Coverage Enforcement", "file_type": "document", "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "springboot_tdd_fast_deterministic_rationale", "label": "Fast Isolated Deterministic Testing Rationale", "file_type": "document", "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "springboot_tdd_workflow", "target": "springboot_tdd_testcontainers", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_tdd_workflow", "target": "springboot_tdd_jacoco_coverage", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_tdd_fast_deterministic_rationale", "target": "springboot_tdd_workflow", "relation": "rationale_for", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "springboot_tdd_workflow", "target": "tdd_workflow_main", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.92, "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "weight": 0.92}, {"source": "springboot_tdd_jacoco_coverage", "target": "tdd_workflow_coverage_requirement", "relation": "semantically_similar_to", "confidence": "INFERRED", "confidence_score": 0.89, "source_file": "skills/springboot-tdd/SKILL.md", "source_location": null, "weight": 0.89}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "springboot_tdd_workflow",
+      "label": "Spring Boot TDD Workflow",
+      "file_type": "document",
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_tdd_testcontainers",
+      "label": "Spring Boot Testcontainers Strategy",
+      "file_type": "document",
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_tdd_jacoco_coverage",
+      "label": "JaCoCo Coverage Enforcement",
+      "file_type": "document",
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "springboot_tdd_fast_deterministic_rationale",
+      "label": "Fast Isolated Deterministic Testing Rationale",
+      "file_type": "document",
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "springboot_tdd_workflow",
+      "target": "springboot_tdd_testcontainers",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_tdd_workflow",
+      "target": "springboot_tdd_jacoco_coverage",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_tdd_fast_deterministic_rationale",
+      "target": "springboot_tdd_workflow",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "springboot_tdd_workflow",
+      "target": "tdd_workflow_main",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.92,
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 0.92
+    },
+    {
+      "source": "springboot_tdd_jacoco_coverage",
+      "target": "tdd_workflow_coverage_requirement",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.89,
+      "source_file": "skills/springboot-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 0.89
+    }
+  ],
+  "hyperedges": []
+}

@@ -1,1 +1,69 @@
-{"nodes": [{"id": "laravel_plugin_discovery_skill", "label": "Laravel Plugin Discovery", "file_type": "document", "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "laravel_plugin_discovery_laraplugins_mcp", "label": "LaraPlugins.io MCP Server", "file_type": "document", "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "laravel_plugin_discovery_skill", "target": "laravel_plugin_discovery_laraplugins_mcp", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "laravel_plugin_discovery_skill", "target": "laravel_patterns_skill", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "laravel_plugin_discovery_skill", "target": "laravel_tdd_skill", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "weight": 1.0}, {"source": "laravel_plugin_discovery_skill", "target": "laravel_security_skill", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/laravel-plugin-discovery/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "laravel_plugin_discovery_skill",
+      "label": "Laravel Plugin Discovery",
+      "file_type": "document",
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "laravel_plugin_discovery_laraplugins_mcp",
+      "label": "LaraPlugins.io MCP Server",
+      "file_type": "document",
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "laravel_plugin_discovery_skill",
+      "target": "laravel_plugin_discovery_laraplugins_mcp",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "laravel_plugin_discovery_skill",
+      "target": "laravel_patterns_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "laravel_plugin_discovery_skill",
+      "target": "laravel_tdd_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "laravel_plugin_discovery_skill",
+      "target": "laravel_security_skill",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/laravel-plugin-discovery/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

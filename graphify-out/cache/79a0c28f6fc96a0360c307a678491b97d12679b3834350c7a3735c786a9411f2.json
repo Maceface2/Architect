@@ -1,1 +1,38 @@
-{"nodes": [{"id": "topnav_global_project_controls", "label": "Global Project Controls", "file_type": "code", "source_file": "src/renderer/src/components/layout/TopNav.tsx", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "topnav_global_project_controls", "target": "types_project_settings_schema", "relation": "shares_data_with", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "src/renderer/src/components/layout/TopNav.tsx", "source_location": null, "weight": 1.0}, {"source": "topnav_global_project_controls", "target": "tailwind_design_tokens", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "src/renderer/src/components/layout/TopNav.tsx", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "topnav_global_project_controls",
+      "label": "Global Project Controls",
+      "file_type": "code",
+      "source_file": "src/renderer/src/components/layout/TopNav.tsx",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "topnav_global_project_controls",
+      "target": "types_project_settings_schema",
+      "relation": "shares_data_with",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/renderer/src/components/layout/TopNav.tsx",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "topnav_global_project_controls",
+      "target": "tailwind_design_tokens",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "src/renderer/src/components/layout/TopNav.tsx",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

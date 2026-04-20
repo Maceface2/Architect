@@ -1,1 +1,39 @@
-{"nodes": [{"id": "django_security_skill", "label": "Django Security Best Practices", "file_type": "document", "source_file": "skills/django-security/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "django_security_production_security_settings", "label": "Production Security Settings", "file_type": "document", "source_file": "skills/django-security/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "django_security_production_security_settings", "target": "django_security_skill", "relation": "conceptually_related_to", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/django-security/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "django_security_skill",
+      "label": "Django Security Best Practices",
+      "file_type": "document",
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_security_production_security_settings",
+      "label": "Production Security Settings",
+      "file_type": "document",
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "django_security_production_security_settings",
+      "target": "django_security_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}

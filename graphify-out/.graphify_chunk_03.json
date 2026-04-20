@@ -1,1 +1,1207 @@
-{"nodes":[{"id":"deployment_patterns_skill","label":"Deployment Patterns","file_type":"document","source_file":"skills/deployment-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"design_system_skill","label":"Design System Skill","file_type":"document","source_file":"skills/design-system/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_patterns_skill","label":"Django Development Patterns","file_type":"document","source_file":"skills/django-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_security_skill","label":"Django Security Best Practices","file_type":"document","source_file":"skills/django-security/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_tdd_skill","label":"Django Testing with TDD","file_type":"document","source_file":"skills/django-tdd/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_verification_skill","label":"Django Verification Loop","file_type":"document","source_file":"skills/django-verification/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"docker_patterns_skill","label":"Docker Patterns","file_type":"document","source_file":"skills/docker-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"dotnet_patterns_skill","label":".NET Development Patterns","file_type":"document","source_file":"skills/dotnet-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"e2e_testing_skill","label":"E2E Testing Patterns","file_type":"document","source_file":"skills/e2e-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_design_skill","label":"Frontend Design","file_type":"document","source_file":"skills/frontend-design/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_patterns_skill","label":"Frontend Development Patterns","file_type":"document","source_file":"skills/frontend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"git_workflow_skill","label":"Git Workflow Patterns","file_type":"document","source_file":"skills/git-workflow/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"github_ops_skill","label":"GitHub Operations","file_type":"document","source_file":"skills/github-ops/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_patterns_skill","label":"Go Development Patterns","file_type":"document","source_file":"skills/golang-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_testing_skill","label":"Go Testing Patterns","file_type":"document","source_file":"skills/golang-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_skill","label":"Hexagonal Architecture","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"java_coding_standards_skill","label":"Java Coding Standards","file_type":"document","source_file":"skills/java-coding-standards/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"jpa_patterns_skill","label":"JPA/Hibernate Patterns","file_type":"document","source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_coroutines_flows_skill","label":"Kotlin Coroutines & Flows","file_type":"document","source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_exposed_patterns_skill","label":"Kotlin Exposed Patterns","file_type":"document","source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"deployment_patterns_rolling_deployment","label":"Rolling Deployment","file_type":"document","source_file":"skills/deployment-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"deployment_patterns_multistage_docker_builds","label":"Multi-Stage Docker Builds","file_type":"document","source_file":"skills/deployment-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"design_system_generate_mode","label":"Generate Design System Mode","file_type":"document","source_file":"skills/design-system/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_patterns_drf_viewset_pattern","label":"DRF ViewSet Pattern","file_type":"document","source_file":"skills/django-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_patterns_service_layer_pattern","label":"Django Service Layer Pattern","file_type":"document","source_file":"skills/django-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_security_production_security_settings","label":"Production Security Settings","file_type":"document","source_file":"skills/django-security/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_tdd_red_green_refactor","label":"Red-Green-Refactor Cycle","file_type":"document","source_file":"skills/django-tdd/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"django_verification_security_scan_phase","label":"Security Scan Phase","file_type":"document","source_file":"skills/django-verification/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"docker_patterns_dev_prod_multistage","label":"Dev/Prod Multi-Stage Dockerfile","file_type":"document","source_file":"skills/docker-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"dotnet_patterns_immutability","label":"Immutability by Default","file_type":"document","source_file":"skills/dotnet-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"e2e_testing_page_object_model","label":"Page Object Model","file_type":"document","source_file":"skills/e2e-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"e2e_testing_ci_integration","label":"E2E CI Integration","file_type":"document","source_file":"skills/e2e-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_design_visual_direction","label":"Committed Visual Direction","file_type":"document","source_file":"skills/frontend-design/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_design_strong_aesthetic_rationale","label":"Strong aesthetic beats safe-average UI","file_type":"document","source_file":"skills/frontend-design/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_patterns_component_composition","label":"Component Composition","file_type":"document","source_file":"skills/frontend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"frontend_patterns_performance_optimization","label":"Frontend Performance Optimization","file_type":"document","source_file":"skills/frontend-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"git_workflow_github_flow","label":"GitHub Flow","file_type":"document","source_file":"skills/git-workflow/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"git_workflow_conventional_commits","label":"Conventional Commits","file_type":"document","source_file":"skills/git-workflow/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"github_ops_gh_cli","label":"gh CLI","file_type":"document","source_file":"skills/github-ops/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"github_ops_pr_management","label":"PR Management","file_type":"document","source_file":"skills/github-ops/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_patterns_zero_value_design","label":"Useful Zero Value Design","file_type":"document","source_file":"skills/golang-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_patterns_context_cancellation","label":"Context Cancellation","file_type":"document","source_file":"skills/golang-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_testing_red_green_refactor","label":"Go Red-Green-Refactor Cycle","file_type":"document","source_file":"skills/golang-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"golang_testing_table_driven_tests","label":"Table-Driven Tests","file_type":"document","source_file":"skills/golang-testing/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_use_cases","label":"Use Cases","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_outbound_ports","label":"Outbound Ports","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_adapters","label":"Adapters","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_composition_root","label":"Composition Root","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"hexagonal_architecture_maintainability_rationale","label":"Keep business logic independent from frameworks","file_type":"document","source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"java_coding_standards_immutability","label":"Java Immutability by Default","file_type":"document","source_file":"skills/java-coding-standards/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"jpa_patterns_repository_pattern","label":"JPA Repository Pattern","file_type":"document","source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"jpa_patterns_n_plus_one_prevention","label":"N+1 Prevention","file_type":"document","source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_coroutines_flows_structured_concurrency","label":"Structured Concurrency","file_type":"document","source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_coroutines_flows_stateflow_ui_state","label":"StateFlow UI State","file_type":"document","source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_exposed_patterns_new_suspended_transaction","label":"newSuspendedTransaction","file_type":"document","source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null},{"id":"kotlin_exposed_patterns_repository_pattern","label":"Exposed Repository Pattern","file_type":"document","source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"source_url":null,"captured_at":null,"author":null,"contributor":null}],"edges":[{"source":"deployment_patterns_rolling_deployment","target":"deployment_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/deployment-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"deployment_patterns_multistage_docker_builds","target":"deployment_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/deployment-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"design_system_generate_mode","target":"design_system_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/design-system/SKILL.md","source_location":null,"weight":1.0},{"source":"django_patterns_drf_viewset_pattern","target":"django_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"django_patterns_service_layer_pattern","target":"django_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"django_patterns_drf_viewset_pattern","target":"django_patterns_service_layer_pattern","relation":"calls","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"django_security_production_security_settings","target":"django_security_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-security/SKILL.md","source_location":null,"weight":1.0},{"source":"django_tdd_red_green_refactor","target":"django_tdd_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-tdd/SKILL.md","source_location":null,"weight":1.0},{"source":"django_verification_security_scan_phase","target":"django_verification_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/django-verification/SKILL.md","source_location":null,"weight":1.0},{"source":"docker_patterns_dev_prod_multistage","target":"docker_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/docker-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"dotnet_patterns_immutability","target":"dotnet_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/dotnet-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"e2e_testing_page_object_model","target":"e2e_testing_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/e2e-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"e2e_testing_ci_integration","target":"e2e_testing_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/e2e-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"frontend_design_visual_direction","target":"frontend_design_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/frontend-design/SKILL.md","source_location":null,"weight":1.0},{"source":"frontend_design_strong_aesthetic_rationale","target":"frontend_design_visual_direction","relation":"rationale_for","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/frontend-design/SKILL.md","source_location":null,"weight":1.0},{"source":"frontend_patterns_component_composition","target":"frontend_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/frontend-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"frontend_patterns_performance_optimization","target":"frontend_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/frontend-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"git_workflow_github_flow","target":"git_workflow_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/git-workflow/SKILL.md","source_location":null,"weight":1.0},{"source":"git_workflow_conventional_commits","target":"git_workflow_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/git-workflow/SKILL.md","source_location":null,"weight":1.0},{"source":"github_ops_gh_cli","target":"github_ops_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/github-ops/SKILL.md","source_location":null,"weight":1.0},{"source":"github_ops_pr_management","target":"github_ops_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/github-ops/SKILL.md","source_location":null,"weight":1.0},{"source":"github_ops_pr_management","target":"github_ops_gh_cli","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/github-ops/SKILL.md","source_location":null,"weight":1.0},{"source":"golang_patterns_zero_value_design","target":"golang_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/golang-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"golang_patterns_context_cancellation","target":"golang_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/golang-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"golang_testing_red_green_refactor","target":"golang_testing_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/golang-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"golang_testing_table_driven_tests","target":"golang_testing_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/golang-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_use_cases","target":"hexagonal_architecture_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_outbound_ports","target":"hexagonal_architecture_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_adapters","target":"hexagonal_architecture_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_composition_root","target":"hexagonal_architecture_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_use_cases","target":"hexagonal_architecture_outbound_ports","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_adapters","target":"hexagonal_architecture_outbound_ports","relation":"implements","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_composition_root","target":"hexagonal_architecture_use_cases","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_composition_root","target":"hexagonal_architecture_adapters","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"hexagonal_architecture_maintainability_rationale","target":"hexagonal_architecture_skill","relation":"rationale_for","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md","source_location":null,"weight":1.0},{"source":"java_coding_standards_immutability","target":"java_coding_standards_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/java-coding-standards/SKILL.md","source_location":null,"weight":1.0},{"source":"jpa_patterns_repository_pattern","target":"jpa_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"jpa_patterns_n_plus_one_prevention","target":"jpa_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_coroutines_flows_structured_concurrency","target":"kotlin_coroutines_flows_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_coroutines_flows_stateflow_ui_state","target":"kotlin_coroutines_flows_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_coroutines_flows_stateflow_ui_state","target":"kotlin_coroutines_flows_structured_concurrency","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-coroutines-flows/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_exposed_patterns_new_suspended_transaction","target":"kotlin_exposed_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_exposed_patterns_repository_pattern","target":"kotlin_exposed_patterns_skill","relation":"conceptually_related_to","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"kotlin_exposed_patterns_repository_pattern","target":"kotlin_exposed_patterns_new_suspended_transaction","relation":"references","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/kotlin-exposed-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"deployment_patterns_multistage_docker_builds","target":"docker_patterns_dev_prod_multistage","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.94,"source_file":"skills/docker-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"django_verification_security_scan_phase","target":"django_security_production_security_settings","relation":"conceptually_related_to","confidence":"INFERRED","confidence_score":0.88,"source_file":"skills/django-verification/SKILL.md","source_location":null,"weight":1.0},{"source":"django_patterns_service_layer_pattern","target":"hexagonal_architecture_use_cases","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.71,"source_file":"skills/django-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"django_tdd_red_green_refactor","target":"golang_testing_red_green_refactor","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.93,"source_file":"skills/django-tdd/SKILL.md","source_location":null,"weight":1.0},{"source":"design_system_generate_mode","target":"frontend_design_visual_direction","relation":"conceptually_related_to","confidence":"INFERRED","confidence_score":0.72,"source_file":"skills/design-system/SKILL.md","source_location":null,"weight":1.0},{"source":"git_workflow_github_flow","target":"github_ops_pr_management","relation":"conceptually_related_to","confidence":"INFERRED","confidence_score":0.84,"source_file":"skills/git-workflow/SKILL.md","source_location":null,"weight":1.0},{"source":"e2e_testing_ci_integration","target":"github_ops_pr_management","relation":"conceptually_related_to","confidence":"INFERRED","confidence_score":0.82,"source_file":"skills/e2e-testing/SKILL.md","source_location":null,"weight":1.0},{"source":"java_coding_standards_immutability","target":"dotnet_patterns_immutability","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.89,"source_file":"skills/java-coding-standards/SKILL.md","source_location":null,"weight":1.0},{"source":"jpa_patterns_repository_pattern","target":"kotlin_exposed_patterns_repository_pattern","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.91,"source_file":"skills/jpa-patterns/SKILL.md","source_location":null,"weight":1.0},{"source":"golang_patterns_context_cancellation","target":"kotlin_coroutines_flows_structured_concurrency","relation":"semantically_similar_to","confidence":"INFERRED","confidence_score":0.66,"source_file":"skills/golang-patterns/SKILL.md","source_location":null,"weight":1.0}],"hyperedges":[{"id":"hexagonal_boundary_stack","label":"Hexagonal Boundary Stack","nodes":["hexagonal_architecture_use_cases","hexagonal_architecture_outbound_ports","hexagonal_architecture_adapters","hexagonal_architecture_composition_root"],"relation":"form","confidence":"EXTRACTED","confidence_score":1.0,"source_file":"skills/hexagonal-architecture/SKILL.md"},{"id":"delivery_quality_loop","label":"Delivery Quality Loop","nodes":["deployment_patterns_skill","django_verification_skill","e2e_testing_ci_integration","github_ops_pr_management"],"relation":"participate_in","confidence":"INFERRED","confidence_score":0.79,"source_file":"skills/django-verification/SKILL.md"},{"id":"ui_system_stack","label":"UI System Stack","nodes":["design_system_skill","frontend_design_skill","frontend_patterns_skill"],"relation":"participate_in","confidence":"INFERRED","confidence_score":0.8,"source_file":"skills/frontend-design/SKILL.md"}],"input_tokens":0,"output_tokens":0}
+{
+  "nodes": [
+    {
+      "id": "deployment_patterns_skill",
+      "label": "Deployment Patterns",
+      "file_type": "document",
+      "source_file": "skills/deployment-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "design_system_skill",
+      "label": "Design System Skill",
+      "file_type": "document",
+      "source_file": "skills/design-system/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_patterns_skill",
+      "label": "Django Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_security_skill",
+      "label": "Django Security Best Practices",
+      "file_type": "document",
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_tdd_skill",
+      "label": "Django Testing with TDD",
+      "file_type": "document",
+      "source_file": "skills/django-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_verification_skill",
+      "label": "Django Verification Loop",
+      "file_type": "document",
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "docker_patterns_skill",
+      "label": "Docker Patterns",
+      "file_type": "document",
+      "source_file": "skills/docker-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "dotnet_patterns_skill",
+      "label": ".NET Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/dotnet-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "e2e_testing_skill",
+      "label": "E2E Testing Patterns",
+      "file_type": "document",
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_design_skill",
+      "label": "Frontend Design",
+      "file_type": "document",
+      "source_file": "skills/frontend-design/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_patterns_skill",
+      "label": "Frontend Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "git_workflow_skill",
+      "label": "Git Workflow Patterns",
+      "file_type": "document",
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "github_ops_skill",
+      "label": "GitHub Operations",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_patterns_skill",
+      "label": "Go Development Patterns",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_testing_skill",
+      "label": "Go Testing Patterns",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_skill",
+      "label": "Hexagonal Architecture",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "java_coding_standards_skill",
+      "label": "Java Coding Standards",
+      "file_type": "document",
+      "source_file": "skills/java-coding-standards/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "jpa_patterns_skill",
+      "label": "JPA/Hibernate Patterns",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_coroutines_flows_skill",
+      "label": "Kotlin Coroutines & Flows",
+      "file_type": "document",
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_exposed_patterns_skill",
+      "label": "Kotlin Exposed Patterns",
+      "file_type": "document",
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "deployment_patterns_rolling_deployment",
+      "label": "Rolling Deployment",
+      "file_type": "document",
+      "source_file": "skills/deployment-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "deployment_patterns_multistage_docker_builds",
+      "label": "Multi-Stage Docker Builds",
+      "file_type": "document",
+      "source_file": "skills/deployment-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "design_system_generate_mode",
+      "label": "Generate Design System Mode",
+      "file_type": "document",
+      "source_file": "skills/design-system/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_patterns_drf_viewset_pattern",
+      "label": "DRF ViewSet Pattern",
+      "file_type": "document",
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_patterns_service_layer_pattern",
+      "label": "Django Service Layer Pattern",
+      "file_type": "document",
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_security_production_security_settings",
+      "label": "Production Security Settings",
+      "file_type": "document",
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_tdd_red_green_refactor",
+      "label": "Red-Green-Refactor Cycle",
+      "file_type": "document",
+      "source_file": "skills/django-tdd/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "django_verification_security_scan_phase",
+      "label": "Security Scan Phase",
+      "file_type": "document",
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "docker_patterns_dev_prod_multistage",
+      "label": "Dev/Prod Multi-Stage Dockerfile",
+      "file_type": "document",
+      "source_file": "skills/docker-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "dotnet_patterns_immutability",
+      "label": "Immutability by Default",
+      "file_type": "document",
+      "source_file": "skills/dotnet-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "e2e_testing_page_object_model",
+      "label": "Page Object Model",
+      "file_type": "document",
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "e2e_testing_ci_integration",
+      "label": "E2E CI Integration",
+      "file_type": "document",
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_design_visual_direction",
+      "label": "Committed Visual Direction",
+      "file_type": "document",
+      "source_file": "skills/frontend-design/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_design_strong_aesthetic_rationale",
+      "label": "Strong aesthetic beats safe-average UI",
+      "file_type": "document",
+      "source_file": "skills/frontend-design/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_patterns_component_composition",
+      "label": "Component Composition",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "frontend_patterns_performance_optimization",
+      "label": "Frontend Performance Optimization",
+      "file_type": "document",
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "git_workflow_github_flow",
+      "label": "GitHub Flow",
+      "file_type": "document",
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "git_workflow_conventional_commits",
+      "label": "Conventional Commits",
+      "file_type": "document",
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "github_ops_gh_cli",
+      "label": "gh CLI",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "github_ops_pr_management",
+      "label": "PR Management",
+      "file_type": "document",
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_patterns_zero_value_design",
+      "label": "Useful Zero Value Design",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_patterns_context_cancellation",
+      "label": "Context Cancellation",
+      "file_type": "document",
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_testing_red_green_refactor",
+      "label": "Go Red-Green-Refactor Cycle",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "golang_testing_table_driven_tests",
+      "label": "Table-Driven Tests",
+      "file_type": "document",
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_use_cases",
+      "label": "Use Cases",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_outbound_ports",
+      "label": "Outbound Ports",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_adapters",
+      "label": "Adapters",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_composition_root",
+      "label": "Composition Root",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "hexagonal_architecture_maintainability_rationale",
+      "label": "Keep business logic independent from frameworks",
+      "file_type": "document",
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "java_coding_standards_immutability",
+      "label": "Java Immutability by Default",
+      "file_type": "document",
+      "source_file": "skills/java-coding-standards/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "jpa_patterns_repository_pattern",
+      "label": "JPA Repository Pattern",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "jpa_patterns_n_plus_one_prevention",
+      "label": "N+1 Prevention",
+      "file_type": "document",
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_coroutines_flows_structured_concurrency",
+      "label": "Structured Concurrency",
+      "file_type": "document",
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_coroutines_flows_stateflow_ui_state",
+      "label": "StateFlow UI State",
+      "file_type": "document",
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_exposed_patterns_new_suspended_transaction",
+      "label": "newSuspendedTransaction",
+      "file_type": "document",
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "kotlin_exposed_patterns_repository_pattern",
+      "label": "Exposed Repository Pattern",
+      "file_type": "document",
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "deployment_patterns_rolling_deployment",
+      "target": "deployment_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/deployment-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "deployment_patterns_multistage_docker_builds",
+      "target": "deployment_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/deployment-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "design_system_generate_mode",
+      "target": "design_system_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/design-system/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_patterns_drf_viewset_pattern",
+      "target": "django_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_patterns_service_layer_pattern",
+      "target": "django_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_patterns_drf_viewset_pattern",
+      "target": "django_patterns_service_layer_pattern",
+      "relation": "calls",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_security_production_security_settings",
+      "target": "django_security_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-security/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_tdd_red_green_refactor",
+      "target": "django_tdd_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_verification_security_scan_phase",
+      "target": "django_verification_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "docker_patterns_dev_prod_multistage",
+      "target": "docker_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/docker-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "dotnet_patterns_immutability",
+      "target": "dotnet_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/dotnet-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "e2e_testing_page_object_model",
+      "target": "e2e_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "e2e_testing_ci_integration",
+      "target": "e2e_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_design_visual_direction",
+      "target": "frontend_design_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-design/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_design_strong_aesthetic_rationale",
+      "target": "frontend_design_visual_direction",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-design/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_patterns_component_composition",
+      "target": "frontend_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "frontend_patterns_performance_optimization",
+      "target": "frontend_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/frontend-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "git_workflow_github_flow",
+      "target": "git_workflow_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "git_workflow_conventional_commits",
+      "target": "git_workflow_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "github_ops_gh_cli",
+      "target": "github_ops_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "github_ops_pr_management",
+      "target": "github_ops_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "github_ops_pr_management",
+      "target": "github_ops_gh_cli",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/github-ops/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_patterns_zero_value_design",
+      "target": "golang_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_patterns_context_cancellation",
+      "target": "golang_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_testing_red_green_refactor",
+      "target": "golang_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_testing_table_driven_tests",
+      "target": "golang_testing_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/golang-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_use_cases",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_outbound_ports",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_adapters",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_use_cases",
+      "target": "hexagonal_architecture_outbound_ports",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_adapters",
+      "target": "hexagonal_architecture_outbound_ports",
+      "relation": "implements",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_use_cases",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_composition_root",
+      "target": "hexagonal_architecture_adapters",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "hexagonal_architecture_maintainability_rationale",
+      "target": "hexagonal_architecture_skill",
+      "relation": "rationale_for",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "java_coding_standards_immutability",
+      "target": "java_coding_standards_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/java-coding-standards/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "jpa_patterns_repository_pattern",
+      "target": "jpa_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "jpa_patterns_n_plus_one_prevention",
+      "target": "jpa_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_coroutines_flows_structured_concurrency",
+      "target": "kotlin_coroutines_flows_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_coroutines_flows_stateflow_ui_state",
+      "target": "kotlin_coroutines_flows_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_coroutines_flows_stateflow_ui_state",
+      "target": "kotlin_coroutines_flows_structured_concurrency",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-coroutines-flows/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_exposed_patterns_new_suspended_transaction",
+      "target": "kotlin_exposed_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_exposed_patterns_repository_pattern",
+      "target": "kotlin_exposed_patterns_skill",
+      "relation": "conceptually_related_to",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "kotlin_exposed_patterns_repository_pattern",
+      "target": "kotlin_exposed_patterns_new_suspended_transaction",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/kotlin-exposed-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "deployment_patterns_multistage_docker_builds",
+      "target": "docker_patterns_dev_prod_multistage",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.94,
+      "source_file": "skills/docker-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_verification_security_scan_phase",
+      "target": "django_security_production_security_settings",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.88,
+      "source_file": "skills/django-verification/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_patterns_service_layer_pattern",
+      "target": "hexagonal_architecture_use_cases",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.71,
+      "source_file": "skills/django-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "django_tdd_red_green_refactor",
+      "target": "golang_testing_red_green_refactor",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.93,
+      "source_file": "skills/django-tdd/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "design_system_generate_mode",
+      "target": "frontend_design_visual_direction",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.72,
+      "source_file": "skills/design-system/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "git_workflow_github_flow",
+      "target": "github_ops_pr_management",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.84,
+      "source_file": "skills/git-workflow/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "e2e_testing_ci_integration",
+      "target": "github_ops_pr_management",
+      "relation": "conceptually_related_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.82,
+      "source_file": "skills/e2e-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "java_coding_standards_immutability",
+      "target": "dotnet_patterns_immutability",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.89,
+      "source_file": "skills/java-coding-standards/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "jpa_patterns_repository_pattern",
+      "target": "kotlin_exposed_patterns_repository_pattern",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.91,
+      "source_file": "skills/jpa-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    },
+    {
+      "source": "golang_patterns_context_cancellation",
+      "target": "kotlin_coroutines_flows_structured_concurrency",
+      "relation": "semantically_similar_to",
+      "confidence": "INFERRED",
+      "confidence_score": 0.66,
+      "source_file": "skills/golang-patterns/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": [
+    {
+      "id": "hexagonal_boundary_stack",
+      "label": "Hexagonal Boundary Stack",
+      "nodes": [
+        "hexagonal_architecture_use_cases",
+        "hexagonal_architecture_outbound_ports",
+        "hexagonal_architecture_adapters",
+        "hexagonal_architecture_composition_root"
+      ],
+      "relation": "form",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/hexagonal-architecture/SKILL.md"
+    },
+    {
+      "id": "delivery_quality_loop",
+      "label": "Delivery Quality Loop",
+      "nodes": [
+        "deployment_patterns_skill",
+        "django_verification_skill",
+        "e2e_testing_ci_integration",
+        "github_ops_pr_management"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.79,
+      "source_file": "skills/django-verification/SKILL.md"
+    },
+    {
+      "id": "ui_system_stack",
+      "label": "UI System Stack",
+      "nodes": [
+        "design_system_skill",
+        "frontend_design_skill",
+        "frontend_patterns_skill"
+      ],
+      "relation": "participate_in",
+      "confidence": "INFERRED",
+      "confidence_score": 0.8,
+      "source_file": "skills/frontend-design/SKILL.md"
+    }
+  ],
+  "input_tokens": 0,
+  "output_tokens": 0
+}

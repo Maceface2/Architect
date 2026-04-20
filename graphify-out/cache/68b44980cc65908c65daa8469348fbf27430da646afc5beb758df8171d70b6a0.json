@@ -1,1 +1,39 @@
-{"nodes": [{"id": "rust_testing_skill", "label": "Rust Testing Patterns", "file_type": "document", "source_file": "skills/rust-testing/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}, {"id": "rust_testing_tdd_cycle", "label": "Rust RED-GREEN-REFACTOR Cycle", "file_type": "document", "source_file": "skills/rust-testing/SKILL.md", "source_location": null, "source_url": null, "captured_at": null, "author": null, "contributor": null}], "edges": [{"source": "rust_testing_skill", "target": "rust_testing_tdd_cycle", "relation": "references", "confidence": "EXTRACTED", "confidence_score": 1.0, "source_file": "skills/rust-testing/SKILL.md", "source_location": null, "weight": 1.0}], "hyperedges": []}
+{
+  "nodes": [
+    {
+      "id": "rust_testing_skill",
+      "label": "Rust Testing Patterns",
+      "file_type": "document",
+      "source_file": "skills/rust-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    },
+    {
+      "id": "rust_testing_tdd_cycle",
+      "label": "Rust RED-GREEN-REFACTOR Cycle",
+      "file_type": "document",
+      "source_file": "skills/rust-testing/SKILL.md",
+      "source_location": null,
+      "source_url": null,
+      "captured_at": null,
+      "author": null,
+      "contributor": null
+    }
+  ],
+  "edges": [
+    {
+      "source": "rust_testing_skill",
+      "target": "rust_testing_tdd_cycle",
+      "relation": "references",
+      "confidence": "EXTRACTED",
+      "confidence_score": 1.0,
+      "source_file": "skills/rust-testing/SKILL.md",
+      "source_location": null,
+      "weight": 1.0
+    }
+  ],
+  "hyperedges": []
+}
