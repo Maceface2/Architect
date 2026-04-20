@@ -19,8 +19,18 @@ contextBridge.exposeInMainWorld('electron', {
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
   // Graph execution
-  runGraph: (nodes: unknown[], edges: unknown[], cwd: string, settings: unknown, dispatchContext?: unknown) =>
-    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatchContext),
+  runGraph: (
+    nodes: unknown[],
+    edges: unknown[],
+    cwd: string,
+    settings: unknown,
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
+    dispatchContext?: unknown,
+  ) =>
+    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatch, dispatchContext),
+
+  // Dispatch history
+  listDispatches: (projectDir: string) => ipcRenderer.invoke('dispatches:list', projectDir),
 
   // Architecture assistant
   assistant: {
@@ -83,8 +93,8 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Per-zone Claude session capture/resume
   zone: {
-    getSession: (projectDir: string, label: string) =>
-      ipcRenderer.invoke('zone:get-session', projectDir, label),
+    getSession: (projectDir: string, zoneId: string, label?: string) =>
+      ipcRenderer.invoke('zone:get-session', projectDir, zoneId, label),
 
     resume: (opts: {
       projectDir: string
@@ -95,10 +105,24 @@ contextBridge.exposeInMainWorld('electron', {
       envVars?: Array<{ key: string; value: string }>
     }) => ipcRenderer.invoke('zone:resume', opts),
 
+    resetSession: (opts: { projectDir: string; zoneId: string; label?: string }) =>
+      ipcRenderer.invoke('zone:reset-session', opts.projectDir, opts.zoneId, opts.label),
+
+    run: (opts: {
+      projectDir: string
+      zoneId: string
+      nodes: unknown[]
+      edges: unknown[]
+      userPrompt: string
+      model?: string
+      planMode?: boolean
+      settings: unknown
+    }) => ipcRenderer.invoke('terminal:run-zone', opts),
+
     onSessionCaptured: (
-      cb: (event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: string }) => void,
+      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string }) => void,
     ) => {
-      const handler = (_: unknown, event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: string }) => cb(event)
+      const handler = (_: unknown, event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string }) => cb(event)
       ipcRenderer.on('zone:session-captured', handler)
       return () => ipcRenderer.removeListener('zone:session-captured', handler)
     },

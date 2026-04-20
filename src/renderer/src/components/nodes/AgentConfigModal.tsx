@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { Plus, X, FileText } from 'lucide-react'
+import { Plus, X, FileText, RotateCcw } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_MODEL_BY_RUNTIME,
@@ -8,6 +8,7 @@ import {
   type AgentRuntimeMode,
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useProjectDir } from '../../context/ProjectDirContext'
 import type {
   ZoneNodeData,
   NodeSkillFile,
@@ -31,8 +32,9 @@ const BUILTIN_SKILLS: Omit<NodeSkillFile, 'id'>[] = [
 
 interface Props {
   zoneColor: string
+  zoneId: string
   label: string
-  prompt: string
+  systemPrompt: string
   runtimeMode: AgentRuntimeMode
   configuredRuntime: AgentRuntime
   effectiveRuntime: AgentRuntime
@@ -49,8 +51,9 @@ interface Props {
 
 export default function AgentConfigModal({
   zoneColor,
+  zoneId,
   label,
-  prompt,
+  systemPrompt,
   runtimeMode,
   configuredRuntime,
   effectiveRuntime,
@@ -66,9 +69,22 @@ export default function AgentConfigModal({
 }: Props) {
   const [labelDraft, setLabelDraft] = useState(label)
   const [customSkillInput, setCustomSkillInput] = useState('')
+  const [resetState, setResetState] = useState<'idle' | 'confirm' | 'pending' | 'done' | 'error'>('idle')
   const labelInputRef = useRef<HTMLInputElement>(null)
   const projectSettings = useProjectSettings()
+  const projectDir = useProjectDir()
   const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime)
+
+  const handleReset = async () => {
+    if (!projectDir) return
+    setResetState('pending')
+    try {
+      await window.electron.zone.resetSession({ projectDir, zoneId })
+      setResetState('done')
+    } catch {
+      setResetState('error')
+    }
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -152,11 +168,51 @@ export default function AgentConfigModal({
 
         <div className="flex flex-1 min-h-0 divide-x divide-white/[0.06]">
           <div className="flex flex-col flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-slate-600 px-6 pt-5 pb-2 flex-shrink-0">Agent prompt</p>
+            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-2 flex-shrink-0">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-slate-600">System prompt</p>
+                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed max-w-md">
+                  Customizes this zone agent&apos;s behavior. Passed as <span className="font-mono text-slate-500">--append-system-prompt</span> on the first spawn. Edits take effect only after <span className="text-slate-400">Reset conversation</span>.
+                </p>
+              </div>
+              {resetState === 'confirm' ? (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[11px] text-amber-400">Erase conversation?</span>
+                  <button
+                    onClick={handleReset}
+                    className="px-2 py-1 text-[11px] text-white bg-red-600/80 hover:bg-red-600 rounded transition-colors"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={() => setResetState('idle')}
+                    className="px-2 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:bg-white/[0.05] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setResetState('confirm')}
+                  disabled={resetState === 'pending'}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:text-slate-200 hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
+                  title="Delete the saved Claude session so the next dispatch starts fresh"
+                >
+                  <RotateCcw size={11} />
+                  {resetState === 'pending'
+                    ? 'Resetting…'
+                    : resetState === 'done'
+                      ? 'Conversation reset'
+                      : resetState === 'error'
+                        ? 'Reset failed — retry'
+                        : 'Reset conversation'}
+                </button>
+              )}
+            </div>
             <textarea
-              value={prompt}
-              onChange={event => patch({ prompt: event.target.value })}
-              placeholder="Describe what this agent should build — its role, goals, constraints, and instructions for the components inside the zone..."
+              value={systemPrompt}
+              onChange={event => patch({ systemPrompt: event.target.value })}
+              placeholder="Define this zone agent's role, expertise, tone, and constraints. E.g. 'You are a senior backend engineer. Write idiomatic, well-tested code. Prefer pure functions. Never introduce new frameworks without justification.'"
               autoFocus
               className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
             />

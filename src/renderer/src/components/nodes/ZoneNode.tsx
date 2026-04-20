@@ -1,11 +1,12 @@
 import { memo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Handle, Position, NodeResizer, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
-import { Settings } from 'lucide-react'
+import { Play, Settings } from 'lucide-react'
 import { getAgentRuntime, type AgentRuntime, type AgentRuntimeMode } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
 import AgentConfigModal from './AgentConfigModal'
+import ZoneRunPopover from './ZoneRunPopover'
 import type {
   ZoneNodeData,
   NodeStatus,
@@ -33,11 +34,12 @@ function hexToRgba(hex: string, alpha: number): string {
 function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const { setNodes } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
+  const [runOpen, setRunOpen] = useState(false)
   const projectSettings = useProjectSettings()
 
   const zoneColor = (data.color as string) ?? '#58A6FF'
   const label = (data.label as string) ?? 'Zone'
-  const prompt = (data.prompt ?? '') as string
+  const systemPrompt = (data.systemPrompt ?? '') as string
   const status = (data.status ?? 'idle') as NodeStatus
   const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
   const configuredRuntime = (data.agentRuntime ?? projectSettings.defaultRuntime) as AgentRuntime
@@ -106,7 +108,16 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
             <span className="text-[10px] text-slate-500 font-mono truncate">{shortModelLabel(effectiveModel)}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {prompt && <span className="text-[10px] text-slate-500 italic truncate max-w-[200px]">{prompt}</span>}
+            {systemPrompt && <span className="text-[10px] text-slate-500 italic truncate max-w-[200px]">{systemPrompt}</span>}
+            <button
+              onClick={(e) => { e.stopPropagation(); setRunOpen(true) }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10 transition-colors nodrag"
+              title="Run this zone"
+              aria-label="Run this zone"
+            >
+              <Play size={12} />
+            </button>
             <button
               onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
               onMouseDown={(e) => e.stopPropagation()}
@@ -131,11 +142,23 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
         style={{ width: 12, height: 12, background: '#1e1e1e', border: `2px solid ${zoneColor}`, right: -7, zIndex: 20 }}
       />
 
+      {runOpen && createPortal(
+        <ZoneRunPopover
+          zoneId={id}
+          label={label}
+          effectiveRuntime={effectiveRuntime}
+          effectiveModel={effectiveModel}
+          onClose={() => setRunOpen(false)}
+        />,
+        document.body
+      )}
+
       {modalOpen && createPortal(
         <AgentConfigModal
           zoneColor={zoneColor}
+          zoneId={id}
           label={label}
-          prompt={prompt}
+          systemPrompt={systemPrompt}
           runtimeMode={runtimeMode}
           configuredRuntime={configuredRuntime}
           effectiveRuntime={effectiveRuntime}

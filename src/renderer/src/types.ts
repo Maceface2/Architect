@@ -53,7 +53,7 @@ export interface ZoneNodeData {
   description: string
   color: string
   status: NodeStatus
-  prompt: string
+  systemPrompt: string
   agentRuntimeMode: AgentRuntimeMode
   agentRuntime: AgentRuntime
   providerModels: RuntimeModelMap
@@ -64,6 +64,31 @@ export interface ZoneNodeData {
   permissions: NodePermissions
   envVars: NodeEnvVar[]
   [key: string]: unknown
+}
+
+export interface DispatchRecord {
+  architectSessionId: string
+  zoneIds: string[]
+  zoneLabels: string[]
+  userPrompt: string
+  model: string
+  planMode: boolean
+  timestamp: string
+}
+
+export interface DispatchRequest {
+  userPrompt: string
+  model: string
+  planMode: boolean
+  onlyZoneIds?: string[]
+}
+
+export interface RunZoneRequest {
+  projectDir: string
+  zoneId: string
+  userPrompt: string
+  model?: string
+  planMode?: boolean
 }
 
 // A component is a design artifact. It carries the core context (description, specs)

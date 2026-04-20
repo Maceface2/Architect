@@ -39,6 +39,9 @@ import {
   migrateCanvasData,
 } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
+import { ProjectDirProvider } from './context/ProjectDirContext'
+import DispatchModal from './components/dispatch/DispatchModal'
+import type { DispatchRequest } from './types'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
 
 interface TerminalInfo {
@@ -75,7 +78,7 @@ function buildDemoGraph(defaultRuntime: AgentRuntime): { nodes: CanvasNode[]; ed
       description: 'API + auth + storage',
       color: '#58A6FF',
       status: 'idle',
-      prompt: 'Build a small Express API backed by Postgres with JWT auth. Keep it minimal and runnable.',
+      systemPrompt: 'You are a backend platform agent. Build a small Express API backed by Postgres with JWT auth. Keep it minimal and runnable.',
       ...createDefaultZoneAgentConfig(defaultRuntime),
     },
   }
@@ -288,6 +291,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatching, setDispatching] = useState(false)
   const [isDirty, setIsDirty] = useState(false)
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
+  const [dispatchModalOpen, setDispatchModalOpen] = useState(false)
+  const [preselectedZoneIds, setPreselectedZoneIds] = useState<string[] | null>(null)
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
@@ -470,7 +475,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
             description: '',
             color: '#58A6FF',
             status: 'idle',
-            prompt: '',
+            systemPrompt: '',
             ...createDefaultZoneAgentConfig(projectSettings.defaultRuntime),
           },
         }
@@ -552,19 +557,38 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     ? zones.filter(n => zoneHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
     : []
 
-  const onDispatch = useCallback(async () => {
+  const onDispatch = useCallback(() => {
     if (zones.length === 0) return
+    setPreselectedZoneIds(null)
+    setDispatchModalOpen(true)
+  }, [zones.length])
+
+  const handleDispatchSubmit = useCallback(async (req: DispatchRequest) => {
+    if (zones.length === 0) return
+    setDispatchModalOpen(false)
     setDispatching(true)
     const isRedispatch = dispatchedGraph !== null
     const dispatchContext = isRedispatch
       ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
       : undefined
     try {
-      const sessions = await window.electron.runGraph(nodes, edges, projectDir, projectSettings, dispatchContext)
+      const sessions = await window.electron.runGraph(
+        nodes,
+        edges,
+        projectDir,
+        projectSettings,
+        req,
+        dispatchContext,
+      )
       setTerminalSessions(sessions)
       setActiveTab('Terminal')
-      const snapshot: Record<string, string> = {}
-      for (const n of zones) snapshot[n.id] = zoneHash(n)
+      const onlySet = req.onlyZoneIds && req.onlyZoneIds.length > 0
+        ? new Set(req.onlyZoneIds)
+        : null
+      const snapshot: Record<string, string> = { ...(dispatchedGraph ?? {}) }
+      for (const n of zones) {
+        if (!onlySet || onlySet.has(n.id)) snapshot[n.id] = zoneHash(n)
+      }
       setDispatchedGraph(snapshot)
     } finally {
       setDispatching(false)
@@ -592,7 +616,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         label: z.data.label,
         description: z.data.description,
         color: z.data.color,
-        prompt: z.data.prompt,
+        systemPrompt: z.data.systemPrompt,
         position: z.position,
         width: z.width ?? ZONE_DEFAULT_WIDTH,
         height: z.height ?? ZONE_DEFAULT_HEIGHT,
@@ -616,7 +640,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
 ## Model
 - **components** are first-class design artifacts on a flat canvas. Each carries its own context: label, description, and long-form specs (API contracts, schemas, responsibilities, notes). Components do NOT own agent behavior.
-- **zones** are translucent overlays drawn on top of a group of components. Each zone is an agent (one CLI session per zone) that builds whatever components it overlays. Zones own the prompt, runtime, model, tools, skills, permissions.
+- **zones** are translucent overlays drawn on top of a group of components. Each zone is an agent (one CLI session per zone) that builds whatever components it overlays. Zones own their *systemPrompt* (behavior customization, passed to Claude as --append-system-prompt on first spawn), runtime, model, tools, skills, permissions. The per-dispatch user prompt is supplied separately by the user at Dispatch time; it is NOT part of the zone definition.
 
 Zone membership is determined purely by geometry at dispatch time: if a component's center falls inside a zone's bounding box, that zone's agent is responsible for building it. A component outside all zones is a design artifact only — no agent builds it.
 
@@ -634,7 +658,7 @@ ${paletteJson}
 ## JSON Example
 Write the canvas directly to \`architect-canvas.json\` using the modern Architect format:
 ~~~json
-{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","prompt":"Build the React frontend and integrate APIs.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"defaultRuntime":"codex"}}
+{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"defaultRuntime":"codex"}}
 ~~~
 
 ## Your Role
@@ -645,7 +669,7 @@ Help the user design, refine, and reason about their architecture. You can:
 - Replace the full canvas document when making a diagram change. Always write a complete valid top-level object with \`nodes\`, \`edges\`, and \`settings\`.
 - Preserve existing ids, positions, and \`settings\` whenever possible so the user's layout and runtime defaults are not lost.
 - Use \`type: "zone"\` for agent zones and \`type: "component"\` for design components.
-- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`prompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`.
+- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` defines the zone agent's role/behavior — do NOT put per-task instructions there; the user supplies those at Dispatch time.
 - For components, include: \`id\`, \`type\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`.
 - To place a component inside a zone, give it a position that falls within the zone's bounding box. Zones should be sized large enough to visually cover their components with margin.
 
@@ -726,7 +750,7 @@ Only discuss and advise without editing the file when the user is asking for cri
           description: String(raw.description ?? ''),
           color: String(raw.color ?? '#58A6FF'),
           status: 'idle',
-          prompt: String(raw.prompt ?? ''),
+          systemPrompt: String(raw.systemPrompt ?? raw.prompt ?? ''),
           ...createDefaultZoneAgentConfig(defaultRuntime),
         },
       }
@@ -843,6 +867,7 @@ Only discuss and advise without editing the file when the user is asking for cri
 
   return (
     <ProjectSettingsProvider value={projectSettings}>
+      <ProjectDirProvider value={projectDir}>
       <div className="flex flex-col h-screen bg-canvas text-white overflow-hidden">
         <TopNav
           activeTab={activeTab}
@@ -896,6 +921,23 @@ Only discuss and advise without editing the file when the user is asking for cri
                 onKeepLocal={handleKeepLocalCanvas}
               />
             )}
+
+            {dispatchModalOpen && (
+              <DispatchModal
+                zoneCount={preselectedZoneIds?.length ?? zones.length}
+                onClose={() => setDispatchModalOpen(false)}
+                onSubmit={handleDispatchSubmit}
+                onSelectPrior={(zoneIds) => {
+                  setPreselectedZoneIds(zoneIds.length > 0 ? zoneIds : null)
+                  const idSet = new Set(zoneIds)
+                  setNodes(current => current.map(node =>
+                    node.type === 'zone'
+                      ? { ...node, selected: zoneIds.length === 0 ? false : idSet.has(node.id) }
+                      : node
+                  ))
+                }}
+              />
+            )}
           </div>
 
           {isFiles && (
@@ -931,6 +973,7 @@ Only discuss and advise without editing the file when the user is asking for cri
           )}
         </div>
       </div>
+      </ProjectDirProvider>
     </ProjectSettingsProvider>
   )
 }

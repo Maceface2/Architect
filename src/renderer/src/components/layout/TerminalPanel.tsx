@@ -482,7 +482,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       sessions
         .filter(s => s.runtime !== 'shell')
         .map(s =>
-          window.electron.zone.getSession(projectDir, s.label).then(saved => ({
+          window.electron.zone.getSession(projectDir, s.id, s.label).then(saved => ({
             id: s.id,
             sessionId: saved?.sessionId ?? null,
           })),

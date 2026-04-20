@@ -1,5 +1,5 @@
 import type { AgentRuntime } from '../../shared/agentRuntimes'
-import type { ProjectSettings } from './types'
+import type { DispatchRecord, ProjectSettings } from './types'
 
 interface FileEntry {
   name: string
@@ -30,8 +30,10 @@ interface ElectronAPI {
     edges: unknown[],
     cwd: string,
     settings: ProjectSettings,
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
     dispatchContext?: unknown
   ) => Promise<TerminalInfo[]>
+  listDispatches: (projectDir: string) => Promise<DispatchRecord[]>
   assistant: {
     start: (projectDir: string, contextMd: string, runtime: AgentRuntime) => Promise<TerminalInfo | null>
     stop: () => void
@@ -52,7 +54,8 @@ interface ElectronAPI {
   zone: {
     getSession: (
       projectDir: string,
-      label: string,
+      zoneId: string,
+      label?: string,
     ) => Promise<{ runtime: AgentRuntime; sessionId: string; capturedAt: string } | null>
     resume: (opts: {
       projectDir: string
@@ -62,8 +65,23 @@ interface ElectronAPI {
       model?: string
       envVars?: Array<{ key: string; value: string }>
     }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo; sessionId?: string }>
+    resetSession: (opts: {
+      projectDir: string
+      zoneId: string
+      label?: string
+    }) => Promise<boolean>
+    run: (opts: {
+      projectDir: string
+      zoneId: string
+      nodes: unknown[]
+      edges: unknown[]
+      userPrompt: string
+      model?: string
+      planMode?: boolean
+      settings: ProjectSettings
+    }) => Promise<TerminalInfo | null>
     onSessionCaptured: (
-      cb: (event: { zoneSafe: string; zoneId: string; sessionId: string; runtime: AgentRuntime }) => void,
+      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: AgentRuntime }) => void,
     ) => () => void
   }
 }

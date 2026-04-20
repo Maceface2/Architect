@@ -43,7 +43,7 @@ export function createDefaultZoneData(defaultRuntime: AgentRuntime = DEFAULT_AGE
     description: '',
     color: '#58A6FF',
     status: 'idle',
-    prompt: '',
+    systemPrompt: '',
     ...createDefaultZoneAgentConfig(defaultRuntime),
   }
 }
@@ -102,12 +102,20 @@ function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettin
   const defaults = createDefaultZoneAgentConfig(settings.defaultRuntime)
   const agentRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : DEFAULT_AGENT_RUNTIME
 
+  // Legacy migration: pre-refactor zones stored their behavior customization under `prompt`.
+  // The field has been renamed to `systemPrompt`; fall back to the old key when present.
+  const systemPrompt = typeof raw.systemPrompt === 'string'
+    ? raw.systemPrompt
+    : typeof raw.prompt === 'string'
+      ? raw.prompt
+      : ''
+
   return {
     label: typeof raw.label === 'string' ? raw.label : 'Zone',
     description: typeof raw.description === 'string' ? raw.description : '',
     color: typeof raw.color === 'string' ? raw.color : '#58A6FF',
     status: (raw.status as ZoneNodeData['status']) ?? 'idle',
-    prompt: typeof raw.prompt === 'string' ? raw.prompt : '',
+    systemPrompt,
     agentRuntimeMode: isAgentRuntimeMode(raw.agentRuntimeMode) ? raw.agentRuntimeMode : defaults.agentRuntimeMode,
     agentRuntime,
     providerModels: normalizeProviderModels(raw, settings.defaultRuntime),

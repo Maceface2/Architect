@@ -2,7 +2,8 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { initShellEnv, runGraph, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions } from './terminals'
+import { initShellEnv, runGraph, runZone, resetZoneSession, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions, type RunGraphDispatch, type RunZoneOptions } from './terminals'
+import { listDispatches } from './dispatchCapture'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -165,9 +166,22 @@ ipcMain.handle('scan-components', (_event, dirPath: string) => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, dispatchContext) => {
+ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, dispatch: RunGraphDispatch, dispatchContext) => {
   if (!mainWindow) return []
-  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatchContext)
+  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' }, dispatchContext)
+})
+
+ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
+  if (!mainWindow) return null
+  return runZone(mainWindow, opts)
+})
+
+ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string) => {
+  return resetZoneSession(projectDir, zoneId, label)
+})
+
+ipcMain.handle('dispatches:list', (_event, projectDir: string) => {
+  return listDispatches(projectDir)
 })
 
 ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime) => {
@@ -196,8 +210,8 @@ ipcMain.on('terminal:kill-all', () => {
   killAll()
 })
 
-ipcMain.handle('zone:get-session', (_event, projectDir: string, label: string) => {
-  return getZoneSession(projectDir, label)
+ipcMain.handle('zone:get-session', (_event, projectDir: string, zoneId: string, label?: string) => {
+  return getZoneSession(projectDir, zoneId, label)
 })
 
 ipcMain.handle('zone:resume', (_event, opts: ResumeZoneOptions) => {

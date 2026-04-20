@@ -14,11 +14,13 @@ import {
 } from '../shared/agentRuntimes'
 import {
   captureNewClaudeSession,
+  deleteZoneSession,
   loadZoneSession,
   saveZoneSession,
   snapshotClaudeSessions,
   type ZoneSession,
 } from './sessionCapture'
+import { saveDispatch, type DispatchRecord } from './dispatchCapture'
 
 let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
 
@@ -155,7 +157,7 @@ export interface ZoneGraphNode {
     label: string
     description: string
     color?: string
-    prompt: string
+    systemPrompt: string
     agentRuntimeMode?: 'inherit' | 'override'
     agentRuntime?: AgentRuntime
     providerModels?: Partial<Record<AgentRuntime, string>>
@@ -215,10 +217,22 @@ interface SpawnAgentOptions {
   onExit?: () => void
   resumeSessionId?: string
   // When set and runtime is claude, capture the new session ID and persist it.
-  capture?: { projectDir: string; zoneSafe: string }
+  // zoneKey is the stable zone id; legacyKey is the old label-based key for migration.
+  capture?: { projectDir: string; zoneKey: string; legacyKey?: string }
   // Defaults to true (preserves zone-agent autonomy). Set false for the
   // interactive assistant so the user gets normal permission prompts.
   skipPermissions?: boolean
+  // When set, Claude will start with `--permission-mode plan` instead of
+  // `--dangerously-skip-permissions`.
+  planMode?: boolean
+  // When set and spawning a fresh Claude session (no resume), pass as
+  // `--append-system-prompt` so the zone's behavior prompt is baked in.
+  appendSystemPrompt?: string
+  // When set and resuming, write this prompt into the PTY ~1.5s after spawn
+  // so Claude takes it as the next user turn.
+  resumeUserPrompt?: string
+  // Optional callback fired once a Claude session ID is captured.
+  onSessionCaptured?: (sessionId: string) => void
 }
 
 const sessions = new Map<string, Session>()
@@ -239,13 +253,17 @@ function buildRuntimeArgs(
   model?: string,
   resumeSessionId?: string,
   skipPermissions = true,
+  planMode = false,
+  appendSystemPrompt?: string,
 ): string[] {
   switch (runtime) {
     case 'claude': {
       const args: string[] = []
-      if (skipPermissions) args.push('--dangerously-skip-permissions')
+      if (planMode) args.push('--permission-mode', 'plan')
+      else if (skipPermissions) args.push('--dangerously-skip-permissions')
       if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
+      if (appendSystemPrompt && !resumeSessionId) args.push('--append-system-prompt', appendSystemPrompt)
       // On resume, history already contains the prompt — don't replay it.
       if (prompt && !resumeSessionId) args.push(prompt)
       return args
@@ -332,6 +350,10 @@ function spawnAgentSession({
   resumeSessionId,
   capture,
   skipPermissions = true,
+  planMode = false,
+  appendSystemPrompt,
+  resumeUserPrompt,
+  onSessionCaptured,
 }: SpawnAgentOptions): TerminalInfo {
   const bin = resolveBinary(runtime)
   if (!bin) {
@@ -352,7 +374,7 @@ function spawnAgentSession({
       ? snapshotClaudeSessions(cwd)
       : null
 
-  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions), {
+  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt), {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -362,28 +384,35 @@ function spawnAgentSession({
 
   createSession(win, id, ptyProcess, onExit)
 
+  if (resumeUserPrompt && resumeSessionId) {
+    setTimeout(() => {
+      try { ptyProcess.write(resumeUserPrompt + '\r') } catch {}
+    }, 1500)
+  }
+
   if (claudeSnapshot && capture) {
-    console.log(`[session-capture] ${capture.zoneSafe}: snapshot ${claudeSnapshot.size} existing, polling…`)
+    console.log(`[session-capture] ${capture.zoneKey}: snapshot ${claudeSnapshot.size} existing, polling…`)
     void captureNewClaudeSession(cwd, claudeSnapshot).then(sessionId => {
       if (!sessionId) {
-        console.warn(`[session-capture] ${capture.zoneSafe}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
+        console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
         return
       }
       try {
-        saveZoneSession(capture.projectDir, capture.zoneSafe, {
+        saveZoneSession(capture.projectDir, capture.zoneKey, {
           runtime: 'claude',
           sessionId,
           capturedAt: new Date().toISOString(),
         })
-        console.log(`[session-capture] ${capture.zoneSafe}: saved session ${sessionId}`)
+        console.log(`[session-capture] ${capture.zoneKey}: saved session ${sessionId}`)
         broadcast('zone:session-captured', {
-          zoneSafe: capture.zoneSafe,
+          zoneKey: capture.zoneKey,
           zoneId: id,
           sessionId,
           runtime: 'claude',
         })
+        onSessionCaptured?.(sessionId)
       } catch (err) {
-        console.error(`[session-capture] ${capture.zoneSafe}: failed to save`, err)
+        console.error(`[session-capture] ${capture.zoneKey}: failed to save`, err)
       }
     })
   }
@@ -574,7 +603,8 @@ function buildArchitectPrompt(
   unassignedComponents: ComponentGraphNode[],
   edges: GraphEdge[],
   settings: ProjectSettings,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
+  userPrompt?: string,
 ): string {
   const zoneIds = new Set(zones.map(z => z.id))
   const zoneEdges = edges.filter(e => zoneIds.has(e.source) && zoneIds.has(e.target))
@@ -598,7 +628,6 @@ function buildArchitectPrompt(
       zone.data.description ? `Zone description: ${zone.data.description}` : '',
       `Runtime: ${getAgentRuntime(runtime).label}`,
       `Model: ${model}`,
-      zone.data.prompt ? `User goal: ${zone.data.prompt}` : '',
       `Components the agent must build:\n${componentLines}`,
       upstream.length ? `Upstream zones: ${upstream.join(', ')}` : '',
       downstream.length ? `Downstream zones: ${downstream.join(', ')}` : '',
@@ -615,9 +644,15 @@ function buildArchitectPrompt(
     ? `\n\n## Unassigned Components (no zone overlay)\nThese components exist on the canvas but are not covered by any zone. They are design-only artifacts; no agent has been spawned to build them. Decide whether to fold their responsibilities into an existing zone's task file or surface them back to the user.\n${unassignedComponents.map(c => `- ${c.data.label}${c.data.tag ? ` [${c.data.tag}]` : ''}${c.data.description ? ` — ${c.data.description}` : ''}`).join('\n')}`
     : ''
 
+  const userRequestSection = userPrompt && userPrompt.trim()
+    ? `## User Request\n${userPrompt.trim()}\n\n`
+    : ''
+
   return `You are the Architect agent coordinating a multi-agent system. Each "zone" below is a separate agent running as an interactive coding CLI session. Every agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
 
 DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem.
+
+${userRequestSection}
 
 ## Architecture Diagram
 ${buildMermaidDiagram(zones, componentsByZone, zoneEdges)}
@@ -650,7 +685,12 @@ Start immediately. Write the task files now.${dispatchContext?.isRedispatch
     : ''}`
 }
 
-function buildZonePrompt(
+function buildZoneBootstrapPrompt(zone: ZoneGraphNode): string {
+  const safe = sanitize(zone.data.label)
+  return `Read ARCHITECT/tasks/${safe}.md and execute every instruction in it.`
+}
+
+function buildZoneSystemPrompt(
   zone: ZoneGraphNode,
   componentsByZone: Map<string, ComponentGraphNode[]>,
   zoneEdges: GraphEdge[],
@@ -690,8 +730,10 @@ function buildZonePrompt(
       }).join('\n')
     : '_(no internal wiring specified)_'
 
+  const userSystem = (zone.data.systemPrompt ?? '').trim()
+
   return `You are the **${zone.data.label}** zone-agent.
-${zone.data.description ? `Zone description: ${zone.data.description}\n` : ''}${zone.data.prompt ? `\nUser goal: ${zone.data.prompt}\n` : ''}
+${zone.data.description ? `Zone description: ${zone.data.description}\n` : ''}
 ${upstream.length ? `Upstream zones (read their status logs first): ${upstream.map(label => `ARCHITECT/outputs/${sanitize(label as string)}.md`).join(', ')}\n` : ''}${downstream.length ? `Downstream zones depending on you: ${downstream.join(', ')}\n` : ''}${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ## Components you must build
 
@@ -701,9 +743,9 @@ ${compList}
 
 ${archLines}
 
-${skills ? `## Skills\n\n${skills}\n\n` : ''}## Instructions
+${skills ? `## Skills\n\n${skills}\n\n` : ''}${userSystem ? `## Behavior\n\n${userSystem}\n\n` : ''}## Instructions
 
-Read ARCHITECT/tasks/${safe}.md and execute every instruction in it immediately and concretely. You are responsible for **all** components listed above.
+When instructed, read ARCHITECT/tasks/${safe}.md and execute every instruction in it immediately and concretely. You are responsible for **all** components listed above.
 
 **WHERE TO CREATE FILES:**
 - All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
@@ -725,10 +767,11 @@ function setupWorkspace(
   nodes: GraphNode[],
   edges: GraphEdge[],
   settings: ProjectSettings,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
+  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
+  userPrompt?: string,
 ) {
   const base = join(projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions'].map(name => join(base, name))) {
+  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions', 'dispatches'].map(name => join(base, name))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
@@ -757,7 +800,7 @@ function setupWorkspace(
         runtime,
         runtimeLabel: getAgentRuntime(runtime).label,
         model: getZoneModel(zone, runtime),
-        userPrompt: zone.data.prompt || null,
+        systemPrompt: zone.data.systemPrompt || null,
         taskFile: `ARCHITECT/tasks/${sanitize(zone.data.label)}.md`,
         outputFile: `ARCHITECT/outputs/${sanitize(zone.data.label)}.md`,
         enabledTools: Object.entries(zone.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key),
@@ -776,10 +819,17 @@ function setupWorkspace(
   }, null, 2))
 
   fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(zones, componentsByZone, zoneEdges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(zones, componentsByZone, unassignedComponents, edges, settings, dispatchContext))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(zones, componentsByZone, unassignedComponents, edges, settings, dispatchContext, userPrompt))
   for (const zone of zones) {
-    fs.writeFileSync(join(base, 'prompts', `${sanitize(zone.data.label)}.md`), buildZonePrompt(zone, componentsByZone, zoneEdges, intraEdges, zones))
+    fs.writeFileSync(join(base, 'prompts', `${sanitize(zone.data.label)}.md`), buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones))
   }
+}
+
+export interface RunGraphDispatch {
+  userPrompt: string
+  model?: string
+  planMode?: boolean
+  onlyZoneIds?: string[]
 }
 
 export async function runGraph(
@@ -788,19 +838,65 @@ export async function runGraph(
   edges: GraphEdge[],
   projectDir: string,
   rawSettings: unknown,
+  dispatch: RunGraphDispatch,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   killAll()
   const settings = normalizeProjectSettings(rawSettings)
-  setupWorkspace(projectDir, nodes, edges, settings, dispatchContext)
+  const userPrompt = (dispatch.userPrompt ?? '').trim()
 
-  const { zones } = indexGraph(nodes)
-  const zoneIdSet = new Set(zones.map(z => z.id))
-  const zoneEdges = edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
+  // Filter to the subset of zones requested, if any.
+  const { zones: allZones } = indexGraph(nodes)
+  const onlyIds = dispatch.onlyZoneIds && dispatch.onlyZoneIds.length > 0
+    ? new Set(dispatch.onlyZoneIds)
+    : null
+  const selectedZones = onlyIds
+    ? allZones.filter(z => onlyIds.has(z.id))
+    : allZones
+  const selectedZoneIds = new Set(selectedZones.map(z => z.id))
+  const filteredNodes = nodes.filter(n => n.type !== 'zone' || selectedZoneIds.has(n.id))
 
-  const sorted = topoSort(zones, zoneEdges)
+  setupWorkspace(projectDir, filteredNodes, edges, settings, dispatchContext, userPrompt)
+
+  const zoneEdges = edges.filter(e => selectedZoneIds.has(e.source) && selectedZoneIds.has(e.target))
+  const sorted = topoSort(selectedZones, zoneEdges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
   const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
+
+  // Single-zone path: skip the Architect coordinator entirely.
+  if (sorted.length === 1) {
+    const zone = sorted[0]
+    const runtime = getZoneRuntime(zone, settings)
+    const model = dispatch.model || getZoneModel(zone, runtime)
+    const env: Record<string, string> = {}
+    for (const { key, value } of zone.data.envVars ?? []) {
+      if (key) env[key] = value
+    }
+    const systemPrompt = fs.readFileSync(join(promptsDir, `${sanitize(zone.data.label)}.md`), 'utf-8')
+
+    const saved = runtime === 'claude'
+      ? loadZoneSession(projectDir, zone.id, sanitize(zone.data.label))
+      : null
+    const canResume = saved && saved.runtime === 'claude'
+
+    spawnAgentSession({
+      win,
+      id: zone.id,
+      label: zone.data.label,
+      runtime,
+      env,
+      cwd: projectDir,
+      initialPrompt: canResume ? undefined : (userPrompt || buildZoneBootstrapPrompt(zone)),
+      resumeSessionId: canResume ? saved!.sessionId : undefined,
+      resumeUserPrompt: canResume ? (userPrompt || buildZoneBootstrapPrompt(zone)) : undefined,
+      model,
+      planMode: dispatch.planMode === true,
+      appendSystemPrompt: canResume ? undefined : systemPrompt,
+      capture: { projectDir, zoneKey: zone.id, legacyKey: sanitize(zone.data.label) },
+    })
+
+    return [{ id: zone.id, label: zone.data.label, runtime }]
+  }
 
   const allInfo: TerminalInfo[] = [
     { id: 'architect-agent', label: 'Architect', runtime: settings.defaultRuntime },
@@ -841,7 +937,13 @@ export async function runGraph(
 
     const runtime = getZoneRuntime(zone, settings)
     const model = getZoneModel(zone, runtime)
-    const prompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
+    const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
+    const bootstrap = buildZoneBootstrapPrompt(zone)
+
+    const saved = runtime === 'claude'
+      ? loadZoneSession(projectDir, zone.id, safe)
+      : null
+    const canResume = saved && saved.runtime === 'claude'
 
     spawnAgentSession({
       win,
@@ -850,9 +952,13 @@ export async function runGraph(
       runtime,
       env,
       cwd: projectDir,
-      initialPrompt: prompt,
+      initialPrompt: canResume ? undefined : bootstrap,
+      resumeSessionId: canResume ? saved!.sessionId : undefined,
+      resumeUserPrompt: canResume ? bootstrap : undefined,
+      appendSystemPrompt: canResume ? undefined : systemPrompt,
       model,
-      capture: { projectDir, zoneSafe: safe },
+      // Zones need autonomy in multi-zone dispatch, so no planMode here.
+      capture: { projectDir, zoneKey: zone.id, legacyKey: safe },
     })
 
     onSessionDone(zone.id, () => {
@@ -887,8 +993,23 @@ export async function runGraph(
     env: {},
     cwd: projectDir,
     initialPrompt: architectPrompt,
-    model: DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
-    capture: { projectDir, zoneSafe: 'Architect' },
+    model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
+    planMode: dispatch.planMode === true,
+    capture: { projectDir, zoneKey: 'architect-agent', legacyKey: 'Architect' },
+    onSessionCaptured: sessionId => {
+      const record: DispatchRecord = {
+        architectSessionId: sessionId,
+        zoneIds: sorted.map(z => z.id),
+        zoneLabels: sorted.map(z => z.data.label),
+        userPrompt,
+        model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
+        planMode: dispatch.planMode === true,
+        timestamp: new Date().toISOString(),
+      }
+      try { saveDispatch(projectDir, record) } catch (err) {
+        console.error('[dispatch-capture] failed to save', err)
+      }
+    },
   })
 
   return allInfo
@@ -935,7 +1056,7 @@ export function startAssistant(
     initialPrompt: canResume ? undefined : 'Read ARCHITECT/.assistant-context.md',
     resumeSessionId: canResume ? saved!.sessionId : undefined,
     model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
-    capture: { projectDir, zoneSafe: ASSISTANT_ZONE_SAFE },
+    capture: { projectDir, zoneKey: ASSISTANT_ZONE_SAFE },
     // Interactive: keep normal permission prompts. The user is sitting here.
     skipPermissions: false,
   })
@@ -969,7 +1090,7 @@ export interface ResumeResult {
 // existing PTY for that zone (same id keeps the same renderer tab).
 export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeResult {
   const zoneSafe = sanitize(opts.label)
-  const saved: ZoneSession | null = loadZoneSession(opts.projectDir, zoneSafe)
+  const saved: ZoneSession | null = loadZoneSession(opts.projectDir, opts.zoneId, zoneSafe)
   if (!saved) return { ok: false, reason: 'no-saved-session' }
   if (saved.runtime !== opts.runtime) {
     return { ok: false, reason: `session-runtime-mismatch:${saved.runtime}` }
@@ -1003,6 +1124,77 @@ export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeR
   return { ok: true, info, sessionId: saved.sessionId }
 }
 
-export function getZoneSession(projectDir: string, label: string): ZoneSession | null {
-  return loadZoneSession(projectDir, sanitize(label))
+export function getZoneSession(projectDir: string, zoneId: string, label?: string): ZoneSession | null {
+  return loadZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
+}
+
+export interface RunZoneOptions {
+  projectDir: string
+  zoneId: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  userPrompt: string
+  model?: string
+  planMode?: boolean
+  settings: unknown
+}
+
+export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise<TerminalInfo | null> {
+  const settings = normalizeProjectSettings(opts.settings)
+  const { zones, componentsByZone } = indexGraph(opts.nodes)
+  const zone = zones.find(z => z.id === opts.zoneId)
+  if (!zone) return null
+
+  const safe = sanitize(zone.data.label)
+  const base = join(opts.projectDir, 'ARCHITECT')
+  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions', 'dispatches'].map(n => join(base, n))) {
+    fs.mkdirSync(dir, { recursive: true })
+  }
+
+  // Ensure the zone's system prompt file is up to date with the current canvas.
+  const zoneIdSet = new Set(zones.map(z => z.id))
+  const zoneEdges = opts.edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
+  const intraEdges = opts.edges.filter(e => !zoneIdSet.has(e.source) && !zoneIdSet.has(e.target))
+  const systemPrompt = buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones)
+  fs.writeFileSync(join(base, 'prompts', `${safe}.md`), systemPrompt)
+
+  const runtime = getZoneRuntime(zone, settings)
+  const model = opts.model || getZoneModel(zone, runtime)
+  const env: Record<string, string> = {}
+  for (const { key, value } of zone.data.envVars ?? []) {
+    if (key) env[key] = value
+  }
+
+  const saved = runtime === 'claude'
+    ? loadZoneSession(opts.projectDir, zone.id, safe)
+    : null
+  const canResume = saved && saved.runtime === 'claude'
+  const userPrompt = (opts.userPrompt ?? '').trim() || buildZoneBootstrapPrompt(zone)
+
+  // Replace any existing PTY for this zone so the same renderer tab gets reused.
+  const existing = sessions.get(zone.id)
+  if (existing) {
+    try { existing.pty.kill() } catch {}
+    sessions.delete(zone.id)
+  }
+
+  return spawnAgentSession({
+    win,
+    id: zone.id,
+    label: zone.data.label,
+    runtime,
+    env,
+    cwd: opts.projectDir,
+    initialPrompt: canResume ? undefined : userPrompt,
+    resumeSessionId: canResume ? saved!.sessionId : undefined,
+    resumeUserPrompt: canResume ? userPrompt : undefined,
+    appendSystemPrompt: canResume ? undefined : systemPrompt,
+    model,
+    planMode: opts.planMode === true,
+    capture: { projectDir: opts.projectDir, zoneKey: zone.id, legacyKey: safe },
+  })
+}
+
+export function resetZoneSession(projectDir: string, zoneId: string, label?: string): boolean {
+  return deleteZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
 }
