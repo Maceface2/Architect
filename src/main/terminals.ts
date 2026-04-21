@@ -314,10 +314,18 @@ interface Session {
 }
 
 const STARTUP_TIMEOUT_MS = 30_000
-// Coarse cue: a PTY line ending in one of these glyphs is treated as a
-// "CLI is at its prompt" signal. Runs against the rendered screen, not
-// raw bytes — the emulator strips ANSI first.
-const PROMPT_CUE_ENDINGS = ['>', '❯', '>>>', '$', '#', '›']
+// Ported from claw-code's detect_ready_for_prompt (worker_boot.rs:830). TUI
+// CLIs render their prompt inside a bordered box (Claude Code, Codex, Gemini,
+// opencode), so the bottom non-empty line is typically the box border, not the
+// prompt glyph itself. Matching has to look for box-enclosed prompts + common
+// "ready for input" strings, and must reject bare shell prompts.
+const READY_TEXT_NEEDLES = [
+  'ready for input',
+  'ready for your input',
+  'ready for prompt',
+  'send a message',
+  'type a message',
+]
 
 function generateTaskId(): string {
   return randomBytes(8).toString('hex')
@@ -347,11 +355,50 @@ function lastNonEmptyLine(rendered: string): string {
   return ''
 }
 
+function isShellPrompt(trimmed: string): boolean {
+  return (
+    trimmed.endsWith('$') ||
+    trimmed.endsWith('%') ||
+    trimmed.endsWith('#') ||
+    trimmed.startsWith('$ ') ||
+    trimmed.startsWith('% ') ||
+    trimmed.startsWith('# ')
+  )
+}
+
 function looksLikePromptReady(rendered: string): boolean {
-  const bottom = lastNonEmptyLine(rendered)
-  if (!bottom) return false
-  for (const cue of PROMPT_CUE_ENDINGS) {
-    if (bottom.endsWith(cue)) return true
+  const lowered = rendered.toLowerCase()
+  for (const needle of READY_TEXT_NEEDLES) {
+    if (lowered.includes(needle)) return true
+  }
+
+  // Scan the last ~10 non-empty lines — TUI CLIs render footer hints /
+  // status bars below the input row, so the input cue is rarely the very
+  // bottom line.
+  const lines = rendered.split('\n')
+  let scanned = 0
+  for (let i = lines.length - 1; i >= 0 && scanned < 10; i--) {
+    const trimmed = lines[i].trim()
+    if (!trimmed) continue
+    scanned += 1
+    if (isShellPrompt(trimmed)) continue
+
+    if (
+      trimmed === '>' ||
+      trimmed === '›' ||
+      trimmed === '❯' ||
+      trimmed.startsWith('> ') ||
+      trimmed.startsWith('› ') ||
+      trimmed.startsWith('❯ ') ||
+      trimmed.startsWith('>>>') ||
+      // Box-drawn TUI prompts (Claude Code, Codex, Gemini). The input row
+      // looks like `│ > ` or `│ › ` inside a bordered rectangle.
+      trimmed.includes('│ >') ||
+      trimmed.includes('│ ›') ||
+      trimmed.includes('│ ❯')
+    ) {
+      return true
+    }
   }
   return false
 }
@@ -619,21 +666,22 @@ function createSession(
   sessions.set(id, session)
   pushEvent(session, 'spawn', `pty spawned (${runtime})`)
 
-  // Agent sessions get a startup-timeout classifier (claw-code
-  // `observe_startup_timeout`). If the CLI is still in `spawning` after
-  // STARTUP_TIMEOUT_MS, classify as failed so the UI / coordinator surface
-  // the problem instead of silently hanging.
+  // Agent sessions get a startup-timeout safety net. If the CLI is still in
+  // `spawning` after STARTUP_TIMEOUT_MS, optimistically transition to `ready`
+  // so unknown TUIs (whose prompt cues we haven't characterized) don't
+  // hard-fail. The coordinator will still surface real failures — if the
+  // poke doesn't land, `delivery-failed` fires via the ack timeout; if the
+  // PTY actually died, `onExit` fires and marks `pty-exit`.
   if (kind === 'agent') {
     session.startupTimer = setTimeout(() => {
       const live = sessions.get(id)
       if (!live || live !== session) return
       if (live.lifecycle !== 'spawning') return
-      failSession(
-        id,
-        live,
-        'startup-timeout',
-        `CLI did not reach ready state within ${STARTUP_TIMEOUT_MS}ms`,
+      console.warn(
+        `[registry] ${id}: no prompt cue seen within ${STARTUP_TIMEOUT_MS}ms — marking ready optimistically`,
       )
+      setLifecycle(id, live, 'ready', 'ready', 'startup-timeout fallback (cue not matched)')
+      live.readyCallbacks.splice(0).forEach(cb => cb())
     }, STARTUP_TIMEOUT_MS)
   }
 
