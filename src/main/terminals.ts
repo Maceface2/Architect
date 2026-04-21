@@ -15,13 +15,16 @@ import {
 import {
   captureNewClaudeSession,
   captureNewCodexSession,
+  captureNewGeminiSession,
   captureNewOpencodeSession,
   deleteZoneSession,
   isCodexSessionIdForCwd,
+  isGeminiSessionIdForCwd,
   loadZoneSession,
   saveZoneSession,
   snapshotClaudeSessions,
   snapshotCodexSessions,
+  snapshotGeminiSessions,
   snapshotOpencodeSessions,
   type ZoneSession,
 } from './sessionCapture'
@@ -148,6 +151,12 @@ function loadSavedZoneSession(projectDir: string, zoneKey: string, legacyKey?: s
 
   if (saved.runtime === 'codex' && !isCodexSessionIdForCwd(projectDir, saved.sessionId)) {
     console.warn(`[session-capture] ${zoneKey}: dropping stale codex session ${saved.sessionId}`)
+    deleteZoneSession(projectDir, zoneKey, legacyKey)
+    return null
+  }
+
+  if (saved.runtime === 'gemini' && !isGeminiSessionIdForCwd(projectDir, saved.sessionId)) {
+    console.warn(`[session-capture] ${zoneKey}: dropping stale gemini session ${saved.sessionId}`)
     deleteZoneSession(projectDir, zoneKey, legacyKey)
     return null
   }
@@ -312,8 +321,9 @@ function buildRuntimeArgs(
     }
     case 'gemini': {
       const args: string[] = ['--approval-mode', 'yolo']
+      if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
-      if (prompt) args.push('--prompt-interactive', prompt)
+      if (prompt && !resumeSessionId) args.push('--prompt-interactive', prompt)
       return args
     }
     case 'opencode': {
@@ -414,13 +424,14 @@ function spawnAgentSession({
   // cleared via resetZoneSession. Skip capture entirely if a saved session
   // already exists for this zone.
   // Snapshot must happen BEFORE spawn so the new session can be identified.
-  const captureRuntime: 'claude' | 'codex' | 'opencode' | null =
-    capture && !resumeSessionId && (runtime === 'claude' || runtime === 'codex' || runtime === 'opencode')
+  const captureRuntime: 'claude' | 'codex' | 'gemini' | 'opencode' | null =
+    capture && !resumeSessionId && (runtime === 'claude' || runtime === 'codex' || runtime === 'gemini' || runtime === 'opencode')
       ? runtime
       : null
 
   let claudeSnapshot: Set<string> | null = null
   let codexSnapshot: Set<string> | null = null
+  let geminiSnapshot: Set<string> | null = null
   let opencodeSnapshotPromise: Promise<Set<string>> | null = null
   let captureSkipped = false
 
@@ -435,6 +446,7 @@ function spawnAgentSession({
     if (!captureSkipped) {
       if (captureRuntime === 'claude') claudeSnapshot = snapshotClaudeSessions(cwd)
       else if (captureRuntime === 'codex') codexSnapshot = snapshotCodexSessions(cwd)
+      else if (captureRuntime === 'gemini') geminiSnapshot = snapshotGeminiSessions(cwd)
       else if (captureRuntime === 'opencode') opencodeSnapshotPromise = snapshotOpencodeSessions()
     }
   }
@@ -492,6 +504,15 @@ function spawnAgentSession({
       void captureNewCodexSession(cwd, codexSnapshot).then(sessionId => {
         if (!sessionId) {
           console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new codex rollout for cwd ${cwd}`)
+          return
+        }
+        persistAndBroadcast(sessionId)
+      })
+    } else if (geminiSnapshot) {
+      console.log(`[session-capture] ${capture.zoneKey}: gemini snapshot ${geminiSnapshot.size} existing, polling…`)
+      void captureNewGeminiSession(cwd, geminiSnapshot).then(sessionId => {
+        if (!sessionId) {
+          console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new gemini session for cwd ${cwd}`)
           return
         }
         persistAndBroadcast(sessionId)
@@ -1185,7 +1206,7 @@ export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeR
   if (saved.runtime !== opts.runtime) {
     return { ok: false, reason: `session-runtime-mismatch:${saved.runtime}` }
   }
-  if (opts.runtime !== 'claude' && opts.runtime !== 'codex' && opts.runtime !== 'opencode') {
+  if (opts.runtime !== 'claude' && opts.runtime !== 'codex' && opts.runtime !== 'gemini' && opts.runtime !== 'opencode') {
     return { ok: false, reason: `resume-not-supported:${opts.runtime}` }
   }
 

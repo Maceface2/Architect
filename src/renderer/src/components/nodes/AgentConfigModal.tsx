@@ -196,7 +196,7 @@ export default function AgentConfigModal({
                   onClick={() => setResetState('confirm')}
                   disabled={resetState === 'pending'}
                   className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:text-slate-200 hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
-                  title="Delete the saved Claude session so the next dispatch starts fresh"
+                  title="Delete the saved session so the next dispatch starts fresh"
                 >
                   <RotateCcw size={11} />
                   {resetState === 'pending'

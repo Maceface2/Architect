@@ -50,7 +50,7 @@ const TERM_THEME = {
 
 const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
-const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'opencode'])
+const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
 
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
@@ -477,7 +477,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     return map
   }, [allSessions])
 
-  // Backfill saved Claude sessions for tabs whenever the session list changes.
+  // Backfill saved sessions for tabs whenever the session list changes.
   useEffect(() => {
     if (!projectDir) return
     let cancelled = false

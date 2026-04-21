@@ -1,6 +1,7 @@
 import fs from 'fs'
 import os from 'os'
-import { join } from 'path'
+import { createHash } from 'crypto'
+import { join, resolve } from 'path'
 import * as pty from 'node-pty'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
@@ -198,6 +199,132 @@ export function isCodexSessionIdForCwd(cwd: string, sessionId: string): boolean 
           if (meta?.id === sessionId && meta.cwd === cwd && meta.isPrimary) return true
         }
       }
+    }
+  }
+
+  return false
+}
+
+// --- Gemini ---
+// Gemini stores project sessions under ~/.gemini/tmp/<identifier>/chats/session-*.json.
+// Newer versions use a slug from ~/.gemini/projects.json; older versions used a
+// SHA-256 hash of the project root. Session files include the stable sessionId,
+// projectHash, timestamps, messages, and a kind ("main" or "subagent").
+const GEMINI_ROOT = join(os.homedir(), '.gemini')
+const GEMINI_TMP_ROOT = join(GEMINI_ROOT, 'tmp')
+const GEMINI_PROJECTS_PATH = join(GEMINI_ROOT, 'projects.json')
+
+interface GeminiSessionMeta {
+  id: string
+  projectHash: string
+  isPrimary: boolean
+}
+
+function hashGeminiProjectRoot(cwd: string): string {
+  return createHash('sha256').update(resolve(cwd)).digest('hex')
+}
+
+function readGeminiProjectRegistry(): Record<string, string> {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(GEMINI_PROJECTS_PATH, 'utf-8'))
+    return parsed?.projects && typeof parsed.projects === 'object'
+      ? parsed.projects as Record<string, string>
+      : {}
+  } catch {
+    return {}
+  }
+}
+
+function listGeminiChatDirs(cwd: string): string[] {
+  const dirs = new Set<string>()
+  const resolved = resolve(cwd)
+  const projectHash = hashGeminiProjectRoot(resolved)
+  dirs.add(join(GEMINI_TMP_ROOT, projectHash, 'chats'))
+
+  const slug = readGeminiProjectRegistry()[resolved]
+  if (typeof slug === 'string' && slug) {
+    dirs.add(join(GEMINI_TMP_ROOT, slug, 'chats'))
+  }
+
+  return Array.from(dirs)
+}
+
+function readGeminiSessionMeta(path: string): GeminiSessionMeta | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path, 'utf-8'))
+    if (typeof parsed?.sessionId !== 'string' || typeof parsed?.projectHash !== 'string') return null
+    return {
+      id: parsed.sessionId as string,
+      projectHash: parsed.projectHash as string,
+      isPrimary: parsed.kind !== 'subagent',
+    }
+  } catch {
+    return null
+  }
+}
+
+function listGeminiSessionIdsForCwd(cwd: string, primaryOnly = false): Set<string> {
+  const ids = new Set<string>()
+  const projectHash = hashGeminiProjectRoot(cwd)
+
+  for (const dir of listGeminiChatDirs(cwd)) {
+    let files: string[]
+    try {
+      files = fs.readdirSync(dir).filter(name => name.startsWith('session-') && name.endsWith('.json'))
+    } catch {
+      continue
+    }
+
+    for (const file of files) {
+      const meta = readGeminiSessionMeta(join(dir, file))
+      if (!meta || meta.projectHash !== projectHash) continue
+      if (primaryOnly && !meta.isPrimary) continue
+      ids.add(meta.id)
+    }
+  }
+
+  return ids
+}
+
+export function snapshotGeminiSessions(cwd: string): Set<string> {
+  return listGeminiSessionIdsForCwd(cwd, true)
+}
+
+export async function captureNewGeminiSession(
+  cwd: string,
+  before: Set<string>,
+  timeoutMs = 90000,
+  pollMs = 750,
+): Promise<string | null> {
+  const start = Date.now()
+  let lastSize = before.size
+  while (Date.now() - start < timeoutMs) {
+    const current = listGeminiSessionIdsForCwd(cwd, true)
+    for (const id of current) {
+      if (!before.has(id)) return id
+    }
+    if (current.size !== lastSize) {
+      console.log(`[session-capture] gemini poll: project sessions ${lastSize} → ${current.size} (none new)`)
+      lastSize = current.size
+    }
+    await new Promise(resolve => setTimeout(resolve, pollMs))
+  }
+  return null
+}
+
+export function isGeminiSessionIdForCwd(cwd: string, sessionId: string): boolean {
+  const projectHash = hashGeminiProjectRoot(cwd)
+  for (const dir of listGeminiChatDirs(cwd)) {
+    let files: string[]
+    try {
+      files = fs.readdirSync(dir).filter(name => name.endsWith('.json'))
+    } catch {
+      continue
+    }
+
+    for (const file of files) {
+      const meta = readGeminiSessionMeta(join(dir, file))
+      if (meta?.id === sessionId && meta.projectHash === projectHash && meta.isPrimary) return true
     }
   }
 
