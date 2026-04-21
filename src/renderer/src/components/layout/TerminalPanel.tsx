@@ -50,6 +50,8 @@ const TERM_THEME = {
 
 const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
+const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'opencode'])
+
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 
@@ -243,8 +245,9 @@ function PaneView({
           const isArchitect = s.id === 'architect-agent'
           const isActive = tabId === pane.activeTab
           const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
-          const canResume = !isShell && s.runtime === 'claude' && exitedIds.has(s.id) && resumableIds.has(s.id)
+          const canResume = !isShell && RESUMABLE_RUNTIMES.has(s.runtime as AgentRuntime) && exitedIds.has(s.id) && resumableIds.has(s.id)
           const isResuming = resumingIds.has(s.id)
+          const resumeLabel = canResume && runtime ? `Resume saved ${runtime.label} session` : 'Resume saved session'
           return (
             <Fragment key={tabId}>
               {tabDropIdx === i && (
@@ -299,8 +302,8 @@ function PaneView({
                         ? 'text-slate-600 cursor-wait'
                         : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
                     }`}
-                    title={isResuming ? 'Resuming…' : 'Resume saved Claude session'}
-                    aria-label="Resume saved Claude session"
+                    title={isResuming ? 'Resuming…' : resumeLabel}
+                    aria-label={resumeLabel}
                   >
                     <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
                   </button>

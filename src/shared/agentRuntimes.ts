@@ -29,8 +29,8 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     shortLabel: 'codex',
     binary: 'codex',
     accentColor: '#10b981',
-    defaultModel: 'gpt-5-codex',
-    suggestedModels: ['gpt-5-codex', 'gpt-5', 'o4-mini'],
+    defaultModel: 'gpt-5.4-mini',
+    suggestedModels: ['gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.4'],
   },
   {
     id: 'gemini',

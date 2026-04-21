@@ -14,10 +14,15 @@ import {
 } from '../shared/agentRuntimes'
 import {
   captureNewClaudeSession,
+  captureNewCodexSession,
+  captureNewOpencodeSession,
   deleteZoneSession,
+  isCodexSessionIdForCwd,
   loadZoneSession,
   saveZoneSession,
   snapshotClaudeSessions,
+  snapshotCodexSessions,
+  snapshotOpencodeSessions,
   type ZoneSession,
 } from './sessionCapture'
 import { saveDispatch, type DispatchRecord } from './dispatchCapture'
@@ -137,6 +142,29 @@ function resolveBinary(runtime: AgentRuntime): string | null {
   }
 }
 
+function loadSavedZoneSession(projectDir: string, zoneKey: string, legacyKey?: string): ZoneSession | null {
+  const saved = loadZoneSession(projectDir, zoneKey, legacyKey)
+  if (!saved) return null
+
+  if (saved.runtime === 'codex' && !isCodexSessionIdForCwd(projectDir, saved.sessionId)) {
+    console.warn(`[session-capture] ${zoneKey}: dropping stale codex session ${saved.sessionId}`)
+    deleteZoneSession(projectDir, zoneKey, legacyKey)
+    return null
+  }
+
+  return saved
+}
+
+function loadSavedZoneSessionForRuntime(
+  projectDir: string,
+  zoneKey: string,
+  runtime: AgentRuntime,
+  legacyKey?: string,
+): ZoneSession | null {
+  const saved = loadSavedZoneSession(projectDir, zoneKey, legacyKey)
+  return saved && saved.runtime === runtime ? saved : null
+}
+
 export interface TerminalInfo {
   id: string
   label: string
@@ -216,7 +244,9 @@ interface SpawnAgentOptions {
   model?: string
   onExit?: () => void
   resumeSessionId?: string
-  // When set and runtime is claude, capture the new session ID and persist it.
+  // When set, capture the new session ID after spawn and persist it.
+  // Claude always re-captures; codex/opencode honor a keep-original policy
+  // (skip if a saved session for the zone already exists).
   // zoneKey is the stable zone id; legacyKey is the old label-based key for migration.
   capture?: { projectDir: string; zoneKey: string; legacyKey?: string }
   // Defaults to true (preserves zone-agent autonomy). Set false for the
@@ -231,7 +261,7 @@ interface SpawnAgentOptions {
   // When set and resuming, write this prompt into the PTY ~1.5s after spawn
   // so Claude takes it as the next user turn.
   resumeUserPrompt?: string
-  // Optional callback fired once a Claude session ID is captured.
+  // Optional callback fired once a session ID is captured.
   onSessionCaptured?: (sessionId: string) => void
 }
 
@@ -269,9 +299,15 @@ function buildRuntimeArgs(
       return args
     }
     case 'codex': {
-      const args: string[] = ['--no-alt-screen', '-a', 'never', '-s', 'workspace-write']
+      // `codex resume <UUID>` is a subcommand, not a flag. The standard
+      // operating flags (--no-alt-screen, -a, -s, -m) are also accepted
+      // under `resume`, so we keep them for both modes. On resume the prior
+      // conversation is replayed, so don't push the prompt as a positional.
+      const args: string[] = []
+      if (resumeSessionId) args.push('resume', resumeSessionId)
+      args.push('--no-alt-screen', '-a', 'never', '-s', 'workspace-write')
       if (model) args.push('--model', model)
-      if (prompt) args.push(prompt)
+      if (prompt && !resumeSessionId) args.push(prompt)
       return args
     }
     case 'gemini': {
@@ -281,8 +317,12 @@ function buildRuntimeArgs(
       return args
     }
     case 'opencode': {
+      // Per upstream docs / issue #11680, the documented session-resume
+      // syntax pairs `--continue --session <id>`. `--session` alone is
+      // unreliable in TUI mode in current versions.
       const args: string[] = []
-      if (prompt) args.push('--prompt', prompt)
+      if (resumeSessionId) args.push('--continue', '--session', resumeSessionId)
+      if (prompt && !resumeSessionId) args.push('--prompt', prompt)
       if (model) args.push('--model', model)
       return args
     }
@@ -368,13 +408,40 @@ function spawnAgentSession({
     )
   }
 
-  // Snapshot existing claude sessions BEFORE spawn so capture can identify the new one.
-  const claudeSnapshot =
-    runtime === 'claude' && capture && !resumeSessionId
-      ? snapshotClaudeSessions(cwd)
+  // Decide whether to capture a session ID for this spawn.
+  // Claude: always re-capture (mirrors prior behavior).
+  // Codex/OpenCode: keep-original policy — first capture wins until manually
+  // cleared via resetZoneSession. Skip capture entirely if a saved session
+  // already exists for this zone.
+  // Snapshot must happen BEFORE spawn so the new session can be identified.
+  const captureRuntime: 'claude' | 'codex' | 'opencode' | null =
+    capture && !resumeSessionId && (runtime === 'claude' || runtime === 'codex' || runtime === 'opencode')
+      ? runtime
       : null
 
-  const ptyProcess = pty.spawn(bin, buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt), {
+  let claudeSnapshot: Set<string> | null = null
+  let codexSnapshot: Set<string> | null = null
+  let opencodeSnapshotPromise: Promise<Set<string>> | null = null
+  let captureSkipped = false
+
+  if (captureRuntime && capture) {
+    if (captureRuntime !== 'claude') {
+      const existing = loadSavedZoneSessionForRuntime(capture.projectDir, capture.zoneKey, captureRuntime, capture.legacyKey)
+      if (existing) {
+        captureSkipped = true
+        console.log(`[session-capture] ${capture.zoneKey}: existing ${existing.runtime} session ${existing.sessionId} — keep-original policy, skipping capture`)
+      }
+    }
+    if (!captureSkipped) {
+      if (captureRuntime === 'claude') claudeSnapshot = snapshotClaudeSessions(cwd)
+      else if (captureRuntime === 'codex') codexSnapshot = snapshotCodexSessions(cwd)
+      else if (captureRuntime === 'opencode') opencodeSnapshotPromise = snapshotOpencodeSessions()
+    }
+  }
+
+  const spawnArgs = buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt)
+  console.log(`[spawn] ${runtime} (zone=${id}) cwd=${cwd} cmd=${bin} args=${JSON.stringify(spawnArgs)}${resumeSessionId ? ' [RESUME]' : ''}`)
+  const ptyProcess = pty.spawn(bin, spawnArgs, {
     name: 'xterm-256color',
     cols: 220,
     rows: 50,
@@ -390,31 +457,57 @@ function spawnAgentSession({
     }, 1500)
   }
 
-  if (claudeSnapshot && capture) {
-    console.log(`[session-capture] ${capture.zoneKey}: snapshot ${claudeSnapshot.size} existing, polling…`)
-    void captureNewClaudeSession(cwd, claudeSnapshot).then(sessionId => {
-      if (!sessionId) {
-        console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
-        return
-      }
+  if (captureRuntime && capture && !captureSkipped) {
+    const persistAndBroadcast = (sessionId: string): void => {
       try {
         saveZoneSession(capture.projectDir, capture.zoneKey, {
-          runtime: 'claude',
+          runtime: captureRuntime,
           sessionId,
           capturedAt: new Date().toISOString(),
         })
-        console.log(`[session-capture] ${capture.zoneKey}: saved session ${sessionId}`)
+        console.log(`[session-capture] ${capture.zoneKey}: saved ${captureRuntime} session ${sessionId}`)
         broadcast('zone:session-captured', {
           zoneKey: capture.zoneKey,
           zoneId: id,
           sessionId,
-          runtime: 'claude',
+          runtime: captureRuntime,
         })
         onSessionCaptured?.(sessionId)
       } catch (err) {
         console.error(`[session-capture] ${capture.zoneKey}: failed to save`, err)
       }
-    })
+    }
+
+    if (claudeSnapshot) {
+      console.log(`[session-capture] ${capture.zoneKey}: claude snapshot ${claudeSnapshot.size} existing, polling…`)
+      void captureNewClaudeSession(cwd, claudeSnapshot).then(sessionId => {
+        if (!sessionId) {
+          console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
+          return
+        }
+        persistAndBroadcast(sessionId)
+      })
+    } else if (codexSnapshot) {
+      console.log(`[session-capture] ${capture.zoneKey}: codex snapshot ${codexSnapshot.size} existing, polling…`)
+      void captureNewCodexSession(cwd, codexSnapshot).then(sessionId => {
+        if (!sessionId) {
+          console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new codex rollout for cwd ${cwd}`)
+          return
+        }
+        persistAndBroadcast(sessionId)
+      })
+    } else if (opencodeSnapshotPromise) {
+      void opencodeSnapshotPromise.then(snapshot => {
+        console.log(`[session-capture] ${capture.zoneKey}: opencode snapshot ${snapshot.size} existing, polling…`)
+        return captureNewOpencodeSession(snapshot)
+      }).then(sessionId => {
+        if (!sessionId) {
+          console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new opencode session`)
+          return
+        }
+        persistAndBroadcast(sessionId)
+      })
+    }
   }
 
   return { id, label, runtime }
@@ -874,10 +967,8 @@ export async function runGraph(
     }
     const systemPrompt = fs.readFileSync(join(promptsDir, `${sanitize(zone.data.label)}.md`), 'utf-8')
 
-    const saved = runtime === 'claude'
-      ? loadZoneSession(projectDir, zone.id, sanitize(zone.data.label))
-      : null
-    const canResume = saved && saved.runtime === 'claude'
+    const saved = loadSavedZoneSessionForRuntime(projectDir, zone.id, runtime, sanitize(zone.data.label))
+    const canResume = !!saved
 
     spawnAgentSession({
       win,
@@ -942,10 +1033,8 @@ export async function runGraph(
     const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
     const bootstrap = buildZoneBootstrapPrompt(zone)
 
-    const saved = runtime === 'claude'
-      ? loadZoneSession(projectDir, zone.id, safe)
-      : null
-    const canResume = saved && saved.runtime === 'claude'
+    const saved = loadSavedZoneSessionForRuntime(projectDir, zone.id, runtime, safe)
+    const canResume = !!saved
 
     spawnAgentSession({
       win,
@@ -1039,11 +1128,10 @@ export function startAssistant(
   const contextFile = join(architectDir, '.assistant-context.md')
   fs.writeFileSync(contextFile, contextMd)
 
-  // Resume the prior Claude session if one exists for this assistant on this
-  // project — avoids re-injecting the context file on every reopen.
-  const saved = loadZoneSession(projectDir, ASSISTANT_ZONE_SAFE)
-  const canResume =
-    saved && saved.runtime === 'claude' && safeRuntime === 'claude'
+  // Resume the prior saved session for this assistant when the runtime still
+  // matches, so reopening doesn't re-inject the context file every time.
+  const saved = loadSavedZoneSessionForRuntime(projectDir, ASSISTANT_ZONE_SAFE, safeRuntime)
+  const canResume = !!saved
   console.log(
     `[assistant] runtime=${safeRuntime} saved=${saved ? saved.sessionId : 'none'} → ${canResume ? 'RESUMING' : 'fresh start'}`,
   )
@@ -1092,12 +1180,12 @@ export interface ResumeResult {
 // existing PTY for that zone (same id keeps the same renderer tab).
 export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeResult {
   const zoneSafe = sanitize(opts.label)
-  const saved: ZoneSession | null = loadZoneSession(opts.projectDir, opts.zoneId, zoneSafe)
+  const saved: ZoneSession | null = loadSavedZoneSession(opts.projectDir, opts.zoneId, zoneSafe)
   if (!saved) return { ok: false, reason: 'no-saved-session' }
   if (saved.runtime !== opts.runtime) {
     return { ok: false, reason: `session-runtime-mismatch:${saved.runtime}` }
   }
-  if (opts.runtime !== 'claude') {
+  if (opts.runtime !== 'claude' && opts.runtime !== 'codex' && opts.runtime !== 'opencode') {
     return { ok: false, reason: `resume-not-supported:${opts.runtime}` }
   }
 
@@ -1127,7 +1215,7 @@ export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeR
 }
 
 export function getZoneSession(projectDir: string, zoneId: string, label?: string): ZoneSession | null {
-  return loadZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
+  return loadSavedZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
 }
 
 export interface RunZoneOptions {
@@ -1167,10 +1255,8 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     if (key) env[key] = value
   }
 
-  const saved = runtime === 'claude'
-    ? loadZoneSession(opts.projectDir, zone.id, safe)
-    : null
-  const canResume = saved && saved.runtime === 'claude'
+  const saved = loadSavedZoneSessionForRuntime(opts.projectDir, zone.id, runtime, safe)
+  const canResume = !!saved
   const userPrompt = (opts.userPrompt ?? '').trim()
 
   // Replace any existing PTY for this zone so the same renderer tab gets reused.
