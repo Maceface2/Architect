@@ -3,9 +3,12 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { X, Bot } from 'lucide-react'
 import '@xterm/xterm/css/xterm.css'
-import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import { getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../../../shared/agentRuntimes'
 
-const ASSISTANT_ID = 'architect-assistant'
+const ASSISTANT_IDS: Record<AssistantMode, string> = {
+  architecture: 'architect-assistant-architecture',
+  general:      'architect-assistant-general',
+}
 
 // Strip ANSI escape codes so we can search for plain-text markers
 const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g
@@ -41,17 +44,22 @@ interface Props {
   onClose: () => void
   onCanvasUpdate: (update: CanvasUpdate) => void
   runtime: AgentRuntime
+  mode: AssistantMode
+  onModeChange: (next: AssistantMode) => void
 }
 
-export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Props) {
+export default function AssistantPanel({ onClose, onCanvasUpdate, runtime, mode, onModeChange }: Props) {
   const containerRef  = useRef<HTMLDivElement>(null)
   const termRef       = useRef<Terminal | null>(null)
   const fitRef        = useRef<FitAddon | null>(null)
   const parseBufferRef = useRef<string>('')
   const runtimeMeta = getAgentRuntime(runtime)
+  const assistantId = ASSISTANT_IDS[mode]
 
-  // Parse the ANSI-stripped data stream for ARCHITECT_CANVAS_UPDATE blocks
+  // Parse the ANSI-stripped data stream for ARCHITECT_CANVAS_UPDATE blocks.
+  // Only active in architecture mode — general mode must never modify the canvas.
   const parseForUpdates = useCallback((raw: string) => {
+    if (mode !== 'architecture') return
     parseBufferRef.current += stripAnsi(raw)
 
     const START = 'ARCHITECT_CANVAS_UPDATE'
@@ -77,11 +85,11 @@ export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Pro
     if (parseBufferRef.current.length > 50_000) {
       parseBufferRef.current = parseBufferRef.current.slice(-10_000)
     }
-  }, [onCanvasUpdate])
+  }, [onCanvasUpdate, mode])
 
-  // Mount xterm once
+  // Mount xterm — remount on mode change so each mode gets its own scrollback
   useEffect(() => {
-    if (!containerRef.current || termRef.current) return
+    if (!containerRef.current) return
 
     const term = new Terminal({
       theme: TERM_THEME,
@@ -95,14 +103,15 @@ export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Pro
     term.loadAddon(fit)
     termRef.current = term
     fitRef.current  = fit
+    parseBufferRef.current = ''
 
-    term.onData(data => window.electron.terminal.input(ASSISTANT_ID, data))
+    term.onData(data => window.electron.terminal.input(assistantId, data))
     term.open(containerRef.current)
 
     const doFit = () => {
       try {
         fit.fit()
-        window.electron.terminal.resize(ASSISTANT_ID, term.cols, term.rows)
+        window.electron.terminal.resize(assistantId, term.cols, term.rows)
       } catch {}
     }
 
@@ -116,50 +125,79 @@ export default function AssistantPanel({ onClose, onCanvasUpdate, runtime }: Pro
       termRef.current = null
       fitRef.current  = null
     }
-  }, [])
+  }, [assistantId])
 
   // Stream terminal data
   useEffect(() => {
     return window.electron.terminal.onData(({ id, data }) => {
-      if (id !== ASSISTANT_ID) return
+      if (id !== assistantId) return
       termRef.current?.write(data)
       parseForUpdates(data)
     })
-  }, [parseForUpdates])
+  }, [parseForUpdates, assistantId])
 
   // Handle session exit
   useEffect(() => {
     return window.electron.terminal.onExit(({ id }) => {
-      if (id !== ASSISTANT_ID) return
+      if (id !== assistantId) return
       termRef.current?.write('\r\n\x1b[35m[assistant session ended]\x1b[0m\r\n')
     })
-  }, [])
+  }, [assistantId])
+
+  const headerLabel = mode === 'architecture' ? 'Architecture Assistant' : 'General Assistant'
 
   return (
     <div className="flex flex-col h-full bg-[#0d0d0d] border-l border-white/[0.06]">
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] flex-shrink-0 bg-[#111111]">
-        <div className="flex items-center gap-2">
-          <Bot size={13} className="text-[#c084fc]" />
-          <span className="text-xs font-medium text-slate-300">Architecture Assistant</span>
+        <div className="flex items-center gap-2 min-w-0">
+          <Bot size={13} className="text-[#c084fc] flex-shrink-0" />
+          <span className="text-xs font-medium text-slate-300 truncate">{headerLabel}</span>
           <span
-            className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+            className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
             style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
           >
             {runtimeMeta.shortLabel}
           </span>
         </div>
-        <button
-          onClick={onClose}
-          className="text-slate-600 hover:text-slate-300 transition-colors"
-          title="Close assistant"
-        >
-          <X size={13} />
-        </button>
+        <div className="flex items-center gap-2">
+          {/* Mode toggle — segmented control */}
+          <div className="flex items-center rounded border border-white/[0.08] bg-[#0d0d0d] overflow-hidden">
+            <button
+              onClick={() => onModeChange('architecture')}
+              className={
+                mode === 'architecture'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
+                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+              }
+              title="Architecture mode — edit the canvas"
+            >
+              Architecture
+            </button>
+            <button
+              onClick={() => onModeChange('general')}
+              className={
+                mode === 'general'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
+                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+              }
+              title="General mode — generic coding assistant"
+            >
+              General
+            </button>
+          </div>
+          <button
+            onClick={onClose}
+            className="text-slate-600 hover:text-slate-300 transition-colors"
+            title="Close assistant"
+          >
+            <X size={13} />
+          </button>
+        </div>
       </div>
 
       {/* Terminal */}
-      <div ref={containerRef} className="flex-1 overflow-hidden p-1" />
+      <div key={assistantId} ref={containerRef} className="flex-1 overflow-hidden p-1" />
     </div>
   )
 }

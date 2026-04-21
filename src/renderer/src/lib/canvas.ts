@@ -20,6 +20,7 @@ import type {
 export function createDefaultProjectSettings(): ProjectSettings {
   return {
     defaultRuntime: DEFAULT_AGENT_RUNTIME,
+    assistantMode: 'architecture',
   }
 }
 
@@ -94,8 +95,10 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   const defaultRuntime = isAgentRuntime(rawSettings.defaultRuntime)
     ? rawSettings.defaultRuntime
     : DEFAULT_AGENT_RUNTIME
+  const assistantMode =
+    rawSettings.assistantMode === 'general' ? 'general' : 'architecture'
 
-  return { defaultRuntime }
+  return { defaultRuntime, assistantMode }
 }
 
 function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettings): ZoneNodeData {

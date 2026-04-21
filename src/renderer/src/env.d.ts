@@ -1,5 +1,5 @@
 import type { AgentRuntime } from '../../shared/agentRuntimes'
-import type { DispatchRecord, ProjectSettings } from './types'
+import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord } from './types'
 
 interface FileEntry {
   name: string
@@ -34,8 +34,28 @@ interface ElectronAPI {
     dispatchContext?: unknown
   ) => Promise<TerminalInfo[]>
   listDispatches: (projectDir: string) => Promise<DispatchRecord[]>
+  dispatches: {
+    list: (projectDir: string) => Promise<DispatchRecord[]>
+    delete: (projectDir: string, dispatchId: string) => Promise<boolean>
+    updateSummary: (projectDir: string, dispatchId: string, summary: string) => Promise<boolean>
+    resume: (opts: {
+      projectDir: string
+      dispatchId: string
+      nodes: unknown[]
+      edges: unknown[]
+      settings: ProjectSettings
+    }) => Promise<
+      | { ok: true; info: TerminalInfo[] }
+      | { ok: false; error: 'not-found' | 'legacy-protocol' }
+    >
+  }
   assistant: {
-    start: (projectDir: string, contextMd: string, runtime: AgentRuntime) => Promise<TerminalInfo | null>
+    start: (
+      projectDir: string,
+      contextMd: string,
+      runtime: AgentRuntime,
+      mode: AssistantMode,
+    ) => Promise<TerminalInfo | null>
     stop: () => void
   }
   terminal: {
@@ -43,6 +63,18 @@ interface ElectronAPI {
     input: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
     killAll: () => void
+    close: (id: string) => Promise<{ ok: boolean; reason?: string }>
+    getCaptureState: (id: string) => Promise<'pending' | 'ready' | null>
+    onCaptureState: (
+      cb: (event: { id: string; state: 'pending' | 'ready' }) => void,
+    ) => () => void
+    onStatus: (
+      cb: (event: {
+        id: string
+        status: 'spawning' | 'ready' | 'running' | 'finished' | 'failed'
+        lastError: { kind: string; message: string; ts: number } | null
+      }) => void,
+    ) => () => void
     onData: (cb: (event: { id: string; data: string }) => void) => () => void
     onExit: (cb: (event: { id: string; exitCode: number }) => void) => () => void
     popout: (opts: { id: string; label: string; runtime: string }) => Promise<{ ok: boolean }>
@@ -53,36 +85,51 @@ interface ElectronAPI {
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
   saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>
   zone: {
-    getSession: (
+    listSessions: (
       projectDir: string,
       zoneId: string,
       label?: string,
-    ) => Promise<{ runtime: AgentRuntime; sessionId: string; capturedAt: string } | null>
-    resume: (opts: {
-      projectDir: string
-      zoneId: string
-      label: string
-      runtime: AgentRuntime
-      model?: string
-      envVars?: Array<{ key: string; value: string }>
-    }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo; sessionId?: string }>
+    ) => Promise<ZoneSessionRecord[]>
+    deleteSession: (
+      projectDir: string,
+      zoneId: string,
+      sessionId: string,
+      label?: string,
+    ) => Promise<boolean>
+    updateSessionSummary: (
+      projectDir: string,
+      zoneId: string,
+      sessionId: string,
+      summary: string,
+      label?: string,
+    ) => Promise<boolean>
     resetSession: (opts: {
       projectDir: string
       zoneId: string
       label?: string
     }) => Promise<boolean>
-    run: (opts: {
+    launch: (opts: {
       projectDir: string
       zoneId: string
       nodes: unknown[]
       edges: unknown[]
-      userPrompt: string
+      mode: 'new' | 'resume'
+      sessionId?: string
+      summary?: string
+      userPrompt?: string
       model?: string
       planMode?: boolean
       settings: ProjectSettings
-    }) => Promise<TerminalInfo | null>
+    }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo }>
     onSessionCaptured: (
-      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: AgentRuntime }) => void,
+      cb: (event: {
+        zoneKey: string
+        zoneId: string
+        sessionId: string
+        runtime: AgentRuntime
+        summary: string
+        dispatchId?: string
+      }) => void,
     ) => () => void
   }
 }

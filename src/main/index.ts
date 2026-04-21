@@ -2,9 +2,33 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
-import { initShellEnv, runGraph, runZone, resetZoneSession, writeToTerminal, resizeTerminal, killAll, startAssistant, stopAssistant, spawnShellSession, resumeZone, getZoneSession, type ResumeZoneOptions, type RunGraphDispatch, type RunZoneOptions } from './terminals'
-import { listDispatches } from './dispatchCapture'
-import type { AgentRuntime } from '../shared/agentRuntimes'
+import {
+  initShellEnv,
+  runGraph,
+  runZone,
+  resumeDispatch,
+  resetZoneSession,
+  writeToTerminal,
+  resizeTerminal,
+  killAll,
+  closeTerminal,
+  getCaptureState,
+  startAssistant,
+  stopAssistant,
+  spawnShellSession,
+  listZoneSessionsForZone,
+  deleteZoneSessionEntry,
+  renameZoneSessionEntry,
+  type RunGraphDispatch,
+  type RunZoneOptions,
+  type ResumeDispatchOptions,
+} from './terminals'
+import {
+  listDispatches,
+  deleteDispatch,
+  updateDispatchSummary,
+} from './dispatchCapture'
+import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
 app.setName('Architect')
@@ -172,8 +196,20 @@ ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, dispatch: RunG
 })
 
 ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
-  if (!mainWindow) return null
+  if (!mainWindow) return { ok: false, reason: 'no-window' }
   return runZone(mainWindow, opts)
+})
+
+ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string) => {
+  return listZoneSessionsForZone(projectDir, zoneId, label)
+})
+
+ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string) => {
+  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label)
+})
+
+ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) => {
+  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label)
 })
 
 ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string) => {
@@ -184,9 +220,22 @@ ipcMain.handle('dispatches:list', (_event, projectDir: string) => {
   return listDispatches(projectDir)
 })
 
-ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime) => {
+ipcMain.handle('dispatches:delete', (_event, projectDir: string, dispatchId: string) => {
+  return deleteDispatch(projectDir, dispatchId)
+})
+
+ipcMain.handle('dispatches:update-summary', (_event, projectDir: string, dispatchId: string, summary: string) => {
+  return updateDispatchSummary(projectDir, dispatchId, summary)
+})
+
+ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
+  if (!mainWindow) return { ok: false, error: 'not-found' as const }
+  return resumeDispatch(mainWindow, opts)
+})
+
+ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode) => {
   if (!mainWindow) return null
-  return startAssistant(mainWindow, projectDir, contextMd, runtime)
+  return startAssistant(mainWindow, projectDir, contextMd, runtime, mode)
 })
 
 ipcMain.on('stop-assistant', () => {
@@ -210,13 +259,12 @@ ipcMain.on('terminal:kill-all', () => {
   killAll()
 })
 
-ipcMain.handle('zone:get-session', (_event, projectDir: string, zoneId: string, label?: string) => {
-  return getZoneSession(projectDir, zoneId, label)
+ipcMain.handle('terminal:close', (_event, id: string) => {
+  return closeTerminal(id)
 })
 
-ipcMain.handle('zone:resume', (_event, opts: ResumeZoneOptions) => {
-  if (!mainWindow) return { ok: false, reason: 'no-window' }
-  return resumeZone(mainWindow, opts)
+ipcMain.handle('terminal:capture-state', (_event, id: string) => {
+  return getCaptureState(id)
 })
 
 // ── Terminal popout windows ────────────────────────────────────────────────

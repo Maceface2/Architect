@@ -27,6 +27,7 @@ import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { palette, ZONE_PALETTE_ITEM } from './data/componentPalette'
 import { nodeTypes } from './components/nodes/nodeTypes'
 import type {
+  AssistantMode,
   CanvasNode,
   ComponentNodeType,
   ProjectSettings,
@@ -292,7 +293,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [isDirty, setIsDirty] = useState(false)
   const [dispatchedGraph, setDispatchedGraph] = useState<Record<string, string> | null>(null)
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false)
-  const [preselectedZoneIds, setPreselectedZoneIds] = useState<string[] | null>(null)
+  const [dispatchPrefill, setDispatchPrefill] = useState<string>('')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
@@ -462,7 +463,26 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const onSave = useCallback(async () => {
     const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
     await persistCanvasRaw(raw, true)
-  }, [persistCanvasRaw])
+    // Big Change: if we've dispatched before and zones changed since, auto-open the
+    // dispatch modal with a prefilled prompt describing the diff.
+    const snap = dispatchedGraph
+    if (!snap) return
+    const currentZones = nodesRef.current.filter((n): n is ZoneNodeType => n.type === 'zone')
+    const changedLabels = currentZones
+      .filter(n => snap[n.id] !== undefined && zoneHash(n) !== snap[n.id])
+      .map(n => n.data.label)
+    const addedLabels = currentZones
+      .filter(n => snap[n.id] === undefined)
+      .map(n => n.data.label)
+    const removedIds = Object.keys(snap).filter(id => !currentZones.some(z => z.id === id))
+    if (changedLabels.length + addedLabels.length + removedIds.length === 0) return
+    const parts: string[] = []
+    if (changedLabels.length) parts.push(`updated: ${changedLabels.join(', ')}`)
+    if (addedLabels.length) parts.push(`added: ${addedLabels.join(', ')}`)
+    if (removedIds.length) parts.push(`removed: ${removedIds.length} zone${removedIds.length === 1 ? '' : 's'}`)
+    setDispatchPrefill(`Pick up these canvas changes — ${parts.join(' · ')}.`)
+    setDispatchModalOpen(true)
+  }, [persistCanvasRaw, dispatchedGraph])
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
     event.preventDefault()
@@ -576,17 +596,41 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (zones.length === 0) return
     setDispatchModalOpen(false)
     setDispatching(true)
-    const isRedispatch = dispatchedGraph !== null
-    const dispatchContext = isRedispatch
-      ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
-      : undefined
     try {
+      if (req.mode === 'resume') {
+        const result = await window.electron.dispatches.resume({
+          projectDir,
+          dispatchId: req.dispatchId,
+          nodes,
+          edges,
+          settings: projectSettings,
+        })
+        if (!result.ok) {
+          const msg = result.error === 'legacy-protocol'
+            ? 'This dispatch was created with the legacy protocol and can\'t be resumed under the current build. Start a new dispatch instead.'
+            : 'Dispatch record not found.'
+          window.alert(msg)
+          return
+        }
+        setTerminalSessions(result.info)
+        setActiveTab('Terminal')
+        // Mark the full current canvas as "dispatched" — the resumed set covers it.
+        const snapshot: Record<string, string> = {}
+        for (const n of zones) snapshot[n.id] = zoneHash(n)
+        setDispatchedGraph(snapshot)
+        return
+      }
+
+      const isRedispatch = dispatchedGraph !== null
+      const dispatchContext = isRedispatch
+        ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
+        : undefined
       const sessions = await window.electron.runGraph(
         nodes,
         edges,
         projectDir,
         projectSettings,
-        req,
+        { userPrompt: req.userPrompt, model: req.model, planMode: req.planMode, onlyZoneIds: req.onlyZoneIds },
         dispatchContext,
       )
       setTerminalSessions(sessions)
@@ -606,16 +650,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const onDispatch = useCallback(() => {
     if (zones.length === 0) return
-    setPreselectedZoneIds(null)
-    // Single zone: skip the prompt modal and just resume/spawn that zone.
-    if (zones.length === 1) {
-      void handleDispatchSubmit({ userPrompt: '', model: '', planMode: false })
-      return
-    }
+    setDispatchPrefill('')
     setDispatchModalOpen(true)
-  }, [zones.length, handleDispatchSubmit])
+  }, [zones.length])
 
-  const buildAssistantContext = useCallback((currentNodes: CanvasNode[], currentEdges: Edge[]) => {
+  const buildAssistantContext = useCallback((
+    mode: AssistantMode,
+    currentNodes: CanvasNode[],
+    currentEdges: Edge[],
+  ) => {
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')
     const compList = currentNodes.filter((n): n is ComponentNodeType => n.type === 'component')
     const paletteJson = buildPaletteContext()
@@ -656,18 +699,32 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       edges: currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
     }, null, 2)
 
+    const canvasBlock = zoneList.length === 0 && compList.length === 0
+      ? '(empty canvas)'
+      : `\`\`\`json\n${canvasJson}\n\`\`\``
+
+    if (mode === 'general') {
+      return `You are a general-purpose coding assistant working inside this project directory. Help the user with any coding, debugging, refactoring, research, or shell task they ask about.
+
+The JSON block below is a read-only snapshot of the project's architecture canvas, provided only as reference so you understand the system being built — do not treat it as something to edit. Do NOT modify \`architect-canvas.json\` under any circumstances, and do not emit \`ARCHITECT_CANVAS_UPDATE\` blocks. If the user asks to change the canvas, tell them to switch the assistant to Architecture mode.
+
+## Canvas reference
+${canvasBlock}`
+    }
+
     return `You are an architecture assistant embedded in Architect — a tool for visually composing multi-agent systems.
 
 ## Model
 - **components** are first-class design artifacts on a flat canvas. Each carries its own context: label, description, and long-form specs (API contracts, schemas, responsibilities, notes). Components do NOT own agent behavior.
-- **zones** are translucent overlays drawn on top of a group of components. Each zone is an agent (one CLI session per zone) that builds whatever components it overlays. Zones own their *systemPrompt* (behavior customization, passed to Claude as --append-system-prompt on first spawn), runtime, model, tools, skills, permissions. The per-dispatch user prompt is supplied separately by the user at Dispatch time; it is NOT part of the zone definition.
+- **zones** are translucent overlays drawn on top of a group of components. Each zone is an agent (one CLI session per zone). Zones own their *systemPrompt* (role/behavior customization, passed to Claude as --append-system-prompt on first spawn), runtime, model, tools, skills, permissions.
+- The canvas is **reference context** describing the system, not a build manifest. At Dispatch time the user selects which zones to involve and supplies a task prompt; the Architect coordinator routes that task to the chosen zones. Zones act ONLY on the task they receive — they do not automatically rebuild the components they own.
 
-Zone membership is determined purely by geometry at dispatch time: if a component's center falls inside a zone's bounding box, that zone's agent is responsible for building it. A component outside all zones is a design artifact only — no agent builds it.
+Zone membership is determined purely by geometry: if a component's center falls inside a zone's bounding box, that zone owns it (meaning the zone-agent is the one responsible when a dispatched task touches that component). A component outside all zones is a design artifact only — no agent owns it.
 
 Edges connect any nodes (zones or components) and denote dependencies/data flow.
 
 ## Current Canvas
-${zoneList.length === 0 && compList.length === 0 ? '(empty canvas)' : `\`\`\`json\n${canvasJson}\n\`\`\``}
+${canvasBlock}
 
 ## Component Palette
 Use these as the preferred component presets when creating architectures. Match their \`category\`, \`iconName\`, \`color\`, and default \`tag\` unless the user clearly wants a custom component.
@@ -689,7 +746,7 @@ Help the user design, refine, and reason about their architecture. You can:
 - Replace the full canvas document when making a diagram change. Always write a complete valid top-level object with \`nodes\`, \`edges\`, and \`settings\`.
 - Preserve existing ids, positions, and \`settings\` whenever possible so the user's layout and runtime defaults are not lost.
 - Use \`type: "zone"\` for agent zones and \`type: "component"\` for design components.
-- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` defines the zone agent's role/behavior — do NOT put per-task instructions there; the user supplies those at Dispatch time.
+- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` defines the zone agent's durable role/style (e.g. "Senior backend engineer — write idiomatic Go, prefer stdlib, always add tests"). Do NOT phrase it as "build components X, Y, Z" or otherwise encode a build list — the canvas is context, and the user supplies the task at Dispatch time.
 - For components, include: \`id\`, \`type\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`.
 - To place a component inside a zone, give it a position that falls within the zone's bounding box. Zones should be sized large enough to visually cover their components with margin.
 
@@ -855,19 +912,37 @@ Only discuss and advise without editing the file when the user is asking for cri
       setAssistantOpen(false)
       setAssistantRuntime(null)
     } else {
-      const contextMd = buildAssistantContext(nodes, edges)
-      const session = await window.electron.assistant.start(projectDir, contextMd, projectSettings.defaultRuntime)
+      const mode = projectSettings.assistantMode
+      const contextMd = buildAssistantContext(mode, nodes, edges)
+      const session = await window.electron.assistant.start(
+        projectDir, contextMd, projectSettings.defaultRuntime, mode,
+      )
       const sessionRuntime = session?.runtime
       setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : projectSettings.defaultRuntime)
       setAssistantOpen(true)
     }
-  }, [assistantOpen, nodes, edges, projectDir, projectSettings.defaultRuntime, buildAssistantContext])
+  }, [assistantOpen, nodes, edges, projectDir, projectSettings.defaultRuntime, projectSettings.assistantMode, buildAssistantContext])
 
   const handleAssistantClose = useCallback(() => {
     window.electron.assistant.stop()
     setAssistantOpen(false)
     setAssistantRuntime(null)
   }, [])
+
+  const handleAssistantModeChange = useCallback(async (next: AssistantMode) => {
+    if (next === projectSettings.assistantMode) return
+    window.electron.assistant.stop()
+    setProjectSettings(s => ({ ...s, assistantMode: next }))
+    setIsDirty(true)
+    if (assistantOpen) {
+      const contextMd = buildAssistantContext(next, nodes, edges)
+      const session = await window.electron.assistant.start(
+        projectDir, contextMd, projectSettings.defaultRuntime, next,
+      )
+      const sessionRuntime = session?.runtime
+      setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : projectSettings.defaultRuntime)
+    }
+  }, [assistantOpen, nodes, edges, projectDir, projectSettings.defaultRuntime, projectSettings.assistantMode, buildAssistantContext])
 
   const handleLoadIncomingCanvas = useCallback(() => {
     if (!pendingExternalCanvasRaw) return
@@ -944,18 +1019,14 @@ Only discuss and advise without editing the file when the user is asking for cri
 
             {dispatchModalOpen && (
               <DispatchModal
-                zoneCount={preselectedZoneIds?.length ?? zones.length}
+                zones={zones.map(z => ({
+                  id: z.id,
+                  label: (z.data.label as string) ?? 'Zone',
+                  color: (z.data.color as string) ?? '#58A6FF',
+                }))}
+                prefillPrompt={dispatchPrefill}
                 onClose={() => setDispatchModalOpen(false)}
                 onSubmit={handleDispatchSubmit}
-                onSelectPrior={(zoneIds) => {
-                  setPreselectedZoneIds(zoneIds.length > 0 ? zoneIds : null)
-                  const idSet = new Set(zoneIds)
-                  setNodes(current => current.map(node =>
-                    node.type === 'zone'
-                      ? { ...node, selected: zoneIds.length === 0 ? false : idSet.has(node.id) }
-                      : node
-                  ))
-                }}
               />
             )}
           </div>
@@ -973,6 +1044,14 @@ Only discuss and advise without editing the file when the user is asking for cri
               projectDir={projectDir}
               layout={terminalLayout}
               onLayoutChange={handleTerminalLayoutChange}
+              onRemoveSession={(id) =>
+                setTerminalSessions(prev => prev.filter(s => s.id !== id))
+              }
+              getCanvasSnapshot={() => ({
+                nodes: nodesRef.current,
+                edges: edgesRef.current,
+                settings: settingsRef.current,
+              })}
             />
           </div>
 
@@ -988,6 +1067,8 @@ Only discuss and advise without editing the file when the user is asking for cri
                 onClose={handleAssistantClose}
                 onCanvasUpdate={applyCanvasUpdate}
                 runtime={assistantRuntime ?? projectSettings.defaultRuntime}
+                mode={projectSettings.assistantMode}
+                onModeChange={handleAssistantModeChange}
               />
             </ResizablePanel>
           )}

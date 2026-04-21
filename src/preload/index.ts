@@ -31,11 +31,25 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Dispatch history
   listDispatches: (projectDir: string) => ipcRenderer.invoke('dispatches:list', projectDir),
+  dispatches: {
+    list: (projectDir: string) => ipcRenderer.invoke('dispatches:list', projectDir),
+    delete: (projectDir: string, dispatchId: string) =>
+      ipcRenderer.invoke('dispatches:delete', projectDir, dispatchId),
+    updateSummary: (projectDir: string, dispatchId: string, summary: string) =>
+      ipcRenderer.invoke('dispatches:update-summary', projectDir, dispatchId, summary),
+    resume: (opts: {
+      projectDir: string
+      dispatchId: string
+      nodes: unknown[]
+      edges: unknown[]
+      settings: unknown
+    }) => ipcRenderer.invoke('dispatches:resume', opts),
+  },
 
   // Architecture assistant
   assistant: {
-    start: (projectDir: string, contextMd: string, runtime: unknown) =>
-      ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime),
+    start: (projectDir: string, contextMd: string, runtime: unknown, mode: unknown) =>
+      ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime, mode),
     stop: () =>
       ipcRenderer.send('stop-assistant'),
   },
@@ -59,6 +73,37 @@ contextBridge.exposeInMainWorld('electron', {
 
     killAll: () =>
       ipcRenderer.send('terminal:kill-all'),
+
+    close: (id: string) =>
+      ipcRenderer.invoke('terminal:close', id),
+
+    getCaptureState: (id: string) =>
+      ipcRenderer.invoke('terminal:capture-state', id),
+
+    onCaptureState: (cb: (event: { id: string; state: 'pending' | 'ready' }) => void) => {
+      const handler = (_: unknown, event: { id: string; state: 'pending' | 'ready' }) => cb(event)
+      ipcRenderer.on('terminal:capture-state', handler)
+      return () => ipcRenderer.removeListener('terminal:capture-state', handler)
+    },
+
+    onStatus: (
+      cb: (event: {
+        id: string
+        status: 'spawning' | 'ready' | 'running' | 'finished' | 'failed'
+        lastError: { kind: string; message: string; ts: number } | null
+      }) => void,
+    ) => {
+      const handler = (
+        _: unknown,
+        event: {
+          id: string
+          status: 'spawning' | 'ready' | 'running' | 'finished' | 'failed'
+          lastError: { kind: string; message: string; ts: number } | null
+        },
+      ) => cb(event)
+      ipcRenderer.on('terminal:status', handler)
+      return () => ipcRenderer.removeListener('terminal:status', handler)
+    },
 
     onData: (cb: (event: { id: string; data: string }) => void) => {
       const handler = (_: unknown, event: { id: string; data: string }) => cb(event)
@@ -97,38 +142,38 @@ contextBridge.exposeInMainWorld('electron', {
   saveTerminalLayout: (projectDir: string, json: unknown) =>
     ipcRenderer.invoke('terminal-layout:save', projectDir, json),
 
-  // Per-zone Claude session capture/resume
+  // Per-zone session history + launch
   zone: {
-    getSession: (projectDir: string, zoneId: string, label?: string) =>
-      ipcRenderer.invoke('zone:get-session', projectDir, zoneId, label),
+    listSessions: (projectDir: string, zoneId: string, label?: string) =>
+      ipcRenderer.invoke('zone:list-sessions', projectDir, zoneId, label),
 
-    resume: (opts: {
-      projectDir: string
-      zoneId: string
-      label: string
-      runtime: string
-      model?: string
-      envVars?: Array<{ key: string; value: string }>
-    }) => ipcRenderer.invoke('zone:resume', opts),
+    deleteSession: (projectDir: string, zoneId: string, sessionId: string, label?: string) =>
+      ipcRenderer.invoke('zone:delete-session', projectDir, zoneId, sessionId, label),
+
+    updateSessionSummary: (projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) =>
+      ipcRenderer.invoke('zone:update-session-summary', projectDir, zoneId, sessionId, summary, label),
 
     resetSession: (opts: { projectDir: string; zoneId: string; label?: string }) =>
       ipcRenderer.invoke('zone:reset-session', opts.projectDir, opts.zoneId, opts.label),
 
-    run: (opts: {
+    launch: (opts: {
       projectDir: string
       zoneId: string
       nodes: unknown[]
       edges: unknown[]
-      userPrompt: string
+      mode: 'new' | 'resume'
+      sessionId?: string
+      summary?: string
+      userPrompt?: string
       model?: string
       planMode?: boolean
       settings: unknown
     }) => ipcRenderer.invoke('terminal:run-zone', opts),
 
     onSessionCaptured: (
-      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string }) => void,
+      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; dispatchId?: string }) => void,
     ) => {
-      const handler = (_: unknown, event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string }) => cb(event)
+      const handler = (_: unknown, event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; dispatchId?: string }) => cb(event)
       ipcRenderer.on('zone:session-captured', handler)
       return () => ipcRenderer.removeListener('zone:session-captured', handler)
     },

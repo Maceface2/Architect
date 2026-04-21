@@ -1,5 +1,6 @@
 import type { Node } from '@xyflow/react'
-import type { AgentRuntime, AgentRuntimeMode } from '../../shared/agentRuntimes'
+import type { AgentRuntime, AgentRuntimeMode, AssistantMode } from '../../shared/agentRuntimes'
+export type { AssistantMode } from '../../shared/agentRuntimes'
 
 export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
@@ -43,6 +44,7 @@ export interface NodeEnvVar {
 
 export interface ProjectSettings {
   defaultRuntime: AgentRuntime
+  assistantMode: AssistantMode
 }
 
 export type RuntimeModelMap = Partial<Record<AgentRuntime, string>>
@@ -66,30 +68,46 @@ export interface ZoneNodeData {
   [key: string]: unknown
 }
 
+export interface ZoneSessionRecord {
+  runtime: AgentRuntime
+  sessionId: string
+  capturedAt: string
+  summary: string
+  dispatchId?: string
+}
+
+export interface DispatchZoneSession {
+  zoneId: string
+  label: string
+  runtime: AgentRuntime
+  sessionId: string
+}
+
 export interface DispatchRecord {
   architectSessionId: string
+  architectRuntime: AgentRuntime
   zoneIds: string[]
   zoneLabels: string[]
+  zoneSessions: DispatchZoneSession[]
   userPrompt: string
+  summary: string
   model: string
   planMode: boolean
   timestamp: string
 }
 
-export interface DispatchRequest {
-  userPrompt: string
-  model: string
-  planMode: boolean
-  onlyZoneIds?: string[]
-}
-
-export interface RunZoneRequest {
-  projectDir: string
-  zoneId: string
-  userPrompt: string
-  model?: string
-  planMode?: boolean
-}
+export type DispatchRequest =
+  | {
+      mode: 'new'
+      userPrompt: string
+      model: string
+      planMode: boolean
+      onlyZoneIds: string[]
+    }
+  | {
+      mode: 'resume'
+      dispatchId: string
+    }
 
 // A component is a design artifact. It carries the core context (description, specs)
 // for one part of the system; zones overlay components to add agent behavior.

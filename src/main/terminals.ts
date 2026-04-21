@@ -3,32 +3,42 @@ import { BrowserWindow } from 'electron'
 import { join, basename } from 'path'
 import fs from 'fs'
 import { execFileSync, spawn } from 'child_process'
-import { randomBytes } from 'crypto'
+import { randomBytes, createHash } from 'crypto'
+import { Terminal as HeadlessTerminal } from '@xterm/headless'
 import {
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
   isAgentRuntime,
   isAgentRuntimeMode,
+  isAssistantMode,
   type AgentRuntime,
+  type AssistantMode,
 } from '../shared/agentRuntimes'
 import {
+  appendZoneSession,
   captureNewClaudeSession,
   captureNewCodexSession,
   captureNewGeminiSession,
   captureNewOpencodeSession,
   deleteZoneSession,
+  getZoneSessionRecord,
   isCodexSessionIdForCwd,
   isGeminiSessionIdForCwd,
-  loadZoneSession,
-  saveZoneSession,
+  listZoneSessions,
   snapshotClaudeSessions,
   snapshotCodexSessions,
   snapshotGeminiSessions,
   snapshotOpencodeSessions,
-  type ZoneSession,
+  updateZoneSessionSummary,
+  type ZoneSessionRecord,
 } from './sessionCapture'
-import { saveDispatch, type DispatchRecord } from './dispatchCapture'
+import {
+  saveDispatch,
+  summarizeFromPrompt,
+  upsertDispatchZoneSession,
+  type DispatchRecord,
+} from './dispatchCapture'
 
 let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
 
@@ -145,33 +155,42 @@ function resolveBinary(runtime: AgentRuntime): string | null {
   }
 }
 
-function loadSavedZoneSession(projectDir: string, zoneKey: string, legacyKey?: string): ZoneSession | null {
-  const saved = loadZoneSession(projectDir, zoneKey, legacyKey)
-  if (!saved) return null
-
-  if (saved.runtime === 'codex' && !isCodexSessionIdForCwd(projectDir, saved.sessionId)) {
-    console.warn(`[session-capture] ${zoneKey}: dropping stale codex session ${saved.sessionId}`)
-    deleteZoneSession(projectDir, zoneKey, legacyKey)
-    return null
-  }
-
-  if (saved.runtime === 'gemini' && !isGeminiSessionIdForCwd(projectDir, saved.sessionId)) {
-    console.warn(`[session-capture] ${zoneKey}: dropping stale gemini session ${saved.sessionId}`)
-    deleteZoneSession(projectDir, zoneKey, legacyKey)
-    return null
-  }
-
-  return saved
+function isRecordReachable(projectDir: string, rec: ZoneSessionRecord): boolean {
+  if (rec.runtime === 'codex' && !isCodexSessionIdForCwd(projectDir, rec.sessionId)) return false
+  if (rec.runtime === 'gemini' && !isGeminiSessionIdForCwd(projectDir, rec.sessionId)) return false
+  return true
 }
 
-function loadSavedZoneSessionForRuntime(
+// Returns the most recent record matching the runtime whose backing CLI state
+// is still on disk. Used for implicit-resume paths (assistant re-open) where
+// no explicit user pick is available.
+function latestReachableSession(
   projectDir: string,
   zoneKey: string,
   runtime: AgentRuntime,
   legacyKey?: string,
-): ZoneSession | null {
-  const saved = loadSavedZoneSession(projectDir, zoneKey, legacyKey)
-  return saved && saved.runtime === runtime ? saved : null
+): ZoneSessionRecord | null {
+  for (const rec of listZoneSessions(projectDir, zoneKey, legacyKey)) {
+    if (rec.runtime !== runtime) continue
+    if (!isRecordReachable(projectDir, rec)) continue
+    return rec
+  }
+  return null
+}
+
+function pickSession(
+  projectDir: string,
+  zoneKey: string,
+  sessionId: string,
+  legacyKey?: string,
+): ZoneSessionRecord | null {
+  const rec = getZoneSessionRecord(projectDir, zoneKey, sessionId, legacyKey)
+  if (!rec) return null
+  if (!isRecordReachable(projectDir, rec)) {
+    console.warn(`[session-capture] ${zoneKey}: requested session ${sessionId} no longer reachable on disk`)
+    return null
+  }
+  return rec
 }
 
 export interface TerminalInfo {
@@ -235,11 +254,106 @@ export interface GraphEdge {
   target: string
 }
 
+// ──────────────────────────────────────────────────────────────────────────
+// Lifecycle state machine (ported from claw-code `WorkerStatus`).
+//
+//   spawning → ready → running → finished
+//                              ↘ failed
+//
+// Transitions:
+//   - spawning → ready:   observe() sees the CLI prompt cue (/[>❯]\s*$/)
+//   - ready|finished → running:   sendPrompt() delivers a poke
+//   - running → finished: observe() sees ARCHITECT_COMPLETE sentinel
+//   - * → failed:         PTY exits before ready / startup timeout fires /
+//                         misdelivery retry budget exhausted
+// ──────────────────────────────────────────────────────────────────────────
+
+export type ZoneLifecycleState = 'spawning' | 'ready' | 'running' | 'finished' | 'failed'
+
+export type ZoneFailureKind = 'binary-missing' | 'prompt-delivery' | 'startup-timeout' | 'pty-exit'
+
+export interface ZoneFailure {
+  kind: ZoneFailureKind
+  message: string
+  ts: number
+}
+
+export interface ZoneEvent {
+  seq: number
+  kind: string            // 'spawn' | 'ready' | 'send-prompt' | 'complete' | 'fail' | …
+  state: ZoneLifecycleState
+  message?: string
+  ts: number
+}
+
 interface Session {
   pty: pty.IPty
-  buffer: string
-  done: boolean
+  // Rendered-screen emulator. Every PTY chunk is fed into it so cue
+  // detection operates on the visible screen grid (ANSI already interpreted),
+  // not raw bytes. The renderer still gets the raw stream over
+  // `terminal:data`.
+  term: HeadlessTerminal
+  lifecycle: ZoneLifecycleState
+  events: ZoneEvent[]
+  eventSeq: number
+  // 'agent' sessions run the full observe/startup-timeout pipeline; 'shell'
+  // sessions are plain and bypass it (no sentinel, no cue detection).
+  kind: 'agent' | 'shell'
+  runtime: AgentRuntime | 'shell'
+  // Round-aware state for the current poke.
+  lastPoke?: string
+  currentTaskId: string | null
+  promptAttempts: number
+  misdeliveryReplayed: boolean
+  createdAt: number
+  lastError?: ZoneFailure
   doneCallbacks: (() => void)[]
+  readyCallbacks: (() => void)[]
+  ackCallbacks: Array<(taskId: string) => void>
+  startupTimer?: NodeJS.Timeout
+}
+
+const STARTUP_TIMEOUT_MS = 30_000
+// Coarse cue: a PTY line ending in one of these glyphs is treated as a
+// "CLI is at its prompt" signal. Runs against the rendered screen, not
+// raw bytes — the emulator strips ANSI first.
+const PROMPT_CUE_ENDINGS = ['>', '❯', '>>>', '$', '#', '›']
+
+function generateTaskId(): string {
+  return randomBytes(8).toString('hex')
+}
+
+// Walks the active buffer (scrollback + viewport) and returns the rendered
+// screen as plain text — ANSI escapes already interpreted by the emulator.
+function renderScreenText(term: HeadlessTerminal): string {
+  const buf = term.buffer.active
+  const lines: string[] = []
+  const top = Math.max(0, buf.baseY - 200) // keep a reasonable window
+  const bottom = buf.baseY + term.rows
+  for (let y = top; y < bottom; y++) {
+    const line = buf.getLine(y)
+    if (!line) continue
+    lines.push(line.translateToString(true))
+  }
+  return lines.join('\n')
+}
+
+function lastNonEmptyLine(rendered: string): string {
+  const lines = rendered.split('\n')
+  for (let i = lines.length - 1; i >= 0; i--) {
+    const trimmed = lines[i].trim()
+    if (trimmed) return trimmed
+  }
+  return ''
+}
+
+function looksLikePromptReady(rendered: string): boolean {
+  const bottom = lastNonEmptyLine(rendered)
+  if (!bottom) return false
+  for (const cue of PROMPT_CUE_ENDINGS) {
+    if (bottom.endsWith(cue)) return true
+  }
+  return false
 }
 
 interface SpawnAgentOptions {
@@ -253,11 +367,18 @@ interface SpawnAgentOptions {
   model?: string
   onExit?: () => void
   resumeSessionId?: string
-  // When set, capture the new session ID after spawn and persist it.
-  // Claude always re-captures; codex/opencode honor a keep-original policy
-  // (skip if a saved session for the zone already exists).
-  // zoneKey is the stable zone id; legacyKey is the old label-based key for migration.
-  capture?: { projectDir: string; zoneKey: string; legacyKey?: string }
+  // When set, capture the new session ID after spawn and append it to the
+  // zone's history. Every fresh spawn becomes a distinct record; user picks
+  // which one to resume from the zone launcher. summary is the one-liner
+  // shown in that list; dispatchId links zones spawned by a dispatch to the
+  // orchestrating Architect session.
+  capture?: {
+    projectDir: string
+    zoneKey: string
+    legacyKey?: string
+    summary: string
+    dispatchId?: string
+  }
   // Defaults to true (preserves zone-agent autonomy). Set false for the
   // interactive assistant so the user gets normal permission prompts.
   skipPermissions?: boolean
@@ -276,6 +397,29 @@ interface SpawnAgentOptions {
 
 const sessions = new Map<string, Session>()
 let activeWatcher: fs.FSWatcher | null = null
+let activeDispatchCoordinator: { stop: () => void } | null = null
+
+// Per-session capture readiness. 'pending' means a fresh spawn is still polling
+// for its new CLI session id; 'ready' means capture settled (resolved or timed
+// out). Used by the renderer's close-terminal flow to block close until the
+// id has been persisted. Shell and resumed sessions are never added here —
+// absence means "no capture in flight, close is safe."
+type CaptureState = 'pending' | 'ready'
+const captureStates = new Map<string, CaptureState>()
+const captureWaiters = new Map<string, (() => void)[]>()
+
+function setCaptureReady(id: string): void {
+  captureStates.set(id, 'ready')
+  const waiters = captureWaiters.get(id)
+  if (waiters) {
+    captureWaiters.delete(id)
+    for (const fn of waiters) fn()
+  }
+}
+
+export function getCaptureState(id: string): CaptureState | null {
+  return captureStates.get(id) ?? null
+}
 
 const SHELL_ID_PREFIX = 'shell-'
 
@@ -339,30 +483,301 @@ function buildRuntimeArgs(
   }
 }
 
+function pushEvent(
+  session: Session,
+  kind: string,
+  message?: string,
+): void {
+  session.eventSeq += 1
+  session.events.push({
+    seq: session.eventSeq,
+    kind,
+    state: session.lifecycle,
+    message,
+    ts: Date.now(),
+  })
+  // Cap the log; state-timeline UI only needs recent history.
+  if (session.events.length > 200) session.events.splice(0, session.events.length - 200)
+}
+
+function setLifecycle(
+  id: string,
+  session: Session,
+  next: ZoneLifecycleState,
+  kind: string,
+  message?: string,
+): void {
+  if (session.lifecycle === next) return
+  session.lifecycle = next
+  pushEvent(session, kind, message)
+  broadcast('terminal:status', {
+    id,
+    status: next,
+    lastError: session.lastError ?? null,
+  })
+}
+
+function failSession(
+  id: string,
+  session: Session,
+  kind: ZoneFailureKind,
+  message: string,
+): void {
+  if (session.lifecycle === 'failed') return
+  session.lastError = { kind, message, ts: Date.now() }
+  setLifecycle(id, session, 'failed', 'fail', `${kind}: ${message}`)
+  if (session.startupTimer) {
+    clearTimeout(session.startupTimer)
+    session.startupTimer = undefined
+  }
+  // Unblock any awaiters so they don't hang forever.
+  session.readyCallbacks.splice(0).forEach(cb => cb())
+}
+
+// Observe-on-every-chunk dispatcher. Runs after each PTY chunk has been
+// written into the headless Terminal, so cue detection operates on the
+// rendered screen grid (ANSI already interpreted) rather than raw bytes.
+function observeZoneOutput(id: string): void {
+  const session = sessions.get(id)
+  if (!session || session.kind !== 'agent') return
+
+  const rendered = renderScreenText(session.term)
+
+  // spawning → ready: bottom non-empty line looks like a CLI prompt.
+  if (session.lifecycle === 'spawning' && looksLikePromptReady(rendered)) {
+    if (session.startupTimer) {
+      clearTimeout(session.startupTimer)
+      session.startupTimer = undefined
+    }
+    setLifecycle(id, session, 'ready', 'ready', 'CLI prompt detected')
+    session.readyCallbacks.splice(0).forEach(cb => cb())
+    return
+  }
+
+  // running → ack: zone echoed ARCHITECT_TASK_ACK <task_id>.
+  if (session.lifecycle === 'running' && session.currentTaskId) {
+    const ackRe = new RegExp(
+      `ARCHITECT_TASK_ACK\\s+${session.currentTaskId}\\b`,
+    )
+    if (ackRe.test(rendered)) {
+      const taskId = session.currentTaskId
+      // Stay in 'running' at the PTY-lifecycle layer; the ack only flips
+      // status.json to state='ack'. Completion still fires on the receipt
+      // file or ARCHITECT_COMPLETE.
+      pushEvent(session, 'ack', `ARCHITECT_TASK_ACK ${taskId}`)
+      const cbs = session.ackCallbacks.splice(0)
+      for (const cb of cbs) cb(taskId)
+    }
+  }
+
+  // running → finished: ARCHITECT_COMPLETE seen. Prefer the tagged form
+  // (`ARCHITECT_COMPLETE <task_id>`) but fall back to the bare sentinel so
+  // older zone conversations still reach the done signal.
+  if (session.lifecycle === 'running') {
+    const tagged = session.currentTaskId
+      ? new RegExp(`ARCHITECT_COMPLETE\\s+${session.currentTaskId}\\b`)
+      : null
+    if ((tagged && tagged.test(rendered)) || rendered.includes('ARCHITECT_COMPLETE')) {
+      setLifecycle(id, session, 'finished', 'complete', 'ARCHITECT_COMPLETE observed')
+      session.doneCallbacks.splice(0).forEach(cb => cb())
+      return
+    }
+  }
+}
+
 function createSession(
   win: BrowserWindow,
   id: string,
   ptyProcess: pty.IPty,
-  onExit?: () => void
+  onExit?: () => void,
+  opts?: { kind?: 'agent' | 'shell'; runtime?: AgentRuntime | 'shell' },
 ): void {
-  const session: Session = { pty: ptyProcess, buffer: '', done: false, doneCallbacks: [] }
+  const kind = opts?.kind ?? 'agent'
+  const runtime = opts?.runtime ?? 'shell'
+  const term = new HeadlessTerminal({
+    cols: 220,
+    rows: 50,
+    allowProposedApi: true,
+    scrollback: 500,
+  })
+  const session: Session = {
+    pty: ptyProcess,
+    term,
+    lifecycle: 'spawning',
+    events: [],
+    eventSeq: 0,
+    kind,
+    runtime,
+    currentTaskId: null,
+    promptAttempts: 0,
+    misdeliveryReplayed: false,
+    createdAt: Date.now(),
+    doneCallbacks: [],
+    readyCallbacks: [],
+    ackCallbacks: [],
+  }
   sessions.set(id, session)
+  pushEvent(session, 'spawn', `pty spawned (${runtime})`)
+
+  // Agent sessions get a startup-timeout classifier (claw-code
+  // `observe_startup_timeout`). If the CLI is still in `spawning` after
+  // STARTUP_TIMEOUT_MS, classify as failed so the UI / coordinator surface
+  // the problem instead of silently hanging.
+  if (kind === 'agent') {
+    session.startupTimer = setTimeout(() => {
+      const live = sessions.get(id)
+      if (!live || live !== session) return
+      if (live.lifecycle !== 'spawning') return
+      failSession(
+        id,
+        live,
+        'startup-timeout',
+        `CLI did not reach ready state within ${STARTUP_TIMEOUT_MS}ms`,
+      )
+    }, STARTUP_TIMEOUT_MS)
+  }
 
   ptyProcess.onData(data => {
-    session.buffer += data
-    if (!session.done && session.buffer.includes('ARCHITECT_COMPLETE')) {
-      session.done = true
-      session.doneCallbacks.splice(0).forEach(cb => cb())
-    }
+    // Always broadcast the raw stream so the renderer's xterm instance
+    // sees the exact same bytes. Agent sessions additionally feed the
+    // headless emulator so cue detection can run on the rendered grid.
     broadcast('terminal:data', { id, data })
+    if (kind === 'agent') {
+      try {
+        term.write(data, () => observeZoneOutput(id))
+      } catch (err) {
+        console.error(`[registry] term.write failed on ${id}`, err)
+      }
+    }
   })
 
   ptyProcess.onExit(({ exitCode }) => {
     broadcast('terminal:exit', { id, exitCode })
     // Identity-check: a resume may have already replaced this entry.
-    if (sessions.get(id) === session) sessions.delete(id)
+    if (sessions.get(id) === session) {
+      // If we exited before ever reaching ready (typical for a missing binary
+      // or immediate crash), classify. Non-zero exit on an agent session also
+      // counts as a failure. Skip if already failed / finished.
+      if (kind === 'agent' && session.lifecycle !== 'finished' && session.lifecycle !== 'failed') {
+        const kindCode: ZoneFailureKind = session.lifecycle === 'spawning'
+          ? 'pty-exit'
+          : 'pty-exit'
+        failSession(id, session, kindCode, `PTY exited with code ${exitCode ?? 0}`)
+      }
+      if (session.startupTimer) {
+        clearTimeout(session.startupTimer)
+        session.startupTimer = undefined
+      }
+      try { session.term.dispose() } catch {}
+      sessions.delete(id)
+    }
     onExit?.()
   })
+}
+
+// Registry facade: body-then-CR split write (preserves bracketed-paste
+// semantics for Ink CLIs — see memory/feedback_pty_paste_submit.md). Transitions
+// the session to 'running' and records the poke. Idempotent-safe: callers can
+// call this on a 'finished' session to kick off a new round.
+function sendPrompt(id: string, body: string): boolean {
+  const session = sessions.get(id)
+  if (!session) {
+    console.warn(`[registry] no live session ${id}; cannot send prompt`)
+    return false
+  }
+  if (session.kind !== 'agent') {
+    console.warn(`[registry] session ${id} is not an agent; cannot send prompt`)
+    return false
+  }
+  if (session.lifecycle === 'failed') {
+    console.warn(`[registry] session ${id} is failed; cannot send prompt`)
+    return false
+  }
+  session.lastPoke = body
+  session.promptAttempts += 1
+  session.misdeliveryReplayed = false
+  // Reset emulator so stale `ARCHITECT_TASK_ACK` / `ARCHITECT_COMPLETE`
+  // text from the previous round can't re-trigger the current round.
+  try { session.term.clear() } catch {}
+  setLifecycle(id, session, 'running', 'send-prompt', `attempt ${session.promptAttempts}`)
+  try {
+    session.pty.write(body)
+  } catch (err) {
+    console.error(`[registry] failed to write poke body to ${id}`, err)
+    failSession(id, session, 'prompt-delivery', `pty.write body failed: ${String(err)}`)
+    return false
+  }
+  // Separate CR write, delayed to sidestep bracketed-paste detection where
+  // body+CR in one chunk is absorbed into a paste buffer instead of submitted.
+  setTimeout(() => {
+    const live = sessions.get(id)
+    if (!live || live !== session) return
+    try { live.pty.write('\r') } catch (err) {
+      console.error(`[registry] failed to send CR to ${id}`, err)
+    }
+  }, 250)
+  return true
+}
+
+// Resolves when the session is `ready`, or rejects on timeout / failure.
+// Coordinator `await_ready` gate — blocks first-round poke until the CLI
+// actually shows its prompt.
+function awaitReady(id: string, timeoutMs = 15_000): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const session = sessions.get(id)
+    if (!session) return reject(new Error(`no session ${id}`))
+    if (session.lifecycle === 'ready' || session.lifecycle === 'running' || session.lifecycle === 'finished') {
+      return resolve()
+    }
+    if (session.lifecycle === 'failed') {
+      return reject(new Error(`session ${id} failed: ${session.lastError?.message ?? 'unknown'}`))
+    }
+    let done = false
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      reject(new Error(`awaitReady timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    session.readyCallbacks.push(() => {
+      if (done) return
+      done = true
+      clearTimeout(timer)
+      const live = sessions.get(id)
+      if (!live || live.lifecycle === 'failed') {
+        reject(new Error(`session ${id} failed while awaiting ready`))
+      } else {
+        resolve()
+      }
+    })
+  })
+}
+
+// Resolves with the task id when the zone echoes ARCHITECT_TASK_ACK <task_id>,
+// or rejects on timeout / session failure. The ack must carry the current
+// task id — stale acks from a prior round can't satisfy a fresh wait.
+function awaitAck(id: string, taskId: string, timeoutMs: number): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const session = sessions.get(id)
+    if (!session) return reject(new Error(`no session ${id}`))
+    let done = false
+    const timer = setTimeout(() => {
+      if (done) return
+      done = true
+      reject(new Error(`awaitAck timed out after ${timeoutMs}ms`))
+    }, timeoutMs)
+    session.ackCallbacks.push(observedTaskId => {
+      if (done) return
+      if (observedTaskId !== taskId) return
+      done = true
+      clearTimeout(timer)
+      resolve(observedTaskId)
+    })
+  })
+}
+
+function setCurrentTaskId(id: string, taskId: string | null): void {
+  const session = sessions.get(id)
+  if (session) session.currentTaskId = taskId
 }
 
 function spawnErrorSession(
@@ -383,7 +798,12 @@ function spawnErrorSession(
     env: process.env as Record<string, string>,
   })
 
-  createSession(win, id, ptyProcess, onExit)
+  createSession(win, id, ptyProcess, onExit, { kind: 'agent', runtime })
+  // Immediately classify — the shell will exit 127 before observe can fire
+  // the ready cue. Surfaces as `binary-missing` in the UI instead of the
+  // generic `pty-exit`.
+  const session = sessions.get(id)
+  if (session) failSession(id, session, 'binary-missing', message)
   return { id, label, runtime }
 }
 
@@ -405,6 +825,11 @@ function spawnAgentSession({
   resumeUserPrompt,
   onSessionCaptured,
 }: SpawnAgentOptions): TerminalInfo {
+  // Reset any capture state from a prior spawn at this id (e.g. resume replacing
+  // a fresh session). captureRuntime below will re-mark 'pending' if needed.
+  captureStates.delete(id)
+  captureWaiters.delete(id)
+
   const bin = resolveBinary(runtime)
   if (!bin) {
     return spawnErrorSession(
@@ -418,12 +843,11 @@ function spawnAgentSession({
     )
   }
 
-  // Decide whether to capture a session ID for this spawn.
-  // Claude: always re-capture (mirrors prior behavior).
-  // Codex/OpenCode: keep-original policy — first capture wins until manually
-  // cleared via resetZoneSession. Skip capture entirely if a saved session
-  // already exists for this zone.
-  // Snapshot must happen BEFORE spawn so the new session can be identified.
+  // Decide whether to capture a session ID for this spawn. Every fresh spawn
+  // appends a new entry to the zone's session history — users pick which to
+  // resume from the launcher. Resumes don't capture (they're continuing the
+  // existing conversation, not starting a new one). Snapshot must happen
+  // BEFORE spawn so the new session can be identified.
   const captureRuntime: 'claude' | 'codex' | 'gemini' | 'opencode' | null =
     capture && !resumeSessionId && (runtime === 'claude' || runtime === 'codex' || runtime === 'gemini' || runtime === 'opencode')
       ? runtime
@@ -433,22 +857,12 @@ function spawnAgentSession({
   let codexSnapshot: Set<string> | null = null
   let geminiSnapshot: Set<string> | null = null
   let opencodeSnapshotPromise: Promise<Set<string>> | null = null
-  let captureSkipped = false
 
-  if (captureRuntime && capture) {
-    if (captureRuntime !== 'claude') {
-      const existing = loadSavedZoneSessionForRuntime(capture.projectDir, capture.zoneKey, captureRuntime, capture.legacyKey)
-      if (existing) {
-        captureSkipped = true
-        console.log(`[session-capture] ${capture.zoneKey}: existing ${existing.runtime} session ${existing.sessionId} — keep-original policy, skipping capture`)
-      }
-    }
-    if (!captureSkipped) {
-      if (captureRuntime === 'claude') claudeSnapshot = snapshotClaudeSessions(cwd)
-      else if (captureRuntime === 'codex') codexSnapshot = snapshotCodexSessions(cwd)
-      else if (captureRuntime === 'gemini') geminiSnapshot = snapshotGeminiSessions(cwd)
-      else if (captureRuntime === 'opencode') opencodeSnapshotPromise = snapshotOpencodeSessions()
-    }
+  if (captureRuntime) {
+    if (captureRuntime === 'claude') claudeSnapshot = snapshotClaudeSessions(cwd)
+    else if (captureRuntime === 'codex') codexSnapshot = snapshotCodexSessions(cwd)
+    else if (captureRuntime === 'gemini') geminiSnapshot = snapshotGeminiSessions(cwd)
+    else if (captureRuntime === 'opencode') opencodeSnapshotPromise = snapshotOpencodeSessions()
   }
 
   const spawnArgs = buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt)
@@ -461,7 +875,7 @@ function spawnAgentSession({
     env: { ...process.env, ...env } as Record<string, string>,
   })
 
-  createSession(win, id, ptyProcess, onExit)
+  createSession(win, id, ptyProcess, onExit, { kind: 'agent', runtime })
 
   if (resumeUserPrompt && resumeSessionId) {
     setTimeout(() => {
@@ -469,20 +883,27 @@ function spawnAgentSession({
     }, 1500)
   }
 
-  if (captureRuntime && capture && !captureSkipped) {
+  if (captureRuntime && capture) {
+    captureStates.set(id, 'pending')
+    broadcast('terminal:capture-state', { id, state: 'pending' })
+
     const persistAndBroadcast = (sessionId: string): void => {
       try {
-        saveZoneSession(capture.projectDir, capture.zoneKey, {
+        appendZoneSession(capture.projectDir, capture.zoneKey, {
           runtime: captureRuntime,
           sessionId,
           capturedAt: new Date().toISOString(),
+          summary: capture.summary,
+          dispatchId: capture.dispatchId,
         })
-        console.log(`[session-capture] ${capture.zoneKey}: saved ${captureRuntime} session ${sessionId}`)
+        console.log(`[session-capture] ${capture.zoneKey}: appended ${captureRuntime} session ${sessionId}`)
         broadcast('zone:session-captured', {
           zoneKey: capture.zoneKey,
           zoneId: id,
           sessionId,
           runtime: captureRuntime,
+          summary: capture.summary,
+          dispatchId: capture.dispatchId,
         })
         onSessionCaptured?.(sessionId)
       } catch (err) {
@@ -490,32 +911,40 @@ function spawnAgentSession({
       }
     }
 
+    const markReady = (): void => {
+      setCaptureReady(id)
+      broadcast('terminal:capture-state', { id, state: 'ready' })
+    }
+
     if (claudeSnapshot) {
       console.log(`[session-capture] ${capture.zoneKey}: claude snapshot ${claudeSnapshot.size} existing, polling…`)
       void captureNewClaudeSession(cwd, claudeSnapshot).then(sessionId => {
         if (!sessionId) {
           console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new .jsonl in ~/.claude/projects/${cwd.replace(/[^A-Za-z0-9_-]/g, '-')}/`)
-          return
+        } else {
+          persistAndBroadcast(sessionId)
         }
-        persistAndBroadcast(sessionId)
+        markReady()
       })
     } else if (codexSnapshot) {
       console.log(`[session-capture] ${capture.zoneKey}: codex snapshot ${codexSnapshot.size} existing, polling…`)
       void captureNewCodexSession(cwd, codexSnapshot).then(sessionId => {
         if (!sessionId) {
           console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new codex rollout for cwd ${cwd}`)
-          return
+        } else {
+          persistAndBroadcast(sessionId)
         }
-        persistAndBroadcast(sessionId)
+        markReady()
       })
     } else if (geminiSnapshot) {
       console.log(`[session-capture] ${capture.zoneKey}: gemini snapshot ${geminiSnapshot.size} existing, polling…`)
       void captureNewGeminiSession(cwd, geminiSnapshot).then(sessionId => {
         if (!sessionId) {
           console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new gemini session for cwd ${cwd}`)
-          return
+        } else {
+          persistAndBroadcast(sessionId)
         }
-        persistAndBroadcast(sessionId)
+        markReady()
       })
     } else if (opencodeSnapshotPromise) {
       void opencodeSnapshotPromise.then(snapshot => {
@@ -524,10 +953,14 @@ function spawnAgentSession({
       }).then(sessionId => {
         if (!sessionId) {
           console.warn(`[session-capture] ${capture.zoneKey}: timed out without seeing a new opencode session`)
-          return
+        } else {
+          persistAndBroadcast(sessionId)
         }
-        persistAndBroadcast(sessionId)
+        markReady()
       })
+    } else {
+      // No snapshot path fired — nothing to capture.
+      markReady()
     }
   }
 
@@ -550,7 +983,7 @@ export function spawnShellSession(win: BrowserWindow, cwd: string): TerminalInfo
     env: process.env as Record<string, string>,
   })
 
-  createSession(win, id, ptyProcess)
+  createSession(win, id, ptyProcess, undefined, { kind: 'shell', runtime: 'shell' })
   return { id, label: 'Shell', runtime: 'shell' }
 }
 
@@ -565,13 +998,16 @@ export function writeToTerminal(id: string, data: string) {
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number) {
-  try { sessions.get(id)?.pty.resize(cols, rows) } catch {}
+  const session = sessions.get(id)
+  if (!session) return
+  try { session.pty.resize(cols, rows) } catch {}
+  try { session.term.resize(cols, rows) } catch {}
 }
 
 function onSessionDone(id: string, cb: () => void) {
   const session = sessions.get(id)
   if (!session) return
-  if (session.done) {
+  if (session.lifecycle === 'finished') {
     cb()
     return
   }
@@ -582,15 +1018,219 @@ function onSessionDone(id: string, cb: () => void) {
 export function killAll() {
   activeWatcher?.close()
   activeWatcher = null
+  activeDispatchCoordinator?.stop()
+  activeDispatchCoordinator = null
   for (const [id, session] of sessions) {
     if (id.startsWith(SHELL_ID_PREFIX)) continue
+    if (session.startupTimer) {
+      clearTimeout(session.startupTimer)
+      session.startupTimer = undefined
+    }
     try { session.pty.kill() } catch {}
+    try { session.term.dispose() } catch {}
+    sessions.delete(id)
+    captureStates.delete(id)
+    captureWaiters.delete(id)
+  }
+}
+
+// Closes a single terminal. Close is always immediate — the PTY is killed
+// even if session-id capture is still in flight. The background poll keeps
+// running; if the CLI already wrote a session file (i.e. the user sent at
+// least one prompt), persistence still happens. If nothing was prompted,
+// polling times out quietly and no history entry is written.
+export function closeTerminal(id: string): { ok: boolean; reason?: string } {
+  const session = sessions.get(id)
+  const state = captureStates.get(id)
+
+  if (session) {
+    try { session.pty.kill() } catch {}
+    try { session.term.dispose() } catch {}
     sessions.delete(id)
   }
+  // Only clear capture bookkeeping if capture already settled. While still
+  // 'pending', leave the entries so the in-flight poll's persistAndBroadcast
+  // / markReady callbacks remain valid.
+  if (state !== 'pending') {
+    captureStates.delete(id)
+    captureWaiters.delete(id)
+  }
+  return { ok: true }
 }
 
 function sanitize(label: string) {
   return label.replace(/[^a-zA-Z0-9-_]/g, '-')
+}
+
+// ──────────────────────────────────────────────────────────────────────────
+// Dispatch protocol v3: per-zone status.json in ARCHITECT/status/<safe>.json
+//
+//   { round, state, taskId, lastTaskHash,
+//     startedAt, acknowledgedAt, lastActivityAt, completedAt,
+//     blocker: { kind, message, since } | null,
+//     receipt: { result, summary, durationMs } | null }
+//
+// Ownership:
+//   - main process writes status/<safe>.json on every state transition
+//   - Architect READS status/ to know a zone's current state (jq recipe)
+//   - Architect WRITES tasks/<safe>.md to dispatch work; main watches that
+//     directory and pokes the zone's PTY when content changes
+//   - Zones WRITE outputs/<safe>.receipt.json with the round's result,
+//     which the main process watches to flip state → done/blocked
+// ──────────────────────────────────────────────────────────────────────────
+
+type ZoneRunState = 'idle' | 'running' | 'ack' | 'done' | 'blocked' | 'failed'
+
+type BlockerKind =
+  | 'delivery-failed'
+  | 'idle-stuck'
+  | 'task-timeout'
+  | 'pty-exit'
+  | 'malformed-completion'
+  | 'zone-reported'
+
+interface ZoneBlocker {
+  kind: BlockerKind
+  message: string
+  since: string
+}
+
+interface ZoneReceipt {
+  result: 'success' | 'blocked' | 'failed'
+  summary: string
+  durationMs: number
+}
+
+interface ZoneStatus {
+  round: number
+  state: ZoneRunState
+  taskId: string | null
+  lastTaskHash: string | null
+  startedAt: string | null
+  acknowledgedAt: string | null
+  lastActivityAt: string | null
+  completedAt: string | null
+  blocker: ZoneBlocker | null
+  receipt: ZoneReceipt | null
+}
+
+function statusFilePath(projectDir: string, safe: string): string {
+  return join(projectDir, 'ARCHITECT', 'status', `${safe}.json`)
+}
+
+function isZoneRunState(value: unknown): value is ZoneRunState {
+  return value === 'idle' || value === 'running' || value === 'ack' ||
+    value === 'done' || value === 'blocked' || value === 'failed'
+}
+
+function readStatus(projectDir: string, safe: string): ZoneStatus | null {
+  try {
+    const raw = fs.readFileSync(statusFilePath(projectDir, safe), 'utf-8')
+    const parsed = JSON.parse(raw) as Partial<ZoneStatus>
+    return {
+      round: typeof parsed.round === 'number' ? parsed.round : 0,
+      state: isZoneRunState(parsed.state) ? parsed.state : 'idle',
+      taskId: typeof parsed.taskId === 'string' ? parsed.taskId : null,
+      lastTaskHash: typeof parsed.lastTaskHash === 'string' ? parsed.lastTaskHash : null,
+      startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
+      acknowledgedAt: typeof parsed.acknowledgedAt === 'string' ? parsed.acknowledgedAt : null,
+      lastActivityAt: typeof parsed.lastActivityAt === 'string' ? parsed.lastActivityAt : null,
+      completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : null,
+      blocker: parsed.blocker && typeof parsed.blocker === 'object' ? parsed.blocker as ZoneBlocker : null,
+      receipt: parsed.receipt && typeof parsed.receipt === 'object' ? parsed.receipt as ZoneReceipt : null,
+    }
+  } catch { return null }
+}
+
+function writeStatus(projectDir: string, safe: string, status: ZoneStatus): void {
+  try {
+    const file = statusFilePath(projectDir, safe)
+    fs.mkdirSync(join(projectDir, 'ARCHITECT', 'status'), { recursive: true })
+    fs.writeFileSync(file, JSON.stringify(status, null, 2))
+  } catch (err) {
+    console.error(`[status] failed to write for ${safe}`, err)
+  }
+}
+
+function initStatus(projectDir: string, safe: string): void {
+  writeStatus(projectDir, safe, {
+    round: 0,
+    state: 'idle',
+    taskId: null,
+    lastTaskHash: null,
+    startedAt: null,
+    acknowledgedAt: null,
+    lastActivityAt: null,
+    completedAt: null,
+    blocker: null,
+    receipt: null,
+  })
+}
+
+function markRunning(projectDir: string, safe: string, hash: string, taskId: string): void {
+  const prev = readStatus(projectDir, safe)
+  writeStatus(projectDir, safe, {
+    round: (prev?.round ?? 0) + 1,
+    state: 'running',
+    taskId,
+    lastTaskHash: hash,
+    startedAt: new Date().toISOString(),
+    acknowledgedAt: null,
+    lastActivityAt: null,
+    completedAt: null,
+    blocker: null,
+    receipt: null,
+  })
+}
+
+function markAck(projectDir: string, safe: string): void {
+  const prev = readStatus(projectDir, safe)
+  if (!prev) return
+  writeStatus(projectDir, safe, {
+    ...prev,
+    state: 'ack',
+    acknowledgedAt: prev.acknowledgedAt ?? new Date().toISOString(),
+  })
+}
+
+function markActivity(projectDir: string, safe: string, iso: string): void {
+  const prev = readStatus(projectDir, safe)
+  if (!prev) return
+  if (prev.lastActivityAt === iso) return
+  writeStatus(projectDir, safe, { ...prev, lastActivityAt: iso })
+}
+
+function markDoneWithReceipt(projectDir: string, safe: string, receipt: ZoneReceipt): void {
+  const prev = readStatus(projectDir, safe)
+  if (!prev) return
+  writeStatus(projectDir, safe, {
+    ...prev,
+    state: receipt.result === 'success' ? 'done' : 'blocked',
+    completedAt: new Date().toISOString(),
+    receipt,
+    blocker: receipt.result === 'success' ? null : {
+      kind: 'zone-reported',
+      message: receipt.summary,
+      since: new Date().toISOString(),
+    },
+  })
+}
+
+function markBlocked(projectDir: string, safe: string, blocker: ZoneBlocker): void {
+  const prev = readStatus(projectDir, safe)
+  if (!prev) return
+  writeStatus(projectDir, safe, { ...prev, blocker })
+}
+
+function markFailed(projectDir: string, safe: string, blocker: ZoneBlocker): void {
+  const prev = readStatus(projectDir, safe)
+  if (!prev) return
+  writeStatus(projectDir, safe, {
+    ...prev,
+    state: 'failed',
+    completedAt: new Date().toISOString(),
+    blocker,
+  })
 }
 
 function readSkillContent(skillPath: string): string {
@@ -711,6 +1351,27 @@ function buildMermaidDiagram(zones: ZoneGraphNode[], componentsByZone: Map<strin
   return lines.join('\n')
 }
 
+function buildArchitectureContextBlock(
+  allZones: ZoneGraphNode[],
+  componentsByZone: Map<string, ComponentGraphNode[]>,
+  edges: GraphEdge[],
+  currentZoneId: string,
+): string {
+  const others = allZones.filter(z => z.id !== currentZoneId)
+  if (others.length === 0) return ''
+  const zoneIds = new Set(allZones.map(z => z.id))
+  const zoneEdges = edges.filter(e => zoneIds.has(e.source) && zoneIds.has(e.target))
+
+  const otherLines = others.map(z => {
+    const comps = (componentsByZone.get(z.id) ?? [])
+      .map(c => c.data.label + (c.data.tag ? ` [${c.data.tag}]` : ''))
+    const compPart = comps.length ? ` — components: ${comps.join(', ')}` : ''
+    return `- **${z.data.label}**${z.data.description ? `: ${z.data.description}` : ''}${compPart}`
+  }).join('\n')
+
+  return `\n\n## Architecture Context (reference)\nThe user's canvas contains other zones beyond yours. They are NOT part of this task — do not touch their files. Listed here only so you understand the surrounding system.\n\n${buildMermaidDiagram(allZones, componentsByZone, zoneEdges)}\n\nOther zones on the canvas:\n${otherLines}\n`
+}
+
 function buildArchitectPrompt(
   zones: ZoneGraphNode[],
   componentsByZone: Map<string, ComponentGraphNode[]>,
@@ -742,11 +1403,12 @@ function buildArchitectPrompt(
       zone.data.description ? `Zone description: ${zone.data.description}` : '',
       `Runtime: ${getAgentRuntime(runtime).label}`,
       `Model: ${model}`,
-      `Components the agent must build:\n${componentLines}`,
+      `Components owned by this zone (reference — do not assume all must change):\n${componentLines}`,
       upstream.length ? `Upstream zones: ${upstream.join(', ')}` : '',
       downstream.length ? `Downstream zones: ${downstream.join(', ')}` : '',
-      `Task file: ARCHITECT/tasks/${sanitize(zone.data.label)}.md`,
-      `Status log: ARCHITECT/outputs/${sanitize(zone.data.label)}.md (progress notes only — actual code goes in the project root)`,
+      `Task file (you write): ARCHITECT/tasks/${sanitize(zone.data.label)}.md`,
+      `Status file (harness writes): ARCHITECT/status/${sanitize(zone.data.label)}.json`,
+      `Output log (zone writes): ARCHITECT/outputs/${sanitize(zone.data.label)}.md`,
     ].filter(Boolean).join('\n')
   }).join('\n\n')
 
@@ -755,53 +1417,119 @@ function buildArchitectPrompt(
     : '  (zones run independently)'
 
   const unassignedSection = unassignedComponents.length
-    ? `\n\n## Unassigned Components (no zone overlay)\nThese components exist on the canvas but are not covered by any zone. They are design-only artifacts; no agent has been spawned to build them. Decide whether to fold their responsibilities into an existing zone's task file or surface them back to the user.\n${unassignedComponents.map(c => `- ${c.data.label}${c.data.tag ? ` [${c.data.tag}]` : ''}${c.data.description ? ` — ${c.data.description}` : ''}`).join('\n')}`
+    ? `\n\n## Unassigned Components (reference only)\nThese components appear on the canvas but are not owned by any zone. They are design-only artifacts; no agent is assigned to them. Mention them only if the user's task directly involves them.\n${unassignedComponents.map(c => `- ${c.data.label}${c.data.tag ? ` [${c.data.tag}]` : ''}${c.data.description ? ` — ${c.data.description}` : ''}`).join('\n')}`
     : ''
 
-  const userRequestSection = userPrompt && userPrompt.trim()
-    ? `## User Request\n${userPrompt.trim()}\n\n`
-    : ''
+  const taskSection = userPrompt && userPrompt.trim()
+    ? `## Task (from user)\n${userPrompt.trim()}`
+    : `## Task (from user)\n(No task provided. Ask the user for one before writing any task files.)`
 
-  return `You are the Architect agent coordinating a multi-agent system. Each "zone" below is a separate agent running as an interactive coding CLI session. Every agent is waiting and will automatically read its task file the moment you write it — you do not need to contact them directly.
+  return `You are the Architect agent coordinating a multi-agent system. Every zone below is already running — a separate interactive CLI session sitting idle at its prompt. You dispatch work to a zone by **writing its task file**; the harness watches ARCHITECT/tasks/ and pokes the matching zone's CLI with a pointer to the file as soon as you save it. That is the only dispatch mechanism.
 
-DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem.
+DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem. You are the orchestrator — never hand control back to the user asking them to trigger the zones. You trigger them.
 
-${userRequestSection}
+${taskSection}
 
-## Architecture Diagram
+## Architecture Context (reference)
+The user has designed the following system. Use it ONLY to understand where responsibilities live and how zones relate. This is NOT a build list. Do NOT rebuild components that already exist. Do NOT assume every zone needs work — only engage the zones required by the user's task above.
+
 ${buildMermaidDiagram(zones, componentsByZone, zoneEdges)}
 
-## Zones (agents)
+## Zones available to you
 ${agentList}
 
-## Inter-zone Data Flow
+## Inter-zone data flow
 ${flowLines}${unassignedSection}
+
+## The protocol (one channel, four directories)
+
+- **ARCHITECT/tasks/<safe>.md** — you own. Write a task file to dispatch work. Overwrite to kick off another round on the same zone.
+- **ARCHITECT/status/<safe>.json** — the harness owns. The authoritative view of a zone. Shape:
+  \`\`\`
+  {
+    "round": <N>,
+    "state": "idle" | "running" | "ack" | "done" | "blocked" | "failed",
+    "taskId": <string or null>,
+    "lastTaskHash": <sha1>,
+    "startedAt": <iso>,          // harness sent the poke
+    "acknowledgedAt": <iso>,     // zone echoed ARCHITECT_TASK_ACK
+    "lastActivityAt": <iso>,     // most recent mtime on outputs/<safe>.md
+    "completedAt": <iso>,
+    "blocker": null | {
+      "kind": "delivery-failed" | "idle-stuck" | "task-timeout"
+            | "pty-exit" | "malformed-completion" | "zone-reported",
+      "message": <string>,
+      "since": <iso>
+    },
+    "receipt": null | { "result": "success"|"blocked"|"failed", "summary": <string>, "durationMs": <N> }
+  }
+  \`\`\`
+  A round is fully complete when \`round >= target\` AND \`state == "done"\` AND \`blocker == null\`.
+- **ARCHITECT/outputs/<safe>.md** — zones own. Read after a round completes for the zone's narrative summary.
+- **ARCHITECT/outputs/<safe>.receipt.<round>.json** — zones wrote, harness archived. Contains the structured result; read it for \`summary\` / \`result\`.
 
 ## Your job
 
-1. Read ARCHITECT/manifest.json for full details (including per-zone components)
-2. Write a task file for EVERY zone listed above. Write them in dependency order (upstream first).
-   Each task file must contain:
-   - The concrete components the zone's agent must build (names, files, responsibilities)
-   - API contracts, ports, endpoints, schemas between zones
-   - What to read from upstream zones' output files
-   - Clear acceptance criteria
+1. Read ARCHITECT/manifest.json if you need more detail about any zone.
+2. Decompose the user's task into zone-scoped sub-tasks. Write a task file ONLY for zones that actually need to act. Zones without a task file stay idle — that is the correct outcome when the task doesn't touch them.
+3. Each task file you write must:
+   - Restate the user's goal in terms specific to this zone
+   - Name the concrete components, files, or endpoints the zone should touch (reuse existing ones where possible; only create new ones the task demands)
+   - Spell out API contracts, schemas, or ports the zone must produce or consume at the seams with other zones
+   - Point to upstream output logs the zone should read first (if any)
+   - State clear acceptance criteria
+4. Write task files in dependency order (upstream first) so downstream zones have concrete interfaces when they start.
+5. Write your coordination log to ARCHITECT/outputs/Architect.md summarizing which zones you engaged and why the others were skipped.
+6. **Supervise until every engaged zone finishes the current round or reaches a terminal failure.** Note each zone's \`round\` before you overwrite the task file; the harness bumps \`round\` by 1 on each new poke. Poll recipe:
 
-3. After writing all task files, write your coordination log to ARCHITECT/outputs/Architect.md
-4. Monitor ARCHITECT/outputs/ — when a zone-agent completes it writes its status log there; coordinate handoffs by updating downstream task files with actual details
+\`\`\`bash
+# Fill "engaged" with sanitized labels you dispatched; "target" with the
+# round number you're waiting for (1 on first poke; increment on re-poke).
+engaged="Zone-A Zone-B"
+declare -A target
+target[Zone-A]=1
+target[Zone-B]=1
+while :; do
+  missing=""
+  for z in $engaged; do
+    f="ARCHITECT/status/$z.json"
+    r=$(jq -r '.round // 0' "$f" 2>/dev/null)
+    s=$(jq -r '.state // "idle"' "$f" 2>/dev/null)
+    b=$(jq -r '.blocker.kind // "none"' "$f" 2>/dev/null)
+    # Terminal states — stop waiting on this zone this turn.
+    if [ "$s" = "done" ] && [ "$r" -ge "\${target[$z]}" ]; then continue; fi
+    if [ "$s" = "blocked" ] || [ "$s" = "failed" ] || [ "$b" != "none" ]; then continue; fi
+    missing="$missing $z"
+  done
+  [ -z "$missing" ] && break
+  sleep 5
+done
+# After the loop, inspect every engaged zone's blocker before drawing conclusions.
+\`\`\`
 
-IMPORTANT: Agents must create all real project files (source code, configs, etc.) directly in the project root working directory, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination files (manifests, prompts, tasks, status logs).
+## Blocker handling (important)
 
-Start immediately. Write the task files now.${dispatchContext?.isRedispatch
-    ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/.\n${dispatchContext.changedNodeLabels.length > 0
-        ? `Only the following zones have changed and MUST be re-run: ${dispatchContext.changedNodeLabels.join(', ')}.\nDo NOT re-run unchanged zones unless their upstream inputs changed.`
-        : 'No zone configurations changed. Only re-run zones that previously failed or need updating.'}`
+Any non-null \`.blocker\` is a stall the zone can't resolve by itself. Do NOT just keep polling — act:
+
+- \`delivery-failed\` (no ack within 45s): the poke never reached the zone's agent loop. **Action**: overwrite the task file. The harness bumps \`round\` and sends a fresh poke with a new task id.
+- \`idle-stuck\` (no output activity for 90s+): the zone is stalled mid-task. **Action**: read \`outputs/<safe>.md\` for the last progress note, then overwrite the task file with a nudge ("you appear to be blocked on X; try Y") or surface the problem to the user.
+- \`task-timeout\` (exceeded zone's timeout): same as idle-stuck but harder — zone has been working too long. **Action**: inspect \`outputs/<safe>.md\`; consider narrowing the task or escalating to the user.
+- \`pty-exit\` / \`malformed-completion\`: the zone's process died or reported completion without a receipt. **Action**: the zone cannot recover on its own. Read \`outputs/<safe>.md\` for partial results and surface to the user.
+- \`zone-reported\` (state is \`blocked\`, receipt present with \`result != success\`): the zone explicitly reported it couldn't finish. **Action**: read \`receipt.summary\` and the output log; either resolve the blocker and re-poke, or surface to the user.
+
+## Iteration
+
+To give a zone another round of work within the same dispatch, **overwrite its task file**. The harness detects the change, bumps \`round\`, assigns a new \`taskId\`, and pokes the zone's live CLI. Don't launch anything new; the zone is already running. Then wait for the new \`round\` with the poll recipe above.
+
+After all engaged zones reach \`state == "done"\` at the target round with no blocker, read each zone's ARCHITECT/outputs/<safe>.md and the archived \`outputs/<safe>.receipt.<round>.json\` to collect results. If a downstream zone needs interfaces the upstream zone produced, rewrite the downstream task file with those interfaces and poll again. Then report back to the user.
+
+IMPORTANT: Zones create all real project files (source code, configs, etc.) directly in the project root, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination (manifests, prompts, tasks, status, outputs). Do not create project files yourself.
+
+Start by writing the task files for the zones the user's task requires, then enter the supervision loop.${dispatchContext?.isRedispatch
+    ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/. Status files have been reset to round 0 for this dispatch.\n${dispatchContext.changedNodeLabels.length > 0
+        ? `The following zones have changed since the last dispatch and likely need attention: ${dispatchContext.changedNodeLabels.join(', ')}.\nStill, only engage zones the user's task actually requires.`
+        : `No zone configurations changed. Only engage zones the user's task requires.`}`
     : ''}`
-}
-
-function buildZoneBootstrapPrompt(zone: ZoneGraphNode): string {
-  const safe = sanitize(zone.data.label)
-  return `Read ARCHITECT/tasks/${safe}.md and execute every instruction in it.`
 }
 
 function buildZoneSystemPrompt(
@@ -849,31 +1577,53 @@ function buildZoneSystemPrompt(
   return `You are the **${zone.data.label}** zone-agent.
 ${zone.data.description ? `Zone description: ${zone.data.description}\n` : ''}
 ${upstream.length ? `Upstream zones (read their status logs first): ${upstream.map(label => `ARCHITECT/outputs/${sanitize(label as string)}.md`).join(', ')}\n` : ''}${downstream.length ? `Downstream zones depending on you: ${downstream.join(', ')}\n` : ''}${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
-## Components you must build
+## What you own (reference)
+
+These components live in your zone on the architecture canvas. This is context about the parts of the system you are responsible for — NOT a build list. The current dispatch may touch none, some, or all of them. The Architect's task file tells you what to actually do; treat anything outside that file as existing context you should leave alone.
 
 ${compList}
 
-## Internal architecture (component-to-component wiring)
+## Internal wiring (reference)
 
 ${archLines}
 
 ${skills ? `## Skills\n\n${skills}\n\n` : ''}${userSystem ? `## Behavior\n\n${userSystem}\n\n` : ''}## Instructions
 
-When instructed, read ARCHITECT/tasks/${safe}.md and execute every instruction in it immediately and concretely. You are responsible for **all** components listed above.
+The Architect dispatches work to you by writing ARCHITECT/tasks/${safe}.md. The harness delivers each new or updated version directly into this CLI session as a message — you will receive a poke that carries a \`task_id\` and a \`round\` number. When a poke arrives, open the file, execute exactly what it says — nothing more. Do NOT expand scope by building unrequested components, rewriting files the task does not mention, or assuming the whole zone needs to be (re)built.
+
+You may be re-poked multiple times within a single conversation (iteration). Every poke starts a fresh round with a new \`task_id\`. Use the task_id from the CURRENT poke in all of the steps below — never reuse an old one.
 
 **WHERE TO CREATE FILES:**
 - All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
-- ARCHITECT/ is only for coordination: tasks, prompts, and status logs.
-- ${statusLog} is your status log — write brief progress notes and a final summary there (include any URLs/ports you open), not your actual code.
+- ARCHITECT/ is only for coordination: tasks, prompts, status, and outputs.
+- ${statusLog} is your output log — append brief progress notes (the harness polls its mtime as a heartbeat, so actually writing to it during work matters).
 
-If you have downstream zones, document your interfaces (ports, schemas, file paths) in your status log so they can read it.
+If you have downstream zones, document any interfaces you produce (ports, schemas, file paths) in your output log so the Architect can relay them.
 
 Work fully autonomously — do not stop or ask for clarification.
 
-When you have finished ALL work, run this exact shell command as your last action:
-\`\`\`
-echo ARCHITECT_COMPLETE
-\`\`\``
+## Round protocol (do these in order, every round)
+
+1. **Acknowledge immediately, before anything else.** As the very first shell command of the round, run exactly:
+   \`echo ARCHITECT_TASK_ACK <task_id>\`
+   where \`<task_id>\` is the id in the poke you just received. The harness watches for this echo; without it the task is considered undelivered after 45 seconds and the Architect will re-poke.
+
+2. **Read and execute** \`ARCHITECT/tasks/${safe}.md\` exactly as written.
+
+3. **Log progress** to \`${statusLog}\` as you go — one line per significant step. The harness watches this file's mtime; long silences trigger an \`idle-stuck\` blocker.
+
+4. **Write a receipt** when the round finishes, success OR blocked. Write valid JSON to \`ARCHITECT/outputs/${safe}.receipt.json\`:
+   \`\`\`json
+   {"task_id":"<the same id>","result":"success","summary":"<one-line>","durationMs":<integer>}
+   \`\`\`
+   - \`result\`: \`"success"\` when the task is done; \`"blocked"\` when a hard dependency prevents completion (missing file, contradictory requirement, permission denial); \`"failed"\` on an unrecoverable internal error.
+   - \`summary\`: a single line the Architect will read. For blockers, state the blocker concretely ("file X referenced in task does not exist"). For success, say what you produced (ports, endpoints, files).
+   - Always include the correct \`task_id\` from the current poke — receipts with a stale id are ignored.
+
+5. **Signal done.** After the receipt is written, run exactly:
+   \`echo ARCHITECT_COMPLETE <task_id>\`
+
+The harness promotes \`state\` on your status.json at each of these steps: \`running\` → \`ack\` on step 1, \`done\` / \`blocked\` on step 4. Missing step 1 or 4 causes the Architect to see a blocker and intervene.`
 }
 
 function setupWorkspace(
@@ -885,7 +1635,7 @@ function setupWorkspace(
   userPrompt?: string,
 ) {
   const base = join(projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions', 'dispatches'].map(name => join(base, name))) {
+  for (const dir of ['tasks', 'outputs', 'prompts', 'status', 'sessions', 'dispatches'].map(name => join(base, name))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
@@ -939,6 +1689,341 @@ function setupWorkspace(
   }
 }
 
+// Per-task timeouts. `DEFAULT_TASK_TIMEOUT_MS` can be overridden per zone via
+// `zone.data.behavior.timeoutMs`. `ACK_TIMEOUT_MS` is the deadline for the
+// zone to echo `ARCHITECT_TASK_ACK <task_id>`; misses flip status.json to
+// `blocker.kind = 'delivery-failed'`. `IDLE_THRESHOLD_MS` is the heartbeat
+// threshold against `outputs/<safe>.md` mtime.
+const DEFAULT_TASK_TIMEOUT_MS = 30 * 60_000
+const ACK_TIMEOUT_MS = 45_000
+const IDLE_THRESHOLD_MS = 90_000
+const HEARTBEAT_POLL_MS = 15_000
+// Soft gate on first-round delivery. On timeout the coordinator logs and
+// pokes anyway — we'd rather risk a slightly early poke than refuse delivery
+// when the xterm-headless cue misses.
+const AWAIT_READY_SOFT_MS = 10_000
+
+// Single-watcher coordinator for a multi-zone dispatch. All zones must already
+// be pre-spawned before this is called. It watches ARCHITECT/tasks/, pokes
+// the corresponding zone with a task id, and watches outputs/<safe>.receipt.json
+// for structured completion. Heartbeat / ack / task timers drive the blocker
+// field on status.json so the Architect can recover from stalls.
+function startDispatchCoordinator(
+  projectDir: string,
+  zones: ZoneGraphNode[],
+): { stop: () => void } {
+  const zoneBySafe = new Map(zones.map(z => [sanitize(z.data.label), z]))
+  const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
+  const outputsDir = join(projectDir, 'ARCHITECT', 'outputs')
+  fs.mkdirSync(outputsDir, { recursive: true })
+
+  const debounceTimers = new Map<string, NodeJS.Timeout>()
+  // Guards concurrent deliverTask runs on the same zone (watcher + initial
+  // sweep can both fire).
+  const inFlight = new Set<string>()
+
+  // Per-zone timers for the in-flight round. All cleared on completion or
+  // coordinator teardown. Keyed by safe label.
+  const ackTimers = new Map<string, NodeJS.Timeout>()
+  const taskTimers = new Map<string, NodeJS.Timeout>()
+  const heartbeatTimer = setInterval(() => {
+    for (const safe of zoneBySafe.keys()) checkHeartbeat(safe)
+  }, HEARTBEAT_POLL_MS)
+
+  // File watchers for receipts (one per outputs dir entry we care about).
+  let receiptWatcher: fs.FSWatcher | null = null
+  let tasksWatcher: fs.FSWatcher | null = null
+
+  for (const safe of zoneBySafe.keys()) initStatus(projectDir, safe)
+
+  function clearRoundTimers(safe: string): void {
+    const ackT = ackTimers.get(safe)
+    if (ackT) { clearTimeout(ackT); ackTimers.delete(safe) }
+    const taskT = taskTimers.get(safe)
+    if (taskT) { clearTimeout(taskT); taskTimers.delete(safe) }
+  }
+
+  function checkHeartbeat(safe: string): void {
+    const status = readStatus(projectDir, safe)
+    if (!status) return
+    if (status.state !== 'running' && status.state !== 'ack') return
+    // Poll mtime of outputs/<safe>.md — zones append progress notes there, so
+    // mtime advancing means the zone is alive. Absence of the file is fine
+    // for an early-round zone that hasn't written yet.
+    const outPath = join(outputsDir, `${safe}.md`)
+    try {
+      const stat = fs.statSync(outPath)
+      const iso = stat.mtime.toISOString()
+      markActivity(projectDir, safe, iso)
+    } catch { /* no output yet */ }
+
+    // Re-read after activity update.
+    const now = Date.now()
+    const fresh = readStatus(projectDir, safe)
+    if (!fresh) return
+    const anchor = fresh.lastActivityAt ?? fresh.acknowledgedAt ?? fresh.startedAt
+    if (!anchor) return
+    const age = now - Date.parse(anchor)
+    if (age < IDLE_THRESHOLD_MS) return
+    // Don't clobber a more specific blocker (delivery-failed, task-timeout).
+    if (fresh.blocker && fresh.blocker.kind !== 'idle-stuck') return
+    markBlocked(projectDir, safe, {
+      kind: 'idle-stuck',
+      message: `No activity for ${Math.round(age / 1000)}s (last at ${anchor})`,
+      since: fresh.blocker?.since ?? new Date().toISOString(),
+    })
+  }
+
+  // Processes a dropped `<safe>.receipt.json` file. If the receipt's task_id
+  // matches the round in flight, flip status.json to done/blocked and cancel
+  // round timers. Malformed JSON → blocker.kind='malformed-completion'.
+  function ingestReceipt(safe: string): void {
+    const zone = zoneBySafe.get(safe)
+    if (!zone) return
+    const receiptPath = join(outputsDir, `${safe}.receipt.json`)
+    let raw: string
+    try { raw = fs.readFileSync(receiptPath, 'utf-8') } catch { return }
+    let parsed: Partial<ZoneReceipt & { task_id: string; taskId: string }>
+    try {
+      parsed = JSON.parse(raw)
+    } catch {
+      markBlocked(projectDir, safe, {
+        kind: 'malformed-completion',
+        message: `Receipt at ${safe}.receipt.json is not valid JSON`,
+        since: new Date().toISOString(),
+      })
+      return
+    }
+    const status = readStatus(projectDir, safe)
+    if (!status || !status.taskId) return
+    const receiptTaskId = parsed.task_id ?? parsed.taskId
+    if (receiptTaskId !== status.taskId) {
+      // Stale receipt (from a previous round). Ignore silently — the current
+      // round is still in flight.
+      return
+    }
+    const result = parsed.result === 'blocked' || parsed.result === 'failed'
+      ? parsed.result
+      : 'success'
+    const durationMs = typeof parsed.durationMs === 'number'
+      ? parsed.durationMs
+      : status.startedAt ? Date.now() - Date.parse(status.startedAt) : 0
+    const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
+    markDoneWithReceipt(projectDir, safe, { result, summary, durationMs })
+    clearRoundTimers(safe)
+    // Archive the receipt under the round number so iteration rounds get a
+    // clean slate.
+    try {
+      const archivePath = join(outputsDir, `${safe}.receipt.${status.round}.json`)
+      fs.renameSync(receiptPath, archivePath)
+    } catch { /* best effort */ }
+  }
+
+  function hookDoneOnce(zone: ZoneGraphNode): void {
+    const safe = sanitize(zone.data.label)
+    onSessionDone(zone.id, () => {
+      // ARCHITECT_COMPLETE was seen on the rendered screen. This is
+      // secondary to the receipt file. If the receipt already landed, the
+      // timers are cleared and status is done — nothing to do. If it hasn't
+      // landed within a short grace window, flag malformed-completion so the
+      // Architect can fall back to reading outputs/<safe>.md.
+      setTimeout(() => {
+        const fresh = readStatus(projectDir, safe)
+        if (!fresh) return
+        if (fresh.state === 'done' || fresh.state === 'blocked' || fresh.state === 'failed') return
+        markBlocked(projectDir, safe, {
+          kind: 'malformed-completion',
+          message: 'ARCHITECT_COMPLETE observed without a matching receipt.json',
+          since: new Date().toISOString(),
+        })
+      }, 2_000)
+    })
+  }
+  for (const zone of zones) hookDoneOnce(zone)
+
+  async function deliverTask(safe: string): Promise<void> {
+    if (inFlight.has(safe)) return
+    const filePath = join(tasksDir, `${safe}.md`)
+    let content: string
+    try { content = fs.readFileSync(filePath, 'utf-8') } catch { return }
+    if (!content.trim()) return
+    const hash = createHash('sha1').update(content).digest('hex')
+
+    const prev = readStatus(projectDir, safe)
+    // Same task already delivered AND still in flight → skip. If the zone
+    // finished the task and the Architect overwrites with new content, hash
+    // differs; if same hash but we're idle / done / blocked, we redeliver.
+    if (prev?.lastTaskHash === hash && (prev.state === 'running' || prev.state === 'ack')) return
+
+    const zone = zoneBySafe.get(safe)
+    if (!zone) return
+    const session = sessions.get(zone.id)
+    if (!session) {
+      console.warn(`[coordinator] no live PTY for zone ${safe}; cannot deliver task`)
+      return
+    }
+    if (session.lifecycle === 'failed') {
+      console.warn(`[coordinator] zone ${safe} in failed state; skipping`)
+      markFailed(projectDir, safe, {
+        kind: 'pty-exit',
+        message: session.lastError?.message ?? 'PTY is in failed state',
+        since: new Date().toISOString(),
+      })
+      return
+    }
+
+    inFlight.add(safe)
+    try {
+      try {
+        await awaitReady(zone.id, AWAIT_READY_SOFT_MS)
+      } catch (err) {
+        // Soft gate — log and proceed anyway. Either the ready cue missed
+        // under xterm emulation (false negative) or the CLI is genuinely
+        // unhealthy; the ack timer will catch the latter.
+        console.warn(`[coordinator] ${safe} not visibly ready, poking anyway: ${String(err)}`)
+      }
+
+      // Re-arm completion hook (observe splices doneCallbacks when the
+      // sentinel fires).
+      hookDoneOnce(zone)
+
+      const taskId = generateTaskId()
+      const round = (prev?.round ?? 0) + 1
+      setCurrentTaskId(zone.id, taskId)
+      clearRoundTimers(safe)
+      markRunning(projectDir, safe, hash, taskId)
+
+      const body = buildPokeBody({ safe, taskId, round })
+      const ok = sendPrompt(zone.id, body)
+      if (!ok) {
+        console.error(`[coordinator] sendPrompt failed for ${safe}`)
+        markFailed(projectDir, safe, {
+          kind: 'pty-exit',
+          message: 'sendPrompt failed; PTY may be dead',
+          since: new Date().toISOString(),
+        })
+        return
+      }
+
+      // Ack watcher. The observe() path resolves `awaitAck(taskId)` when the
+      // zone echoes ARCHITECT_TASK_ACK. On success, flip status → 'ack'. On
+      // timeout, set blocker.
+      void awaitAck(zone.id, taskId, ACK_TIMEOUT_MS).then(
+        () => { markAck(projectDir, safe) },
+        () => {
+          const status = readStatus(projectDir, safe)
+          if (!status || status.taskId !== taskId) return
+          if (status.state === 'done' || status.state === 'blocked' || status.state === 'failed') return
+          markBlocked(projectDir, safe, {
+            kind: 'delivery-failed',
+            message: `Zone did not ack within ${ACK_TIMEOUT_MS / 1000}s`,
+            since: new Date().toISOString(),
+          })
+        },
+      )
+
+      const timeoutMs = Math.max(
+        60_000,
+        zone.data?.behavior?.timeoutMs || DEFAULT_TASK_TIMEOUT_MS,
+      )
+      const taskT = setTimeout(() => {
+        taskTimers.delete(safe)
+        const status = readStatus(projectDir, safe)
+        if (!status || status.taskId !== taskId) return
+        if (status.state === 'done' || status.state === 'blocked' || status.state === 'failed') return
+        markBlocked(projectDir, safe, {
+          kind: 'task-timeout',
+          message: `Task exceeded ${Math.round(timeoutMs / 1000)}s without a receipt`,
+          since: new Date().toISOString(),
+        })
+      }, timeoutMs)
+      taskTimers.set(safe, taskT)
+    } finally {
+      inFlight.delete(safe)
+    }
+  }
+
+  tasksWatcher = fs.watch(tasksDir, (_event, filename) => {
+    if (!filename?.endsWith('.md')) return
+    const safe = filename.slice(0, -3)
+    if (!zoneBySafe.has(safe)) return
+    const existing = debounceTimers.get(safe)
+    if (existing) clearTimeout(existing)
+    debounceTimers.set(safe, setTimeout(() => {
+      debounceTimers.delete(safe)
+      void deliverTask(safe)
+    }, 500))
+  })
+
+  // Outputs watcher: receipts (`<safe>.receipt.json`) flip completion, and
+  // markdown (`<safe>.md`) writes advance lastActivityAt.
+  receiptWatcher = fs.watch(outputsDir, (_event, filename) => {
+    if (!filename) return
+    const name = String(filename)
+    if (name.endsWith('.receipt.json')) {
+      const safe = name.slice(0, -'.receipt.json'.length)
+      if (zoneBySafe.has(safe)) ingestReceipt(safe)
+    } else if (name.endsWith('.md')) {
+      const safe = name.slice(0, -3)
+      if (zoneBySafe.has(safe)) {
+        try {
+          const stat = fs.statSync(join(outputsDir, name))
+          markActivity(projectDir, safe, stat.mtime.toISOString())
+        } catch { /* file may have been removed */ }
+      }
+    }
+  })
+
+  // Initial-write catch: fs.watch on macOS can miss the very first write to
+  // a freshly-created file. One short sweep catches any tasks written before
+  // the watcher was armed.
+  setTimeout(() => {
+    try {
+      for (const name of fs.readdirSync(tasksDir)) {
+        if (!name.endsWith('.md')) continue
+        const safe = name.slice(0, -3)
+        if (zoneBySafe.has(safe)) void deliverTask(safe)
+      }
+    } catch {}
+  }, 200)
+
+  const coord = {
+    stop: () => {
+      for (const timer of debounceTimers.values()) clearTimeout(timer)
+      debounceTimers.clear()
+      for (const timer of ackTimers.values()) clearTimeout(timer)
+      ackTimers.clear()
+      for (const timer of taskTimers.values()) clearTimeout(timer)
+      taskTimers.clear()
+      clearInterval(heartbeatTimer)
+      try { tasksWatcher?.close() } catch {}
+      try { receiptWatcher?.close() } catch {}
+      tasksWatcher = null
+      receiptWatcher = null
+      if (activeDispatchCoordinator === coord) activeDispatchCoordinator = null
+      // activeWatcher is a legacy slot the assistant watcher also uses; leave
+      // it alone so other watchers aren't accidentally closed here.
+    },
+  }
+  activeDispatchCoordinator = coord
+  return coord
+}
+
+function buildPokeBody(opts: { safe: string; taskId: string; round: number }): string {
+  const { safe, taskId, round } = opts
+  return [
+    `New task from the Architect — round ${round}, task_id ${taskId}.`,
+    ``,
+    `Follow these steps in order:`,
+    `1. First, before anything else: echo ARCHITECT_TASK_ACK ${taskId}`,
+    `2. Read ARCHITECT/tasks/${safe}.md and execute it.`,
+    `3. Throughout, append brief progress notes to ARCHITECT/outputs/${safe}.md.`,
+    `4. When finished (success or blocked), write ARCHITECT/outputs/${safe}.receipt.json with:`,
+    `   {"task_id":"${taskId}","result":"success"|"blocked"|"failed","summary":"<one-line>","durationMs":<number>}`,
+    `5. Finally, echo ARCHITECT_COMPLETE ${taskId}`,
+  ].join('\n')
+}
+
 export interface RunGraphDispatch {
   userPrompt: string
   model?: string
@@ -958,6 +2043,7 @@ export async function runGraph(
   killAll()
   const settings = normalizeProjectSettings(rawSettings)
   const userPrompt = (dispatch.userPrompt ?? '').trim()
+  const dispatchSummary = summarizeFromPrompt(userPrompt)
 
   // Filter to the subset of zones requested, if any.
   const { zones: allZones } = indexGraph(nodes)
@@ -975,9 +2061,9 @@ export async function runGraph(
   const zoneEdges = edges.filter(e => selectedZoneIds.has(e.source) && selectedZoneIds.has(e.target))
   const sorted = topoSort(selectedZones, zoneEdges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
-  const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
 
-  // Single-zone path: skip the Architect coordinator entirely.
+  // Single-zone path: skip the Architect coordinator entirely. Always fresh —
+  // explicit resume goes through runZone / the zone launcher modal.
   if (sorted.length === 1) {
     const zone = sorted[0]
     const runtime = getZoneRuntime(zone, settings)
@@ -986,10 +2072,10 @@ export async function runGraph(
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
-    const systemPrompt = fs.readFileSync(join(promptsDir, `${sanitize(zone.data.label)}.md`), 'utf-8')
-
-    const saved = loadSavedZoneSessionForRuntime(projectDir, zone.id, runtime, sanitize(zone.data.label))
-    const canResume = !!saved
+    const baseSystemPrompt = fs.readFileSync(join(promptsDir, `${sanitize(zone.data.label)}.md`), 'utf-8')
+    const { zones: canvasZones, componentsByZone: canvasComps } = indexGraph(nodes)
+    const contextBlock = buildArchitectureContextBlock(canvasZones, canvasComps, edges, zone.id)
+    const systemPrompt = baseSystemPrompt + contextBlock
 
     spawnAgentSession({
       win,
@@ -998,15 +2084,17 @@ export async function runGraph(
       runtime,
       env,
       cwd: projectDir,
-      initialPrompt: canResume ? undefined : (userPrompt || undefined),
-      resumeSessionId: canResume ? saved!.sessionId : undefined,
-      resumeUserPrompt: canResume && userPrompt ? userPrompt : undefined,
+      initialPrompt: userPrompt || undefined,
       model,
       planMode: dispatch.planMode === true,
-      appendSystemPrompt: canResume ? undefined : systemPrompt,
-      // Single-zone dispatch is interactive — keep normal permission prompts.
+      appendSystemPrompt: systemPrompt,
       skipPermissions: false,
-      capture: { projectDir, zoneKey: zone.id, legacyKey: sanitize(zone.data.label) },
+      capture: {
+        projectDir,
+        zoneKey: zone.id,
+        legacyKey: sanitize(zone.data.label),
+        summary: dispatchSummary,
+      },
     })
 
     return [{ id: zone.id, label: zone.data.label, runtime }]
@@ -1017,45 +2105,24 @@ export async function runGraph(
     ...sorted.map(zone => ({ id: zone.id, label: zone.data.label, runtime: getZoneRuntime(zone, settings) })),
   ]
 
-  const zoneBySafe = new Map(sorted.map(zone => [sanitize(zone.data.label), zone]))
-  const triggered = new Set<string>()
-  const taskReady = new Set<string>()
-  const agentDone = new Set<string>()
+  // Architect session id is captured first; zones that race ahead queue their
+  // upsert until it's available so every DispatchRecord keeps a full zone map.
+  let architectSessionId: string | null = null
+  const pendingZoneUpserts: Array<() => void> = []
 
-  const upstreamMap = new Map<string, string[]>()
-  const downstreamMap = new Map<string, string[]>()
+  // Pre-spawn every zone up front. Each zone's CLI boots with its system
+  // prompt, sits idle at its prompt, and waits for the coordinator to deliver
+  // a task-file poke. Dependency ordering lives in the Architect's prompt —
+  // not in spawn order.
   for (const zone of sorted) {
     const safe = sanitize(zone.data.label)
-    upstreamMap.set(safe, zoneEdges
-      .filter(edge => edge.target === zone.id)
-      .map(edge => sorted.find(z => z.id === edge.source))
-      .filter(Boolean)
-      .map(z => sanitize(z!.data.label)))
-    downstreamMap.set(safe, zoneEdges
-      .filter(edge => edge.source === zone.id)
-      .map(edge => sorted.find(z => z.id === edge.target))
-      .filter(Boolean)
-      .map(z => sanitize(z!.data.label)))
-  }
-
-  function trySpawnZone(safe: string) {
-    if (triggered.has(safe) || !taskReady.has(safe)) return
-    if ((upstreamMap.get(safe) ?? []).some(upstream => !agentDone.has(upstream))) return
-
-    triggered.add(safe)
-    const zone = zoneBySafe.get(safe)!
     const env: Record<string, string> = {}
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
-
     const runtime = getZoneRuntime(zone, settings)
     const model = getZoneModel(zone, runtime)
     const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
-    const bootstrap = buildZoneBootstrapPrompt(zone)
-
-    const saved = loadSavedZoneSessionForRuntime(projectDir, zone.id, runtime, safe)
-    const canResume = !!saved
 
     spawnAgentSession({
       win,
@@ -1064,37 +2131,42 @@ export async function runGraph(
       runtime,
       env,
       cwd: projectDir,
-      initialPrompt: canResume ? undefined : bootstrap,
-      resumeSessionId: canResume ? saved!.sessionId : undefined,
-      resumeUserPrompt: canResume ? bootstrap : undefined,
-      appendSystemPrompt: canResume ? undefined : systemPrompt,
+      // No initialPrompt: the zone sits idle until the coordinator pokes it.
+      appendSystemPrompt: systemPrompt,
       model,
-      // Zones need autonomy in multi-zone dispatch, so no planMode here.
-      capture: { projectDir, zoneKey: zone.id, legacyKey: safe },
-    })
-
-    onSessionDone(zone.id, () => {
-      agentDone.add(safe)
-      for (const downstream of downstreamMap.get(safe) ?? []) trySpawnZone(downstream)
-      if (triggered.size === zoneBySafe.size) {
-        activeWatcher?.close()
-        activeWatcher = null
-      }
+      capture: {
+        projectDir,
+        zoneKey: zone.id,
+        legacyKey: safe,
+        summary: dispatchSummary,
+      },
+      onSessionCaptured: zoneSessionId => {
+        const upsert = () => {
+          if (!architectSessionId) return
+          try {
+            upsertDispatchZoneSession(projectDir, architectSessionId, {
+              zoneId: zone.id,
+              label: zone.data.label,
+              runtime,
+              sessionId: zoneSessionId,
+            })
+          } catch (err) {
+            console.error('[dispatch-capture] failed to upsert zone session', err)
+          }
+          try {
+            const rec = getZoneSessionRecord(projectDir, zone.id, zoneSessionId, safe)
+            if (rec && !rec.dispatchId) {
+              appendZoneSession(projectDir, zone.id, { ...rec, dispatchId: architectSessionId })
+            }
+          } catch {}
+        }
+        if (architectSessionId) upsert()
+        else pendingZoneUpserts.push(upsert)
+      },
     })
   }
 
-  activeWatcher?.close()
-  activeWatcher = fs.watch(tasksDir, (_event, filename) => {
-    if (!filename?.endsWith('.md')) return
-    const safe = filename.slice(0, -3)
-    if (!zoneBySafe.has(safe) || taskReady.has(safe)) return
-    try {
-      if (fs.statSync(join(tasksDir, filename)).size > 0) {
-        taskReady.add(safe)
-        trySpawnZone(safe)
-      }
-    } catch {}
-  })
+  startDispatchCoordinator(projectDir, sorted)
 
   const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
   spawnAgentSession({
@@ -1107,13 +2179,22 @@ export async function runGraph(
     initialPrompt: architectPrompt,
     model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
     planMode: dispatch.planMode === true,
-    capture: { projectDir, zoneKey: 'architect-agent', legacyKey: 'Architect' },
+    capture: {
+      projectDir,
+      zoneKey: 'architect-agent',
+      legacyKey: 'Architect',
+      summary: dispatchSummary,
+    },
     onSessionCaptured: sessionId => {
+      architectSessionId = sessionId
       const record: DispatchRecord = {
         architectSessionId: sessionId,
+        architectRuntime: settings.defaultRuntime,
         zoneIds: sorted.map(z => z.id),
         zoneLabels: sorted.map(z => z.data.label),
+        zoneSessions: [],
         userPrompt,
+        summary: dispatchSummary,
         model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
         planMode: dispatch.planMode === true,
         timestamp: new Date().toISOString(),
@@ -1121,24 +2202,43 @@ export async function runGraph(
       try { saveDispatch(projectDir, record) } catch (err) {
         console.error('[dispatch-capture] failed to save', err)
       }
+      // Flush any zone captures that landed before Architect's id was known.
+      for (const fn of pendingZoneUpserts.splice(0)) fn()
     },
   })
 
   return allInfo
 }
 
-const ASSISTANT_ZONE_SAFE = sanitize('Architecture Assistant')
+const ASSISTANT_ZONES: Record<AssistantMode, string> = {
+  architecture: sanitize('Architecture Assistant Design'),
+  general:      sanitize('Architecture Assistant General'),
+}
+const ASSISTANT_SESSION_IDS: Record<AssistantMode, string> = {
+  architecture: 'architect-assistant-architecture',
+  general:      'architect-assistant-general',
+}
+const ASSISTANT_LABELS: Record<AssistantMode, string> = {
+  architecture: 'Architecture Assistant',
+  general:      'General Assistant',
+}
 
 export function startAssistant(
   win: BrowserWindow,
   projectDir: string,
   contextMd: string,
   runtime: AgentRuntime,
+  mode: AssistantMode,
 ): TerminalInfo {
-  const existing = sessions.get('architect-assistant')
+  const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
+  const sessionId = ASSISTANT_SESSION_IDS[safeMode]
+  const zoneKey = ASSISTANT_ZONES[safeMode]
+
+  const existing = sessions.get(sessionId)
   if (existing) {
     try { existing.pty.kill() } catch {}
-    sessions.delete('architect-assistant')
+    try { existing.term.dispose() } catch {}
+    sessions.delete(sessionId)
   }
 
   const safeRuntime = isAgentRuntime(runtime) ? runtime : DEFAULT_AGENT_RUNTIME
@@ -1149,94 +2249,39 @@ export function startAssistant(
   const contextFile = join(architectDir, '.assistant-context.md')
   fs.writeFileSync(contextFile, contextMd)
 
-  // Resume the prior saved session for this assistant when the runtime still
-  // matches, so reopening doesn't re-inject the context file every time.
-  const saved = loadSavedZoneSessionForRuntime(projectDir, ASSISTANT_ZONE_SAFE, safeRuntime)
+  // Assistant has no per-session picker UI — resume the most recent record
+  // for this runtime if one is reachable, otherwise start fresh.
+  const saved = latestReachableSession(projectDir, zoneKey, safeRuntime)
   const canResume = !!saved
   console.log(
-    `[assistant] runtime=${safeRuntime} saved=${saved ? saved.sessionId : 'none'} → ${canResume ? 'RESUMING' : 'fresh start'}`,
+    `[assistant] mode=${safeMode} runtime=${safeRuntime} saved=${saved ? saved.sessionId : 'none'} → ${canResume ? 'RESUMING' : 'fresh start'}`,
   )
 
   return spawnAgentSession({
     win,
-    id: 'architect-assistant',
-    label: 'Architecture Assistant',
+    id: sessionId,
+    label: ASSISTANT_LABELS[safeMode],
     runtime: safeRuntime,
     env: {},
     cwd: projectDir,
     initialPrompt: canResume ? undefined : 'Read ARCHITECT/.assistant-context.md',
     resumeSessionId: canResume ? saved!.sessionId : undefined,
     model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
-    capture: { projectDir, zoneKey: ASSISTANT_ZONE_SAFE },
+    capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
     // Interactive: keep normal permission prompts. The user is sitting here.
     skipPermissions: false,
   })
 }
 
 export function stopAssistant() {
-  const session = sessions.get('architect-assistant')
-  if (session) {
-    try { session.pty.kill() } catch {}
-    sessions.delete('architect-assistant')
+  for (const sessionId of Object.values(ASSISTANT_SESSION_IDS)) {
+    const session = sessions.get(sessionId)
+    if (session) {
+      try { session.pty.kill() } catch {}
+      try { session.term.dispose() } catch {}
+      sessions.delete(sessionId)
+    }
   }
-}
-
-export interface ResumeZoneOptions {
-  projectDir: string
-  zoneId: string
-  label: string
-  runtime: AgentRuntime
-  model?: string
-  envVars?: Array<{ key: string; value: string }>
-}
-
-export interface ResumeResult {
-  ok: boolean
-  reason?: string
-  info?: TerminalInfo
-  sessionId?: string
-}
-
-// Re-spawns a zone agent using its persisted session ID, replacing any
-// existing PTY for that zone (same id keeps the same renderer tab).
-export function resumeZone(win: BrowserWindow, opts: ResumeZoneOptions): ResumeResult {
-  const zoneSafe = sanitize(opts.label)
-  const saved: ZoneSession | null = loadSavedZoneSession(opts.projectDir, opts.zoneId, zoneSafe)
-  if (!saved) return { ok: false, reason: 'no-saved-session' }
-  if (saved.runtime !== opts.runtime) {
-    return { ok: false, reason: `session-runtime-mismatch:${saved.runtime}` }
-  }
-  if (opts.runtime !== 'claude' && opts.runtime !== 'codex' && opts.runtime !== 'gemini' && opts.runtime !== 'opencode') {
-    return { ok: false, reason: `resume-not-supported:${opts.runtime}` }
-  }
-
-  const existing = sessions.get(opts.zoneId)
-  if (existing) {
-    try { existing.pty.kill() } catch {}
-    sessions.delete(opts.zoneId)
-  }
-
-  const env: Record<string, string> = {}
-  for (const { key, value } of opts.envVars ?? []) {
-    if (key) env[key] = value
-  }
-
-  const info = spawnAgentSession({
-    win,
-    id: opts.zoneId,
-    label: opts.label,
-    runtime: opts.runtime,
-    env,
-    cwd: opts.projectDir,
-    model: opts.model,
-    resumeSessionId: saved.sessionId,
-  })
-
-  return { ok: true, info, sessionId: saved.sessionId }
-}
-
-export function getZoneSession(projectDir: string, zoneId: string, label?: string): ZoneSession | null {
-  return loadSavedZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
 }
 
 export interface RunZoneOptions {
@@ -1244,25 +2289,37 @@ export interface RunZoneOptions {
   zoneId: string
   nodes: GraphNode[]
   edges: GraphEdge[]
-  userPrompt: string
+  mode: 'new' | 'resume'
+  // When mode === 'new', optional one-line label for the history entry.
+  summary?: string
+  // When mode === 'resume', the specific history sessionId to resume.
+  sessionId?: string
+  userPrompt?: string
   model?: string
   planMode?: boolean
   settings: unknown
 }
 
-export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise<TerminalInfo | null> {
+export interface RunZoneResult {
+  ok: boolean
+  reason?: string
+  info?: TerminalInfo
+}
+
+// Unified entry point for launching a single zone — handles both "start new
+// session" and "continue previous session" from the ZoneLaunchModal.
+export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise<RunZoneResult> {
   const settings = normalizeProjectSettings(opts.settings)
   const { zones, componentsByZone } = indexGraph(opts.nodes)
   const zone = zones.find(z => z.id === opts.zoneId)
-  if (!zone) return null
+  if (!zone) return { ok: false, reason: 'zone-not-found' }
 
   const safe = sanitize(zone.data.label)
   const base = join(opts.projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts', 'sessions', 'dispatches'].map(n => join(base, n))) {
+  for (const dir of ['tasks', 'outputs', 'prompts', 'status', 'sessions', 'dispatches'].map(n => join(base, n))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
-  // Ensure the zone's system prompt file is up to date with the current canvas.
   const zoneIdSet = new Set(zones.map(z => z.id))
   const zoneEdges = opts.edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
   const intraEdges = opts.edges.filter(e => !zoneIdSet.has(e.source) && !zoneIdSet.has(e.target))
@@ -1276,16 +2333,42 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     if (key) env[key] = value
   }
 
-  const saved = loadSavedZoneSessionForRuntime(opts.projectDir, zone.id, runtime, safe)
-  const canResume = !!saved
   const userPrompt = (opts.userPrompt ?? '').trim()
 
   // Replace any existing PTY for this zone so the same renderer tab gets reused.
   const existing = sessions.get(zone.id)
   if (existing) {
     try { existing.pty.kill() } catch {}
+    try { existing.term.dispose() } catch {}
     sessions.delete(zone.id)
   }
+
+  if (opts.mode === 'resume') {
+    if (!opts.sessionId) return { ok: false, reason: 'missing-session-id' }
+    const rec = pickSession(opts.projectDir, zone.id, opts.sessionId, safe)
+    if (!rec) return { ok: false, reason: 'session-not-found' }
+    if (rec.runtime !== runtime) return { ok: false, reason: `session-runtime-mismatch:${rec.runtime}` }
+
+    const info = spawnAgentSession({
+      win,
+      id: zone.id,
+      label: zone.data.label,
+      runtime,
+      env,
+      cwd: opts.projectDir,
+      model,
+      resumeSessionId: rec.sessionId,
+      resumeUserPrompt: userPrompt || undefined,
+      skipPermissions: false,
+    })
+    broadcast('terminal:spawned', info)
+    return { ok: true, info }
+  }
+
+  // mode === 'new' — fresh spawn, append a history entry once the runtime
+  // assigns a new session id.
+  const summary = (opts.summary ?? '').trim() ||
+    `${zone.data.label} · ${new Date().toLocaleString()}`
 
   const info = spawnAgentSession({
     win,
@@ -1294,21 +2377,150 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     runtime,
     env,
     cwd: opts.projectDir,
-    initialPrompt: canResume ? undefined : (userPrompt || undefined),
-    resumeSessionId: canResume ? saved!.sessionId : undefined,
-    resumeUserPrompt: canResume && userPrompt ? userPrompt : undefined,
-    appendSystemPrompt: canResume ? undefined : systemPrompt,
+    initialPrompt: userPrompt || undefined,
+    appendSystemPrompt: systemPrompt,
     model,
     planMode: opts.planMode === true,
-    // Single-zone canvas Run is interactive — keep normal permission prompts.
     skipPermissions: false,
-    capture: { projectDir: opts.projectDir, zoneKey: zone.id, legacyKey: safe },
+    capture: {
+      projectDir: opts.projectDir,
+      zoneKey: zone.id,
+      legacyKey: safe,
+      summary,
+    },
   })
-
   broadcast('terminal:spawned', info)
-  return info
+  return { ok: true, info }
+}
+
+export function listZoneSessionsForZone(
+  projectDir: string,
+  zoneId: string,
+  label?: string,
+): ZoneSessionRecord[] {
+  return listZoneSessions(projectDir, zoneId, label ? sanitize(label) : undefined)
+}
+
+export function deleteZoneSessionEntry(
+  projectDir: string,
+  zoneId: string,
+  sessionId: string,
+  label?: string,
+): boolean {
+  return deleteZoneSession(projectDir, zoneId, sessionId, label ? sanitize(label) : undefined)
+}
+
+export function renameZoneSessionEntry(
+  projectDir: string,
+  zoneId: string,
+  sessionId: string,
+  summary: string,
+  label?: string,
+): boolean {
+  return updateZoneSessionSummary(projectDir, zoneId, sessionId, summary, label ? sanitize(label) : undefined)
 }
 
 export function resetZoneSession(projectDir: string, zoneId: string, label?: string): boolean {
-  return deleteZoneSession(projectDir, zoneId, label ? sanitize(label) : undefined)
+  return deleteZoneSession(projectDir, zoneId, undefined, label ? sanitize(label) : undefined)
+}
+
+export interface ResumeDispatchOptions {
+  projectDir: string
+  dispatchId: string
+  nodes: GraphNode[]
+  edges: GraphEdge[]
+  settings: unknown
+}
+
+export type ResumeDispatchResult =
+  | { ok: true; info: TerminalInfo[] }
+  | { ok: false; error: 'not-found' | 'legacy-protocol' }
+
+// Replays a previous multi-zone dispatch by resuming the Architect's session
+// and every zone session listed in the DispatchRecord. The canvas is used to
+// refresh manifest/prompts — resumed sessions ignore appendSystemPrompt, so
+// it's safe to regenerate prompts without breaking the conversation.
+export async function resumeDispatch(
+  win: BrowserWindow,
+  opts: ResumeDispatchOptions,
+): Promise<ResumeDispatchResult> {
+  killAll()
+  const settings = normalizeProjectSettings(opts.settings)
+
+  // Pulled in lazily to avoid a cycle at module top.
+  const { getDispatch, DISPATCH_PROTOCOL_VERSION } = await import('./dispatchCapture')
+  const record = getDispatch(opts.projectDir, opts.dispatchId)
+  if (!record) return { ok: false, error: 'not-found' }
+
+  // Legacy protocol gate: old dispatches were coordinated via .done markers
+  // and a different Architect prompt. They can't be resumed under the v2
+  // protocol without breaking the resumed Architect's conversation.
+  if ((record.protocolVersion ?? 0) < DISPATCH_PROTOCOL_VERSION) {
+    return { ok: false, error: 'legacy-protocol' }
+  }
+
+  const { zones: allZones } = indexGraph(opts.nodes)
+  const zoneById = new Map(allZones.map(z => [z.id, z]))
+  const dispatchZones = record.zoneIds
+    .map(id => zoneById.get(id))
+    .filter((z): z is ZoneGraphNode => !!z)
+
+  const zoneIds = new Set(dispatchZones.map(z => z.id))
+  const filteredNodes = opts.nodes.filter(n => n.type !== 'zone' || zoneIds.has(n.id))
+  setupWorkspace(opts.projectDir, filteredNodes, opts.edges, settings)
+
+  const info: TerminalInfo[] = [
+    { id: 'architect-agent', label: 'Architect', runtime: record.architectRuntime },
+  ]
+
+  // Resume each zone with the session pinned in the dispatch record. No
+  // initialPrompt / resumeUserPrompt — the zone comes back idle at its
+  // prompt. The coordinator pokes it via pty.write on the next task-file
+  // update from the Architect.
+  for (const zone of dispatchZones) {
+    const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
+    const runtime = entry?.runtime ?? getZoneRuntime(zone, settings)
+    info.push({ id: zone.id, label: zone.data.label, runtime })
+
+    if (!entry) {
+      console.warn(`[resume-dispatch] no session id stored for zone ${zone.data.label}, skipping`)
+      continue
+    }
+
+    const env: Record<string, string> = {}
+    for (const { key, value } of zone.data.envVars ?? []) {
+      if (key) env[key] = value
+    }
+
+    spawnAgentSession({
+      win,
+      id: zone.id,
+      label: zone.data.label,
+      runtime,
+      env,
+      cwd: opts.projectDir,
+      model: getZoneModel(zone, runtime),
+      resumeSessionId: entry.sessionId,
+    })
+  }
+
+  startDispatchCoordinator(opts.projectDir, dispatchZones)
+
+  // No resumeUserPrompt — the Architect comes back idle at its prompt, ready
+  // for the user's next message. Launch/supervise rules are already in the
+  // Architect's conversation history from the original dispatch's system
+  // prompt (buildArchitectPrompt), which resumed sessions preserve.
+  spawnAgentSession({
+    win,
+    id: 'architect-agent',
+    label: 'Architect',
+    runtime: record.architectRuntime,
+    env: {},
+    cwd: opts.projectDir,
+    model: record.model || DEFAULT_MODEL_BY_RUNTIME[record.architectRuntime],
+    resumeSessionId: record.architectSessionId,
+    planMode: record.planMode === true,
+  })
+
+  return { ok: true, info }
 }

@@ -29,6 +29,8 @@ interface Props {
   projectDir: string
   layout: TerminalLayout | null
   onLayoutChange: (next: TerminalLayout) => void
+  onRemoveSession: (id: string) => void
+  getCanvasSnapshot: () => { nodes: unknown[]; edges: unknown[]; settings: unknown }
 }
 
 const TERM_THEME = {
@@ -156,6 +158,8 @@ function PaneView({
   exitedIds,
   resumableIds,
   resumingIds,
+  capturePendingIds,
+  closingIds,
   onActivate,
   onMoveTab,
   onReorder,
@@ -170,6 +174,8 @@ function PaneView({
   exitedIds: Set<string>
   resumableIds: Map<string, string>
   resumingIds: Set<string>
+  capturePendingIds: Set<string>
+  closingIds: Set<string>
   onActivate: (paneId: string, tabId: string) => void
   onMoveTab: (tabId: string, targetPaneId: string, idx?: number) => void
   onReorder: (paneId: string, fromIdx: number, toIdx: number) => void
@@ -316,16 +322,26 @@ function PaneView({
                 >
                   <ExternalLink size={11} />
                 </button>
-                {paneCount > 1 && (
-                  <button
-                    onClick={() => onClose(tabId)}
-                    className="flex items-center justify-center w-6 h-6 mr-1 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
-                    title="Close tab in this pane"
-                    aria-label="Close tab"
-                  >
-                    <X size={11} />
-                  </button>
-                )}
+                {(() => {
+                  const isClosing = closingIds.has(s.id)
+                  const disabled = isClosing
+                  const title = isClosing ? 'Closing…' : 'Close terminal'
+                  return (
+                    <button
+                      onClick={() => !disabled && onClose(tabId)}
+                      disabled={disabled}
+                      className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
+                        disabled
+                          ? 'text-slate-700 cursor-not-allowed'
+                          : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.06]'
+                      }`}
+                      title={title}
+                      aria-label="Close terminal"
+                    >
+                      <X size={11} />
+                    </button>
+                  )
+                })()}
               </div>
             </Fragment>
           )
@@ -424,11 +440,13 @@ function LayoutRenderer({
   )
 }
 
-export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange }: Props) {
+export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot }: Props) {
   const [shellSession, setShellSession] = useState<TerminalInfo | null>(null)
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
   const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
   const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
+  const [capturePendingIds, setCapturePendingIds] = useState<Set<string>>(new Set())
+  const [closingIds, setClosingIds] = useState<Set<string>>(new Set())
 
   // Track exits.
   useEffect(() => {
@@ -454,6 +472,42 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     })
     return unsub
   }, [])
+
+  // Track fresh-spawn capture progress so the close button can disable itself
+  // until the CLI's session id has been persisted.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onCaptureState(({ id, state }) => {
+      setCapturePendingIds(prev => {
+        const next = new Set(prev)
+        if (state === 'pending') next.add(id)
+        else next.delete(id)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  // Backfill capture state for tabs we joined mid-flight (e.g. project reopen
+  // while a prior spawn is still polling).
+  useEffect(() => {
+    let cancelled = false
+    Promise.all(
+      sessions.map(s =>
+        window.electron.terminal.getCaptureState(s.id).then(state => ({ id: s.id, state })),
+      ),
+    ).then(results => {
+      if (cancelled) return
+      setCapturePendingIds(prev => {
+        const next = new Set(prev)
+        for (const { id, state } of results) {
+          if (state === 'pending') next.add(id)
+          else next.delete(id)
+        }
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [sessions.map(s => s.id).join('|')])
 
   // Spawn shell once per project.
   useEffect(() => {
@@ -485,9 +539,9 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       sessions
         .filter(s => s.runtime !== 'shell')
         .map(s =>
-          window.electron.zone.getSession(projectDir, s.id, s.label).then(saved => ({
+          window.electron.zone.listSessions(projectDir, s.id, s.label).then(records => ({
             id: s.id,
-            sessionId: saved?.sessionId ?? null,
+            sessionId: records?.[0]?.sessionId ?? null,
           })),
         ),
     ).then(results => {
@@ -554,17 +608,23 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
 
   const handleResume = async (info: TerminalInfo) => {
     if (info.runtime === 'shell' || resumingIds.has(info.id)) return
+    const sessionId = resumableIds.get(info.id)
+    if (!sessionId) return
     setResumingIds(prev => {
       const next = new Set(prev)
       next.add(info.id)
       return next
     })
     try {
-      const result = await window.electron.zone.resume({
+      const snap = getCanvasSnapshot()
+      const result = await window.electron.zone.launch({
         projectDir,
         zoneId: info.id,
-        label: info.label,
-        runtime: info.runtime as AgentRuntime,
+        nodes: snap.nodes,
+        edges: snap.edges,
+        mode: 'resume',
+        sessionId,
+        settings: snap.settings as import('../../types').ProjectSettings,
       })
       if (result?.ok) {
         termInstances.get(info.id)?.term.clear()
@@ -596,22 +656,58 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     await window.electron.terminal.popout({ id: info.id, label: info.label, runtime: info.runtime })
   }
 
-  const handleCloseTab = (tabId: string) => {
-    if (!layout) return
-    // "Close" here only removes the tab from layout; PTY stays alive (user can re-add via reorder/popout-back).
-    // Practically: empty pane collapses → the tab gets re-added to first pane on next migration tick.
-    // To actually hide, we treat close as popped-out=false, but pull from the visible tree by removing.
-    // Simpler: skip wiring close for now since migrateLayout will re-add it. Leaving this as a no-op move-to-first.
-    // We instead use it to move to first pane (i.e., consolidate).
-    const firstId = (function findFirst(node: LayoutNode): string | null {
-      if (node.kind === 'pane') return node.id
-      for (const c of node.children) {
-        const r = findFirst(c)
-        if (r) return r
-      }
-      return null
-    })(layout.root)
-    if (firstId) onLayoutChange(moveTabToPane(layout, tabId, firstId))
+  const handleCloseTab = async (tabId: string) => {
+    if (closingIds.has(tabId)) return
+
+    setClosingIds(prev => {
+      const next = new Set(prev)
+      next.add(tabId)
+      return next
+    })
+
+    try {
+      const result = await window.electron.terminal.close(tabId)
+      if (!result?.ok) return
+    } finally {
+      setClosingIds(prev => {
+        if (!prev.has(tabId)) return prev
+        const next = new Set(prev)
+        next.delete(tabId)
+        return next
+      })
+    }
+
+    // Clean up renderer-side state; the session-sync effect will rebuild
+    // the layout once terminalSessions drops this id.
+    const inst = termInstances.get(tabId)
+    if (inst) {
+      try { inst.term.dispose() } catch {}
+      termInstances.delete(tabId)
+    }
+    setExitedIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Set(prev)
+      next.delete(tabId)
+      return next
+    })
+    setResumableIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Map(prev)
+      next.delete(tabId)
+      return next
+    })
+    setCapturePendingIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Set(prev)
+      next.delete(tabId)
+      return next
+    })
+
+    if (shellSession && shellSession.id === tabId) {
+      setShellSession(null)
+    } else {
+      onRemoveSession(tabId)
+    }
   }
 
   if (!layout) {
@@ -628,6 +724,8 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     exitedIds,
     resumableIds,
     resumingIds,
+    capturePendingIds,
+    closingIds,
     onActivate: (paneId: string, tabId: string) => onLayoutChange(setActiveTab(layout, paneId, tabId)),
     onMoveTab: (tabId: string, targetPaneId: string, idx?: number) =>
       onLayoutChange(moveTabToPane(layout, tabId, targetPaneId, idx)),

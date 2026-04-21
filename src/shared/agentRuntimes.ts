@@ -1,5 +1,10 @@
 export type AgentRuntime = 'claude' | 'codex' | 'gemini' | 'opencode'
 export type AgentRuntimeMode = 'inherit' | 'override'
+export type AssistantMode = 'architecture' | 'general'
+
+export function isAssistantMode(value: unknown): value is AssistantMode {
+  return value === 'architecture' || value === 'general'
+}
 
 export interface AgentRuntimeDefinition {
   id: AgentRuntime

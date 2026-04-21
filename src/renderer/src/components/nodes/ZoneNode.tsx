@@ -7,6 +7,7 @@ import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
 import AgentConfigModal from './AgentConfigModal'
+import ZoneLaunchModal from './ZoneLaunchModal'
 import type {
   ZoneNodeData,
   NodeStatus,
@@ -34,7 +35,7 @@ function hexToRgba(hex: string, alpha: number): string {
 function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const { setNodes, getNodes, getEdges } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
-  const [running, setRunning] = useState(false)
+  const [launchOpen, setLaunchOpen] = useState(false)
   const projectSettings = useProjectSettings()
   const projectDir = useProjectDir()
 
@@ -111,28 +112,15 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
           <div className="flex items-center gap-2 flex-shrink-0">
             {systemPrompt && <span className="text-[10px] text-slate-500 italic truncate max-w-[200px]">{systemPrompt}</span>}
             <button
-              onClick={async (e) => {
+              onClick={(e) => {
                 e.stopPropagation()
-                if (!projectDir || running) return
-                setRunning(true)
-                try {
-                  await window.electron.zone.run({
-                    projectDir,
-                    zoneId: id,
-                    nodes: getNodes(),
-                    edges: getEdges(),
-                    userPrompt: '',
-                    settings: projectSettings,
-                  })
-                } finally {
-                  setRunning(false)
-                }
+                if (!projectDir) return
+                setLaunchOpen(true)
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              disabled={running}
-              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10 transition-colors nodrag disabled:opacity-50"
-              title="Resume this zone"
-              aria-label="Resume this zone"
+              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10 transition-colors nodrag"
+              title="Launch this zone"
+              aria-label="Launch this zone"
             >
               <Play size={12} />
             </button>
@@ -159,6 +147,20 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
         position={Position.Right}
         style={{ width: 12, height: 12, background: '#1e1e1e', border: `2px solid ${zoneColor}`, right: -7, zIndex: 20 }}
       />
+
+      {launchOpen && projectDir && createPortal(
+        <ZoneLaunchModal
+          zoneId={id}
+          zoneLabel={label}
+          zoneColor={zoneColor}
+          effectiveRuntime={effectiveRuntime}
+          nodes={getNodes()}
+          edges={getEdges()}
+          onClose={() => setLaunchOpen(false)}
+          onLaunched={() => { /* terminal panel picks up spawn event */ }}
+        />,
+        document.body
+      )}
 
       {modalOpen && createPortal(
         <AgentConfigModal

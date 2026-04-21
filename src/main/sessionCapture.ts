@@ -5,14 +5,23 @@ import { join, resolve } from 'path'
 import * as pty from 'node-pty'
 import type { AgentRuntime } from '../shared/agentRuntimes'
 
-export interface ZoneSession {
+export interface ZoneSessionRecord {
   runtime: AgentRuntime
   sessionId: string
   capturedAt: string
+  summary: string
+  // When the session was spawned as part of a multi-zone dispatch, points to
+  // the Architect session that orchestrated it. Used by the renderer to show
+  // a "from dispatch" badge in the zone launcher history.
+  dispatchId?: string
 }
+
+// Back-compat alias — older callsites still import this name.
+export type ZoneSession = ZoneSessionRecord
 
 const CLAUDE_PROJECTS_ROOT = join(os.homedir(), '.claude', 'projects')
 const SESSIONS_SUBDIR = 'sessions'
+const MAX_ZONE_SESSIONS = 20
 
 // Claude Code stores per-project sessions at ~/.claude/projects/<sanitized-cwd>/<uuid>.jsonl.
 // Claude replaces any character outside [A-Za-z0-9_-] (slashes, spaces, dots, etc.) with a dash.
@@ -434,61 +443,178 @@ function sessionsDir(projectDir: string): string {
   return join(projectDir, 'ARCHITECT', SESSIONS_SUBDIR)
 }
 
-function sessionFile(projectDir: string, zoneKey: string): string {
+function zoneDir(projectDir: string, zoneKey: string): string {
+  return join(sessionsDir(projectDir), zoneKey)
+}
+
+function sessionRecordFile(projectDir: string, zoneKey: string, sessionId: string): string {
+  return join(zoneDir(projectDir, zoneKey), `${sessionId}.json`)
+}
+
+// Legacy layout: ARCHITECT/sessions/<zoneKey>.json as a flat file. On first
+// read under the new layout we migrate to ARCHITECT/sessions/<zoneKey>/<id>.json.
+function legacyZoneFile(projectDir: string, zoneKey: string): string {
   return join(sessionsDir(projectDir), `${zoneKey}.json`)
 }
 
-export function saveZoneSession(projectDir: string, zoneKey: string, session: ZoneSession): void {
-  fs.mkdirSync(sessionsDir(projectDir), { recursive: true })
-  fs.writeFileSync(sessionFile(projectDir, zoneKey), JSON.stringify(session, null, 2))
-}
-
-// Primary key is the zone's stable id. When the file is absent, fall back to a
-// legacy key (e.g. sanitized label from pre-refactor builds); if found, rewrite
-// it under the primary key so future lookups hit directly.
-export function loadZoneSession(
-  projectDir: string,
-  zoneKey: string,
-  legacyKey?: string,
-): ZoneSession | null {
-  const primary = readZoneSession(sessionFile(projectDir, zoneKey))
-  if (primary) return primary
-
-  if (legacyKey && legacyKey !== zoneKey) {
-    const legacy = readZoneSession(sessionFile(projectDir, legacyKey))
-    if (legacy) {
-      try {
-        saveZoneSession(projectDir, zoneKey, legacy)
-        fs.unlinkSync(sessionFile(projectDir, legacyKey))
-      } catch {}
-      return legacy
-    }
-  }
-  return null
-}
-
-function readZoneSession(path: string): ZoneSession | null {
+function readRecord(path: string): ZoneSessionRecord | null {
   try {
     const raw = fs.readFileSync(path, 'utf-8')
     const parsed = JSON.parse(raw)
     if (typeof parsed?.sessionId === 'string' && typeof parsed?.runtime === 'string') {
-      return parsed as ZoneSession
+      return {
+        runtime: parsed.runtime,
+        sessionId: parsed.sessionId,
+        capturedAt: typeof parsed.capturedAt === 'string' ? parsed.capturedAt : new Date().toISOString(),
+        summary: typeof parsed.summary === 'string' ? parsed.summary : 'Imported session',
+        dispatchId: typeof parsed.dispatchId === 'string' ? parsed.dispatchId : undefined,
+      }
     }
   } catch {}
   return null
 }
 
-export function deleteZoneSession(projectDir: string, zoneKey: string, legacyKey?: string): boolean {
-  let removed = false
-  const primary = sessionFile(projectDir, zoneKey)
-  if (fs.existsSync(primary)) {
-    try { fs.unlinkSync(primary); removed = true } catch {}
-  }
-  if (legacyKey && legacyKey !== zoneKey) {
-    const legacy = sessionFile(projectDir, legacyKey)
-    if (fs.existsSync(legacy)) {
-      try { fs.unlinkSync(legacy); removed = true } catch {}
+function migrateLegacyIfPresent(projectDir: string, zoneKey: string, legacyKey?: string): void {
+  const candidates = new Set<string>()
+  candidates.add(legacyZoneFile(projectDir, zoneKey))
+  if (legacyKey && legacyKey !== zoneKey) candidates.add(legacyZoneFile(projectDir, legacyKey))
+
+  for (const path of candidates) {
+    if (!fs.existsSync(path)) continue
+    // If a directory with the same name already exists we've already migrated.
+    try {
+      const stat = fs.statSync(path)
+      if (!stat.isFile()) continue
+    } catch { continue }
+
+    const rec = readRecord(path)
+    if (!rec) {
+      try { fs.unlinkSync(path) } catch {}
+      continue
     }
+
+    try {
+      fs.mkdirSync(zoneDir(projectDir, zoneKey), { recursive: true })
+      const target = sessionRecordFile(projectDir, zoneKey, rec.sessionId)
+      if (!fs.existsSync(target)) {
+        fs.writeFileSync(target, JSON.stringify({ ...rec, summary: rec.summary || 'Imported session' }, null, 2))
+      }
+      fs.unlinkSync(path)
+    } catch {}
   }
+}
+
+function pruneToMax(projectDir: string, zoneKey: string): void {
+  const dir = zoneDir(projectDir, zoneKey)
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(dir).filter(n => n.endsWith('.json'))
+  } catch { return }
+  if (entries.length <= MAX_ZONE_SESSIONS) return
+
+  const withMeta = entries
+    .map(name => {
+      const rec = readRecord(join(dir, name))
+      return rec ? { name, capturedAt: rec.capturedAt } : null
+    })
+    .filter((x): x is { name: string; capturedAt: string } => x !== null)
+    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt)) // oldest first
+
+  const toDrop = withMeta.slice(0, Math.max(0, withMeta.length - MAX_ZONE_SESSIONS))
+  for (const { name } of toDrop) {
+    try { fs.unlinkSync(join(dir, name)) } catch {}
+  }
+}
+
+export function appendZoneSession(
+  projectDir: string,
+  zoneKey: string,
+  record: ZoneSessionRecord,
+): void {
+  fs.mkdirSync(zoneDir(projectDir, zoneKey), { recursive: true })
+  fs.writeFileSync(
+    sessionRecordFile(projectDir, zoneKey, record.sessionId),
+    JSON.stringify(record, null, 2),
+  )
+  pruneToMax(projectDir, zoneKey)
+}
+
+// Newest-first list of a zone's recorded sessions. Migrates legacy layout on demand.
+export function listZoneSessions(
+  projectDir: string,
+  zoneKey: string,
+  legacyKey?: string,
+): ZoneSessionRecord[] {
+  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
+  const dir = zoneDir(projectDir, zoneKey)
+  let entries: string[]
+  try {
+    entries = fs.readdirSync(dir).filter(n => n.endsWith('.json'))
+  } catch { return [] }
+
+  const records: ZoneSessionRecord[] = []
+  for (const name of entries) {
+    const rec = readRecord(join(dir, name))
+    if (rec) records.push(rec)
+  }
+  records.sort((a, b) => b.capturedAt.localeCompare(a.capturedAt))
+  return records
+}
+
+export function getZoneSessionRecord(
+  projectDir: string,
+  zoneKey: string,
+  sessionId: string,
+  legacyKey?: string,
+): ZoneSessionRecord | null {
+  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
+  return readRecord(sessionRecordFile(projectDir, zoneKey, sessionId))
+}
+
+// When sessionId is provided, deletes that one record. Otherwise wipes all
+// history for the zone (used by "clear history" or by a full reset).
+export function deleteZoneSession(
+  projectDir: string,
+  zoneKey: string,
+  sessionId?: string,
+  legacyKey?: string,
+): boolean {
+  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
+  const dir = zoneDir(projectDir, zoneKey)
+
+  if (sessionId) {
+    const path = sessionRecordFile(projectDir, zoneKey, sessionId)
+    if (fs.existsSync(path)) {
+      try { fs.unlinkSync(path); return true } catch {}
+    }
+    return false
+  }
+
+  let removed = false
+  try {
+    for (const name of fs.readdirSync(dir)) {
+      try { fs.unlinkSync(join(dir, name)); removed = true } catch {}
+    }
+    try { fs.rmdirSync(dir) } catch {}
+  } catch {}
   return removed
+}
+
+export function updateZoneSessionSummary(
+  projectDir: string,
+  zoneKey: string,
+  sessionId: string,
+  summary: string,
+  legacyKey?: string,
+): boolean {
+  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
+  const path = sessionRecordFile(projectDir, zoneKey, sessionId)
+  const rec = readRecord(path)
+  if (!rec) return false
+  try {
+    fs.writeFileSync(path, JSON.stringify({ ...rec, summary }, null, 2))
+    return true
+  } catch {
+    return false
+  }
 }
