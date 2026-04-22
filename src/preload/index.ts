@@ -178,4 +178,36 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('zone:session-captured', handler)
     },
   },
+
+  // Mailbox observability — emits one event per inbox/outbox write so the
+  // renderer can reflect message flow in real time. Payload is intentionally
+  // light (ids + type); consumers read the dispatch's _index.json for the
+  // full snapshot.
+  mailbox: {
+    onActivity: (
+      cb: (event: {
+        dispatchId: string
+        participantId: string
+        direction: 'inbox' | 'outbox'
+        filename: string
+        msgId?: string
+        type?: string
+        from?: string
+        to?: string
+      }) => void,
+    ) => {
+      const handler = (_: unknown, event: {
+        dispatchId: string
+        participantId: string
+        direction: 'inbox' | 'outbox'
+        filename: string
+        msgId?: string
+        type?: string
+        from?: string
+        to?: string
+      }) => cb(event)
+      ipcRenderer.on('mailbox:activity', handler)
+      return () => ipcRenderer.removeListener('mailbox:activity', handler)
+    },
+  },
 })

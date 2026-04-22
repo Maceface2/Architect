@@ -130,7 +130,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
     <div
       ref={containerRef}
       className="w-full h-full"
-      style={{ display: active ? 'block' : 'none' }}
+      style={{ visibility: active ? 'visible' : 'hidden' }}
     />
   )
 }
@@ -366,7 +366,7 @@ function PaneView({
             <div
               key={tabId}
               className="absolute inset-1"
-              style={{ display: active ? 'block' : 'none' }}
+              style={{ visibility: active ? 'visible' : 'hidden' }}
             >
               <TermTab info={s} active={active} />
             </div>

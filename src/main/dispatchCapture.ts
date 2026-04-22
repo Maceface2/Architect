@@ -12,6 +12,11 @@ export interface DispatchZoneSession {
 export interface DispatchRecord {
   architectSessionId: string
   architectRuntime: AgentRuntime
+  // v4 mailbox correlation id. Passed to every agent as MBX_DISPATCH_ID env
+  // var; stamped on every mailbox message's metadata. Independent from the
+  // CLI session id (which is how we resume the conversation on the runtime
+  // side). Generated at runGraph/resumeDispatch start.
+  dispatchId?: string
   zoneIds: string[]
   zoneLabels: string[]
   zoneSessions: DispatchZoneSession[]
@@ -23,7 +28,7 @@ export interface DispatchRecord {
   protocolVersion?: number
 }
 
-export const DISPATCH_PROTOCOL_VERSION = 3
+export const DISPATCH_PROTOCOL_VERSION = 4
 
 const DISPATCHES_SUBDIR = 'dispatches'
 
@@ -56,6 +61,7 @@ function readDispatch(path: string): DispatchRecord | null {
     return {
       architectSessionId: parsed.architectSessionId,
       architectRuntime: (parsed.architectRuntime ?? 'claude') as AgentRuntime,
+      dispatchId: typeof parsed.dispatchId === 'string' ? parsed.dispatchId : undefined,
       zoneIds: parsed.zoneIds ?? [],
       zoneLabels: Array.isArray(parsed.zoneLabels) ? parsed.zoneLabels : [],
       zoneSessions: Array.isArray(parsed.zoneSessions) ? parsed.zoneSessions : [],

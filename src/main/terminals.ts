@@ -3,7 +3,7 @@ import { BrowserWindow } from 'electron'
 import { join, basename } from 'path'
 import fs from 'fs'
 import { execFileSync, spawn } from 'child_process'
-import { randomBytes, createHash } from 'crypto'
+import { randomBytes } from 'crypto'
 import { Terminal as HeadlessTerminal } from '@xterm/headless'
 import {
   DEFAULT_AGENT_RUNTIME,
@@ -39,6 +39,30 @@ import {
   upsertDispatchZoneSession,
   type DispatchRecord,
 } from './dispatchCapture'
+import {
+  writeMailboxScripts,
+  createParticipant,
+  writeInboxMessage,
+  readInbox,
+  readOutbox,
+  readParticipantManifest,
+  listParticipantIds,
+  writeIndex,
+  wipeMailboxTree,
+  mailboxRoot,
+  inboxDir,
+  outboxDir,
+  scriptsDir,
+  MAILBOX_HARNESS_ID,
+  MAILBOX_OVERSEER_ID,
+  MAILBOX_PROTOCOL_VERSION,
+  type MailboxIndex,
+  type MailboxMessage,
+  type MailboxMessageType,
+  type MailboxStructured,
+  type ParticipantIndexEntry,
+  type ParticipantLifecycle,
+} from './mailbox'
 
 let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
 
@@ -255,20 +279,22 @@ export interface GraphEdge {
 }
 
 // ──────────────────────────────────────────────────────────────────────────
-// Lifecycle state machine (ported from claw-code `WorkerStatus`).
+// PTY lifecycle state machine.
 //
-//   spawning → ready → running → finished
-//                              ↘ failed
+//   spawning → ready → running → failed
 //
 // Transitions:
-//   - spawning → ready:   observe() sees the CLI prompt cue (/[>❯]\s*$/)
-//   - ready|finished → running:   sendPrompt() delivers a poke
-//   - running → finished: observe() sees ARCHITECT_COMPLETE sentinel
-//   - * → failed:         PTY exits before ready / startup timeout fires /
-//                         misdelivery retry budget exhausted
+//   - spawning → ready:   observe() sees the CLI prompt glyph
+//   - ready → running:    sendPrompt() delivers the one-shot bootstrap
+//                         prompt that tells the agent to enter its loop
+//   - * → failed:         PTY exits before ready / startup timeout fires
+//
+// Under v4 (mailbox protocol) the 'finished' state is unused — agents live
+// in a continuous listen loop and only exit via pty-close. Per-task state
+// lives in ARCHITECT/mailbox/_index.json.participants[*].state, not here.
 // ──────────────────────────────────────────────────────────────────────────
 
-export type ZoneLifecycleState = 'spawning' | 'ready' | 'running' | 'finished' | 'failed'
+export type ZoneLifecycleState = 'spawning' | 'ready' | 'running' | 'failed'
 
 export type ZoneFailureKind = 'binary-missing' | 'prompt-delivery' | 'startup-timeout' | 'pty-exit'
 
@@ -288,28 +314,25 @@ export interface ZoneEvent {
 
 interface Session {
   pty: pty.IPty
-  // Rendered-screen emulator. Every PTY chunk is fed into it so cue
-  // detection operates on the visible screen grid (ANSI already interpreted),
-  // not raw bytes. The renderer still gets the raw stream over
-  // `terminal:data`.
+  // Rendered-screen emulator. Every PTY chunk is fed into it so the
+  // `spawning → ready` prompt-glyph cue can be detected against the visible
+  // screen grid (ANSI already interpreted). The renderer still gets the raw
+  // stream over `terminal:data`. v4 only uses the emulator for ready-at-spawn
+  // detection — no per-task ACK/COMPLETE cue scraping.
   term: HeadlessTerminal
   lifecycle: ZoneLifecycleState
   events: ZoneEvent[]
   eventSeq: number
-  // 'agent' sessions run the full observe/startup-timeout pipeline; 'shell'
-  // sessions are plain and bypass it (no sentinel, no cue detection).
+  // 'agent' sessions run the observe/startup-timeout pipeline; 'shell'
+  // sessions are plain and bypass it.
   kind: 'agent' | 'shell'
   runtime: AgentRuntime | 'shell'
-  // Round-aware state for the current poke.
-  lastPoke?: string
-  currentTaskId: string | null
-  promptAttempts: number
-  misdeliveryReplayed: boolean
   createdAt: number
   lastError?: ZoneFailure
-  doneCallbacks: (() => void)[]
   readyCallbacks: (() => void)[]
-  ackCallbacks: Array<(taskId: string) => void>
+  // Recent PTY output tail — fed to `_index.json.tail` for debugger views.
+  tail: string
+  lastActivityMs: number
   startupTimer?: NodeJS.Timeout
 }
 
@@ -326,10 +349,6 @@ const READY_TEXT_NEEDLES = [
   'send a message',
   'type a message',
 ]
-
-function generateTaskId(): string {
-  return randomBytes(8).toString('hex')
-}
 
 // Walks the active buffer (scrollback + viewport) and returns the rendered
 // screen as plain text — ANSI escapes already interpreted by the emulator.
@@ -582,55 +601,30 @@ function failSession(
 }
 
 // Observe-on-every-chunk dispatcher. Runs after each PTY chunk has been
-// written into the headless Terminal, so cue detection operates on the
-// rendered screen grid (ANSI already interpreted) rather than raw bytes.
+// written into the headless Terminal. v4 only uses this for the
+// `spawning → ready` transition at bootstrap; per-task ACK/COMPLETE cues
+// were removed when the mailbox protocol replaced stdin pokes.
 function observeZoneOutput(id: string): void {
   const session = sessions.get(id)
   if (!session || session.kind !== 'agent') return
 
-  const rendered = renderScreenText(session.term)
-
-  // spawning → ready: bottom non-empty line looks like a CLI prompt.
-  if (session.lifecycle === 'spawning' && looksLikePromptReady(rendered)) {
-    if (session.startupTimer) {
-      clearTimeout(session.startupTimer)
-      session.startupTimer = undefined
-    }
-    setLifecycle(id, session, 'ready', 'ready', 'CLI prompt detected')
-    session.readyCallbacks.splice(0).forEach(cb => cb())
-    return
-  }
-
-  // running → ack: zone echoed ARCHITECT_TASK_ACK <task_id>.
-  if (session.lifecycle === 'running' && session.currentTaskId) {
-    const ackRe = new RegExp(
-      `ARCHITECT_TASK_ACK\\s+${session.currentTaskId}\\b`,
-    )
-    if (ackRe.test(rendered)) {
-      const taskId = session.currentTaskId
-      // Stay in 'running' at the PTY-lifecycle layer; the ack only flips
-      // status.json to state='ack'. Completion still fires on the receipt
-      // file or ARCHITECT_COMPLETE.
-      pushEvent(session, 'ack', `ARCHITECT_TASK_ACK ${taskId}`)
-      const cbs = session.ackCallbacks.splice(0)
-      for (const cb of cbs) cb(taskId)
-    }
-  }
-
-  // running → finished: ARCHITECT_COMPLETE seen. Prefer the tagged form
-  // (`ARCHITECT_COMPLETE <task_id>`) but fall back to the bare sentinel so
-  // older zone conversations still reach the done signal.
-  if (session.lifecycle === 'running') {
-    const tagged = session.currentTaskId
-      ? new RegExp(`ARCHITECT_COMPLETE\\s+${session.currentTaskId}\\b`)
-      : null
-    if ((tagged && tagged.test(rendered)) || rendered.includes('ARCHITECT_COMPLETE')) {
-      setLifecycle(id, session, 'finished', 'complete', 'ARCHITECT_COMPLETE observed')
-      session.doneCallbacks.splice(0).forEach(cb => cb())
-      return
+  // spawning → ready: bottom non-empty line looks like a CLI prompt. This
+  // gates the one-shot bootstrap poke so we don't type into the PTY before
+  // the CLI is accepting input.
+  if (session.lifecycle === 'spawning') {
+    const rendered = renderScreenText(session.term)
+    if (looksLikePromptReady(rendered)) {
+      if (session.startupTimer) {
+        clearTimeout(session.startupTimer)
+        session.startupTimer = undefined
+      }
+      setLifecycle(id, session, 'ready', 'ready', 'CLI prompt detected')
+      session.readyCallbacks.splice(0).forEach(cb => cb())
     }
   }
 }
+
+const TAIL_MAX_BYTES = 4_000
 
 function createSession(
   win: BrowserWindow,
@@ -655,13 +649,10 @@ function createSession(
     eventSeq: 0,
     kind,
     runtime,
-    currentTaskId: null,
-    promptAttempts: 0,
-    misdeliveryReplayed: false,
     createdAt: Date.now(),
-    doneCallbacks: [],
     readyCallbacks: [],
-    ackCallbacks: [],
+    tail: '',
+    lastActivityMs: Date.now(),
   }
   sessions.set(id, session)
   pushEvent(session, 'spawn', `pty spawned (${runtime})`)
@@ -669,9 +660,8 @@ function createSession(
   // Agent sessions get a startup-timeout safety net. If the CLI is still in
   // `spawning` after STARTUP_TIMEOUT_MS, optimistically transition to `ready`
   // so unknown TUIs (whose prompt cues we haven't characterized) don't
-  // hard-fail. The coordinator will still surface real failures — if the
-  // poke doesn't land, `delivery-failed` fires via the ack timeout; if the
-  // PTY actually died, `onExit` fires and marks `pty-exit`.
+  // hard-fail. Mailbox observer will still surface real stalls via
+  // `harness.delivery-warning` / `harness.heartbeat-missed` synthetic events.
   if (kind === 'agent') {
     session.startupTimer = setTimeout(() => {
       const live = sessions.get(id)
@@ -688,8 +678,10 @@ function createSession(
   ptyProcess.onData(data => {
     // Always broadcast the raw stream so the renderer's xterm instance
     // sees the exact same bytes. Agent sessions additionally feed the
-    // headless emulator so cue detection can run on the rendered grid.
+    // headless emulator so the bootstrap ready cue can fire.
     broadcast('terminal:data', { id, data })
+    session.lastActivityMs = Date.now()
+    session.tail = (session.tail + data).slice(-TAIL_MAX_BYTES)
     if (kind === 'agent') {
       try {
         term.write(data, () => observeZoneOutput(id))
@@ -703,14 +695,8 @@ function createSession(
     broadcast('terminal:exit', { id, exitCode })
     // Identity-check: a resume may have already replaced this entry.
     if (sessions.get(id) === session) {
-      // If we exited before ever reaching ready (typical for a missing binary
-      // or immediate crash), classify. Non-zero exit on an agent session also
-      // counts as a failure. Skip if already failed / finished.
-      if (kind === 'agent' && session.lifecycle !== 'finished' && session.lifecycle !== 'failed') {
-        const kindCode: ZoneFailureKind = session.lifecycle === 'spawning'
-          ? 'pty-exit'
-          : 'pty-exit'
-        failSession(id, session, kindCode, `PTY exited with code ${exitCode ?? 0}`)
+      if (kind === 'agent' && session.lifecycle !== 'failed') {
+        failSession(id, session, 'pty-exit', `PTY exited with code ${exitCode ?? 0}`)
       }
       if (session.startupTimer) {
         clearTimeout(session.startupTimer)
@@ -723,10 +709,12 @@ function createSession(
   })
 }
 
-// Registry facade: body-then-CR split write (preserves bracketed-paste
-// semantics for Ink CLIs — see memory/feedback_pty_paste_submit.md). Transitions
-// the session to 'running' and records the poke. Idempotent-safe: callers can
-// call this on a 'finished' session to kick off a new round.
+// One-shot bootstrap poke. Under v4 this is called exactly once per agent
+// session — when the CLI reaches `ready` at startup — to type the initial
+// "enter your listen loop" prompt. Per-task delivery goes through the
+// mailbox, never through the PTY.
+// Body-then-CR split write preserves bracketed-paste semantics for Ink CLIs
+// (see memory/feedback_pty_paste_submit.md).
 function sendPrompt(id: string, body: string): boolean {
   const session = sessions.get(id)
   if (!session) {
@@ -741,22 +729,14 @@ function sendPrompt(id: string, body: string): boolean {
     console.warn(`[registry] session ${id} is failed; cannot send prompt`)
     return false
   }
-  session.lastPoke = body
-  session.promptAttempts += 1
-  session.misdeliveryReplayed = false
-  // Reset emulator so stale `ARCHITECT_TASK_ACK` / `ARCHITECT_COMPLETE`
-  // text from the previous round can't re-trigger the current round.
-  try { session.term.clear() } catch {}
-  setLifecycle(id, session, 'running', 'send-prompt', `attempt ${session.promptAttempts}`)
+  setLifecycle(id, session, 'running', 'send-prompt', 'bootstrap poke')
   try {
     session.pty.write(body)
   } catch (err) {
-    console.error(`[registry] failed to write poke body to ${id}`, err)
+    console.error(`[registry] failed to write bootstrap body to ${id}`, err)
     failSession(id, session, 'prompt-delivery', `pty.write body failed: ${String(err)}`)
     return false
   }
-  // Separate CR write, delayed to sidestep bracketed-paste detection where
-  // body+CR in one chunk is absorbed into a paste buffer instead of submitted.
   setTimeout(() => {
     const live = sessions.get(id)
     if (!live || live !== session) return
@@ -774,7 +754,7 @@ function awaitReady(id: string, timeoutMs = 15_000): Promise<void> {
   return new Promise((resolve, reject) => {
     const session = sessions.get(id)
     if (!session) return reject(new Error(`no session ${id}`))
-    if (session.lifecycle === 'ready' || session.lifecycle === 'running' || session.lifecycle === 'finished') {
+    if (session.lifecycle === 'ready' || session.lifecycle === 'running') {
       return resolve()
     }
     if (session.lifecycle === 'failed') {
@@ -798,34 +778,6 @@ function awaitReady(id: string, timeoutMs = 15_000): Promise<void> {
       }
     })
   })
-}
-
-// Resolves with the task id when the zone echoes ARCHITECT_TASK_ACK <task_id>,
-// or rejects on timeout / session failure. The ack must carry the current
-// task id — stale acks from a prior round can't satisfy a fresh wait.
-function awaitAck(id: string, taskId: string, timeoutMs: number): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const session = sessions.get(id)
-    if (!session) return reject(new Error(`no session ${id}`))
-    let done = false
-    const timer = setTimeout(() => {
-      if (done) return
-      done = true
-      reject(new Error(`awaitAck timed out after ${timeoutMs}ms`))
-    }, timeoutMs)
-    session.ackCallbacks.push(observedTaskId => {
-      if (done) return
-      if (observedTaskId !== taskId) return
-      done = true
-      clearTimeout(timer)
-      resolve(observedTaskId)
-    })
-  })
-}
-
-function setCurrentTaskId(id: string, taskId: string | null): void {
-  const session = sessions.get(id)
-  if (session) session.currentTaskId = taskId
 }
 
 function spawnErrorSession(
@@ -1052,16 +1004,6 @@ export function resizeTerminal(id: string, cols: number, rows: number) {
   try { session.term.resize(cols, rows) } catch {}
 }
 
-function onSessionDone(id: string, cb: () => void) {
-  const session = sessions.get(id)
-  if (!session) return
-  if (session.lifecycle === 'finished') {
-    cb()
-    return
-  }
-  session.doneCallbacks.push(cb)
-}
-
 // Kills agent and assistant sessions; preserves user shell sessions.
 export function killAll() {
   activeWatcher?.close()
@@ -1108,177 +1050,6 @@ export function closeTerminal(id: string): { ok: boolean; reason?: string } {
 
 function sanitize(label: string) {
   return label.replace(/[^a-zA-Z0-9-_]/g, '-')
-}
-
-// ──────────────────────────────────────────────────────────────────────────
-// Dispatch protocol v3: per-zone status.json in ARCHITECT/status/<safe>.json
-//
-//   { round, state, taskId, lastTaskHash,
-//     startedAt, acknowledgedAt, lastActivityAt, completedAt,
-//     blocker: { kind, message, since } | null,
-//     receipt: { result, summary, durationMs } | null }
-//
-// Ownership:
-//   - main process writes status/<safe>.json on every state transition
-//   - Architect READS status/ to know a zone's current state (jq recipe)
-//   - Architect WRITES tasks/<safe>.md to dispatch work; main watches that
-//     directory and pokes the zone's PTY when content changes
-//   - Zones WRITE outputs/<safe>.receipt.json with the round's result,
-//     which the main process watches to flip state → done/blocked
-// ──────────────────────────────────────────────────────────────────────────
-
-type ZoneRunState = 'idle' | 'running' | 'ack' | 'done' | 'blocked' | 'failed'
-
-type BlockerKind =
-  | 'delivery-failed'
-  | 'idle-stuck'
-  | 'task-timeout'
-  | 'pty-exit'
-  | 'malformed-completion'
-  | 'zone-reported'
-
-interface ZoneBlocker {
-  kind: BlockerKind
-  message: string
-  since: string
-}
-
-interface ZoneReceipt {
-  result: 'success' | 'blocked' | 'failed'
-  summary: string
-  durationMs: number
-}
-
-interface ZoneStatus {
-  round: number
-  state: ZoneRunState
-  taskId: string | null
-  lastTaskHash: string | null
-  startedAt: string | null
-  acknowledgedAt: string | null
-  lastActivityAt: string | null
-  completedAt: string | null
-  blocker: ZoneBlocker | null
-  receipt: ZoneReceipt | null
-}
-
-function statusFilePath(projectDir: string, safe: string): string {
-  return join(projectDir, 'ARCHITECT', 'status', `${safe}.json`)
-}
-
-function isZoneRunState(value: unknown): value is ZoneRunState {
-  return value === 'idle' || value === 'running' || value === 'ack' ||
-    value === 'done' || value === 'blocked' || value === 'failed'
-}
-
-function readStatus(projectDir: string, safe: string): ZoneStatus | null {
-  try {
-    const raw = fs.readFileSync(statusFilePath(projectDir, safe), 'utf-8')
-    const parsed = JSON.parse(raw) as Partial<ZoneStatus>
-    return {
-      round: typeof parsed.round === 'number' ? parsed.round : 0,
-      state: isZoneRunState(parsed.state) ? parsed.state : 'idle',
-      taskId: typeof parsed.taskId === 'string' ? parsed.taskId : null,
-      lastTaskHash: typeof parsed.lastTaskHash === 'string' ? parsed.lastTaskHash : null,
-      startedAt: typeof parsed.startedAt === 'string' ? parsed.startedAt : null,
-      acknowledgedAt: typeof parsed.acknowledgedAt === 'string' ? parsed.acknowledgedAt : null,
-      lastActivityAt: typeof parsed.lastActivityAt === 'string' ? parsed.lastActivityAt : null,
-      completedAt: typeof parsed.completedAt === 'string' ? parsed.completedAt : null,
-      blocker: parsed.blocker && typeof parsed.blocker === 'object' ? parsed.blocker as ZoneBlocker : null,
-      receipt: parsed.receipt && typeof parsed.receipt === 'object' ? parsed.receipt as ZoneReceipt : null,
-    }
-  } catch { return null }
-}
-
-function writeStatus(projectDir: string, safe: string, status: ZoneStatus): void {
-  try {
-    const file = statusFilePath(projectDir, safe)
-    fs.mkdirSync(join(projectDir, 'ARCHITECT', 'status'), { recursive: true })
-    fs.writeFileSync(file, JSON.stringify(status, null, 2))
-  } catch (err) {
-    console.error(`[status] failed to write for ${safe}`, err)
-  }
-}
-
-function initStatus(projectDir: string, safe: string): void {
-  writeStatus(projectDir, safe, {
-    round: 0,
-    state: 'idle',
-    taskId: null,
-    lastTaskHash: null,
-    startedAt: null,
-    acknowledgedAt: null,
-    lastActivityAt: null,
-    completedAt: null,
-    blocker: null,
-    receipt: null,
-  })
-}
-
-function markRunning(projectDir: string, safe: string, hash: string, taskId: string): void {
-  const prev = readStatus(projectDir, safe)
-  writeStatus(projectDir, safe, {
-    round: (prev?.round ?? 0) + 1,
-    state: 'running',
-    taskId,
-    lastTaskHash: hash,
-    startedAt: new Date().toISOString(),
-    acknowledgedAt: null,
-    lastActivityAt: null,
-    completedAt: null,
-    blocker: null,
-    receipt: null,
-  })
-}
-
-function markAck(projectDir: string, safe: string): void {
-  const prev = readStatus(projectDir, safe)
-  if (!prev) return
-  writeStatus(projectDir, safe, {
-    ...prev,
-    state: 'ack',
-    acknowledgedAt: prev.acknowledgedAt ?? new Date().toISOString(),
-  })
-}
-
-function markActivity(projectDir: string, safe: string, iso: string): void {
-  const prev = readStatus(projectDir, safe)
-  if (!prev) return
-  if (prev.lastActivityAt === iso) return
-  writeStatus(projectDir, safe, { ...prev, lastActivityAt: iso })
-}
-
-function markDoneWithReceipt(projectDir: string, safe: string, receipt: ZoneReceipt): void {
-  const prev = readStatus(projectDir, safe)
-  if (!prev) return
-  writeStatus(projectDir, safe, {
-    ...prev,
-    state: receipt.result === 'success' ? 'done' : 'blocked',
-    completedAt: new Date().toISOString(),
-    receipt,
-    blocker: receipt.result === 'success' ? null : {
-      kind: 'zone-reported',
-      message: receipt.summary,
-      since: new Date().toISOString(),
-    },
-  })
-}
-
-function markBlocked(projectDir: string, safe: string, blocker: ZoneBlocker): void {
-  const prev = readStatus(projectDir, safe)
-  if (!prev) return
-  writeStatus(projectDir, safe, { ...prev, blocker })
-}
-
-function markFailed(projectDir: string, safe: string, blocker: ZoneBlocker): void {
-  const prev = readStatus(projectDir, safe)
-  if (!prev) return
-  writeStatus(projectDir, safe, {
-    ...prev,
-    state: 'failed',
-    completedAt: new Date().toISOString(),
-    blocker,
-  })
 }
 
 function readSkillContent(skillPath: string): string {
@@ -1426,9 +1197,17 @@ function buildArchitectPrompt(
   unassignedComponents: ComponentGraphNode[],
   edges: GraphEdge[],
   settings: ProjectSettings,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
-  userPrompt?: string,
+  dispatchContext: { isRedispatch: boolean; changedNodeLabels: string[] } | undefined,
+  userPrompt: string | undefined,
+  projectDir: string,
 ): string {
+  const architectDir = join(projectDir, 'ARCHITECT')
+  const outputsDir = join(architectDir, 'outputs')
+  const scriptsPath = join(architectDir, 'scripts')
+  const mailboxPath = join(architectDir, 'mailbox')
+  const indexJson = join(mailboxPath, '_index.json')
+  const manifestPath = join(architectDir, 'manifest.json')
+  const architectLog = join(outputsDir, 'Architect.md')
   const zoneIds = new Set(zones.map(z => z.id))
   const zoneEdges = edges.filter(e => zoneIds.has(e.source) && zoneIds.has(e.target))
 
@@ -1448,15 +1227,14 @@ function buildArchitectPrompt(
 
     return [
       `### ${zone.data.label}`,
+      `Participant ID: \`${sanitize(zone.data.label)}\``,
       zone.data.description ? `Zone description: ${zone.data.description}` : '',
       `Runtime: ${getAgentRuntime(runtime).label}`,
       `Model: ${model}`,
       `Components owned by this zone (reference — do not assume all must change):\n${componentLines}`,
       upstream.length ? `Upstream zones: ${upstream.join(', ')}` : '',
       downstream.length ? `Downstream zones: ${downstream.join(', ')}` : '',
-      `Task file (you write): ARCHITECT/tasks/${sanitize(zone.data.label)}.md`,
-      `Status file (harness writes): ARCHITECT/status/${sanitize(zone.data.label)}.json`,
-      `Output log (zone writes): ARCHITECT/outputs/${sanitize(zone.data.label)}.md`,
+      `Output log (zone writes): ${join(outputsDir, `${sanitize(zone.data.label)}.md`)}`,
     ].filter(Boolean).join('\n')
   }).join('\n\n')
 
@@ -1470,11 +1248,13 @@ function buildArchitectPrompt(
 
   const taskSection = userPrompt && userPrompt.trim()
     ? `## Task (from user)\n${userPrompt.trim()}`
-    : `## Task (from user)\n(No task provided. Ask the user for one before writing any task files.)`
+    : `## Task (from user)\n(No task provided. Ask the user for one before dispatching any tasks.)`
 
-  return `You are the Architect agent coordinating a multi-agent system. Every zone below is already running — a separate interactive CLI session sitting idle at its prompt. You dispatch work to a zone by **writing its task file**; the harness watches ARCHITECT/tasks/ and pokes the matching zone's CLI with a pointer to the file as soon as you save it. That is the only dispatch mechanism.
+  return `You are the **Architect** (Overseer) agent coordinating a multi-agent system. Your participant ID is \`overseer\`. Every zone below is already running — a separate interactive CLI session sitting in a listen loop, waiting for task messages from you. You dispatch work by sending messages to each zone's inbox through the mailbox scripts; the zones respond with result messages in your inbox. This is the only dispatch mechanism.
 
-DO NOT use the Task tool or spawn sub-agents. Coordinate exclusively through the filesystem. You are the orchestrator — never hand control back to the user asking them to trigger the zones. You trigger them.
+DO NOT use the Task tool or spawn sub-agents. Do NOT write files under \`${architectDir}/tasks/\` (that directory is gone). Do NOT poll \`${architectDir}/zones/*/status.json\` (gone). Coordinate exclusively through the mailbox. You are the orchestrator — never hand control back to the user asking them to trigger the zones. You trigger them.
+
+**PATHS:** Every path in this prompt is ABSOLUTE. Use them verbatim when reading or writing. Your working directory is ${projectDir}.
 
 ${taskSection}
 
@@ -1489,106 +1269,132 @@ ${agentList}
 ## Inter-zone data flow
 ${flowLines}${unassignedSection}
 
-## The protocol (one channel, four directories)
+## The mailbox protocol
 
-- **ARCHITECT/tasks/<safe>.md** — you own. Write a task file to dispatch work. Overwrite to kick off another round on the same zone.
-- **ARCHITECT/status/<safe>.json** — the harness owns. The authoritative view of a zone. Shape:
-  \`\`\`
-  {
-    "round": <N>,
-    "state": "idle" | "running" | "ack" | "done" | "blocked" | "failed",
-    "taskId": <string or null>,
-    "lastTaskHash": <sha1>,
-    "startedAt": <iso>,          // harness sent the poke
-    "acknowledgedAt": <iso>,     // zone echoed ARCHITECT_TASK_ACK
-    "lastActivityAt": <iso>,     // most recent mtime on outputs/<safe>.md
-    "completedAt": <iso>,
-    "blocker": null | {
-      "kind": "delivery-failed" | "idle-stuck" | "task-timeout"
-            | "pty-exit" | "malformed-completion" | "zone-reported",
-      "message": <string>,
-      "since": <iso>
-    },
-    "receipt": null | { "result": "success"|"blocked"|"failed", "summary": <string>, "durationMs": <N> }
-  }
-  \`\`\`
-  A round is fully complete when \`round >= target\` AND \`state == "done"\` AND \`blocker == null\`.
-- **ARCHITECT/outputs/<safe>.md** — zones own. Read after a round completes for the zone's narrative summary.
-- **ARCHITECT/outputs/<safe>.receipt.<round>.json** — zones wrote, harness archived. Contains the structured result; read it for \`summary\` / \`result\`.
+All coordination flows through \`${mailboxPath}/\` as JSON messages. Every participant owns a mailbox directory:
 
-## Your job
+- \`${mailboxPath}/overseer/\` — YOUR mailbox. Inbox holds messages from zones + synthetic events from the harness. Outbox is your audit log.
+- \`${mailboxPath}/<participant-id>/\` — one per zone, using the \`<safe>\` id in the zone list above.
+- \`${indexJson}\` — harness-owned live snapshot of every participant's state. Read it to check liveness without polling scripts.
 
-1. Read ARCHITECT/manifest.json if you need more detail about any zone.
-2. Decompose the user's task into zone-scoped sub-tasks. Write a task file ONLY for zones that actually need to act. Zones without a task file stay idle — that is the correct outcome when the task doesn't touch them.
-3. Each task file you write must:
-   - Restate the user's goal in terms specific to this zone
-   - Name the concrete components, files, or endpoints the zone should touch (reuse existing ones where possible; only create new ones the task demands)
-   - Spell out API contracts, schemas, or ports the zone must produce or consume at the seams with other zones
-   - Point to upstream output logs the zone should read first (if any)
-   - State clear acceptance criteria
-4. Write task files in dependency order (upstream first) so downstream zones have concrete interfaces when they start.
-5. Write your coordination log to ARCHITECT/outputs/Architect.md summarizing which zones you engaged and why the others were skipped.
-6. **Supervise until every engaged zone finishes the current round or reaches a terminal failure.** Note each zone's \`round\` before you overwrite the task file; the harness bumps \`round\` by 1 on each new poke. Poll recipe:
+### Helper scripts (already executable)
+
+Three scripts are in \`${scriptsPath}/\`:
+
+- \`mailbox-drain.sh overseer\` — Returns every \`pending\` message in your inbox as a FIFO JSON array, marks them all \`read\`. **Use this to pull work.**
+- \`mailbox-send.sh <to> <type> <content-file> [inReplyTo]\` — Sends a message. Body is passed as a file path (not argv) to dodge ARG_MAX.
+- \`mailbox-status.sh\` — JSON summary of every participant's inbox/outbox counts.
+
+All scripts need these environment variables (already set for your session):
+\`MBX_ROOT\`, \`MBX_SELF\` (= \`overseer\`), \`MBX_SELF_LABEL\`, \`MBX_DISPATCH_ID\`.
+
+### Message types
+
+When you \`mailbox-drain.sh\` your inbox, each element is one of:
+
+| From | Type | Meaning |
+|---|---|---|
+| zone | \`result\` | A zone finished a task. \`structured.result\` is \`success\` / \`blocked\` / \`failed\`; \`structured.summary\` is a one-liner. \`inReplyTo\` points to the \`task\` message you sent. |
+| zone | \`question\` | A zone needs more info to finish its task. Reply with an \`answer\` message. |
+| \`__harness__\` | \`harness.pty-exit\` | A zone's CLI exited. You won't get more messages from it this dispatch — surface to the user. |
+| \`__harness__\` | \`harness.delivery-warning\` | A task message has been sitting \`pending\` in a zone's inbox for >45s — the zone may have broken its listen loop. A \`harness.wake\` nudge has already been sent to the zone. Give it another ~30s before reacting. |
+| \`__harness__\` | \`harness.heartbeat-missed\` | A zone has an in-flight task but hasn't touched \`outputs/<safe>.md\` in 90s+. It may be stuck on a long tool call — give it time, but consider surfacing if it persists. |
+| \`__harness__\` | \`harness.timeout\` | A zone exceeded its 30-min per-task timeout without sending a \`result\`. Inspect outputs, then decide whether to re-task, narrow scope, or escalate to user. |
+
+Messages from \`__harness__\` are ground truth, not peer claims — trust them.
+
+### Sending a task
 
 \`\`\`bash
-# Fill "engaged" with sanitized labels you dispatched; "target" with the
-# round number you're waiting for (1 on first poke; increment on re-poke).
-engaged="Zone-A Zone-B"
-declare -A target
-target[Zone-A]=1
-target[Zone-B]=1
-while :; do
-  missing=""
-  for z in $engaged; do
-    f="ARCHITECT/status/$z.json"
-    r=$(jq -r '.round // 0' "$f" 2>/dev/null)
-    s=$(jq -r '.state // "idle"' "$f" 2>/dev/null)
-    b=$(jq -r '.blocker.kind // "none"' "$f" 2>/dev/null)
-    # Terminal states — stop waiting on this zone this turn.
-    if [ "$s" = "done" ] && [ "$r" -ge "\${target[$z]}" ]; then continue; fi
-    if [ "$s" = "blocked" ] || [ "$s" = "failed" ] || [ "$b" != "none" ]; then continue; fi
-    missing="$missing $z"
-  done
-  [ -z "$missing" ] && break
-  sleep 5
-done
-# After the loop, inspect every engaged zone's blocker before drawing conclusions.
+# Write the task body to a tmpfile
+TASK="\$(mktemp -t task.XXXXXX)"
+cat > "\$TASK" <<'EOF'
+Restate user's goal for this zone.
+Name concrete files/endpoints to touch.
+Spell out API contracts at seams with other zones.
+Point to upstream outputs if relevant.
+Acceptance criteria.
+EOF
+
+# Send it — capture the msg id for later correlation
+MSG_ID="\$(bash \${MBX_SCRIPTS}/mailbox-send.sh <zone-participant-id> task "\$TASK")"
+rm -f "\$TASK"
+# Remember MSG_ID → zone so you can match the zone's result (it'll come back with inReplyTo = MSG_ID).
 \`\`\`
 
-## Blocker handling (important)
+(Or: just craft each \`mailbox-send.sh\` call directly in one Bash tool use — \`<heredoc>\` into a temp file, send, remove.)
 
-Any non-null \`.blocker\` is a stall the zone can't resolve by itself. Do NOT just keep polling — act:
+### Sending an answer, cancel, or follow-up
 
-- \`delivery-failed\` (no ack within 45s): the poke never reached the zone's agent loop. **Action**: overwrite the task file. The harness bumps \`round\` and sends a fresh poke with a new task id.
-- \`idle-stuck\` (no output activity for 90s+): the zone is stalled mid-task. **Action**: read \`outputs/<safe>.md\` for the last progress note, then overwrite the task file with a nudge ("you appear to be blocked on X; try Y") or surface the problem to the user.
-- \`task-timeout\` (exceeded zone's timeout): same as idle-stuck but harder — zone has been working too long. **Action**: inspect \`outputs/<safe>.md\`; consider narrowing the task or escalating to the user.
-- \`pty-exit\` / \`malformed-completion\`: the zone's process died or reported completion without a receipt. **Action**: the zone cannot recover on its own. Read \`outputs/<safe>.md\` for partial results and surface to the user.
-- \`zone-reported\` (state is \`blocked\`, receipt present with \`result != success\`): the zone explicitly reported it couldn't finish. **Action**: read \`receipt.summary\` and the output log; either resolve the blocker and re-poke, or surface to the user.
+Same pattern; pass the original message id as the last argument to set \`inReplyTo\`:
 
-## Iteration
+\`\`\`bash
+bash \${MBX_SCRIPTS}/mailbox-send.sh <zone> answer "\$TMPFILE" "\$ORIG_MSG_ID"
+\`\`\`
 
-To give a zone another round of work within the same dispatch, **overwrite its task file**. The harness detects the change, bumps \`round\`, assigns a new \`taskId\`, and pokes the zone's live CLI. Don't launch anything new; the zone is already running. Then wait for the new \`round\` with the poll recipe above.
+### Your main loop
 
-After all engaged zones reach \`state == "done"\` at the target round with no blocker, read each zone's ARCHITECT/outputs/<safe>.md and the archived \`outputs/<safe>.receipt.<round>.json\` to collect results. If a downstream zone needs interfaces the upstream zone produced, rewrite the downstream task file with those interfaces and poll again. Then report back to the user.
+You MUST live in a drain-and-plan loop. Never stop. The only way out is the user ending the session.
 
-IMPORTANT: Zones create all real project files (source code, configs, etc.) directly in the project root, NOT inside ARCHITECT/. The ARCHITECT/ folder is only for coordination (manifests, prompts, tasks, status, outputs). Do not create project files yourself.
+1. **Initialize**: Read \`${manifestPath}\` and the Mermaid diagram above. Decide which zones the user's task actually needs. Zones you don't dispatch stay idle — that is correct when the task doesn't touch them.
 
-Start by writing the task files for the zones the user's task requires, then enter the supervision loop.${dispatchContext?.isRedispatch
-    ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ARCHITECT/outputs/. Status files have been reset to round 0 for this dispatch.\n${dispatchContext.changedNodeLabels.length > 0
+2. **Dispatch first round**: For each zone you're engaging, send a \`task\` message (upstream first, so downstream zones get concrete interfaces to consume). Record each outgoing \`task\` msg id → zone mapping.
+
+3. **Wait for events**:
+   \`\`\`bash
+   bash \${MBX_SCRIPTS}/mailbox-listen.sh overseer 30
+   \`\`\`
+   This blocks up to 30s. It returns when any message lands in your inbox; timeout (exit 1) is fine — just means the zones are still working quietly.
+
+4. **Drain**:
+   \`\`\`bash
+   bash \${MBX_SCRIPTS}/mailbox-drain.sh overseer
+   \`\`\`
+   Parse the JSON array. For each message, apply the dispositions above.
+
+5. **Plan next step**. Based on the results you've collected: if a downstream zone now has the interface it was waiting on, dispatch its task. If all engaged zones returned \`success\`, summarize and report back to the user. If a zone returned \`blocked\` or \`failed\`, read its \`outputs/<safe>.md\` for partial progress, then decide: re-task (new \`task\` message) or escalate to user. Handle \`harness.*\` events per the table above.
+
+6. **GO BACK TO STEP 3**. Always listen again. Do not stop to ask "should I continue?" — the loop is the job.
+
+### Reading a zone's narrative
+
+\`${outputsDir}/<safe>.md\` is a zone's free-form progress scratchpad — read it for context when a result summary isn't enough, and definitely read it on any blocker/failure.
+
+### Write your own log
+
+Append a line to \`${architectLog}\` whenever you dispatch a task or receive a notable result. Keep it terse — future-you (on resume) will skim it.
+
+IMPORTANT: Zones create all real project files (source code, configs, etc.) directly in the project root (${projectDir}), NOT inside ${architectDir}/. The ${architectDir}/ folder is only for coordination (manifests, prompts, mailbox, outputs, scripts). Do not create project files yourself.
+
+Start by dispatching the first round of tasks for the zones the user's task requires, then enter the drain-and-plan loop.${dispatchContext?.isRedispatch
+    ? `\n\n## Execution Mode\nREDISPATCH — existing outputs may be present in ${outputsDir}/. Mailbox state is fresh for this dispatch.\n${dispatchContext.changedNodeLabels.length > 0
         ? `The following zones have changed since the last dispatch and likely need attention: ${dispatchContext.changedNodeLabels.join(', ')}.\nStill, only engage zones the user's task actually requires.`
         : `No zone configurations changed. Only engage zones the user's task requires.`}`
     : ''}`
 }
 
+// Zone prompt has two shapes:
+//   - 'dispatch' — the zone is part of a multi-zone dispatch with an Overseer.
+//     Teaches the mailbox listen-and-respond loop; the agent lives in that loop.
+//   - 'solo' — the zone was launched standalone (ZoneLaunchModal Play button, or
+//     a single-zone runGraph). No Overseer is running and MBX_* env vars are NOT
+//     set, so the prompt must not reference mailbox scripts. The agent works
+//     directly with the user.
+// The identity / components / skills / behavior header is shared; only the
+// Instructions suffix differs.
 function buildZoneSystemPrompt(
   zone: ZoneGraphNode,
   componentsByZone: Map<string, ComponentGraphNode[]>,
   zoneEdges: GraphEdge[],
   intraEdges: GraphEdge[],
-  zones: ZoneGraphNode[]
+  zones: ZoneGraphNode[],
+  projectDir: string,
+  mode: 'dispatch' | 'solo',
 ): string {
   const safe = sanitize(zone.data.label)
-  const statusLog = `ARCHITECT/outputs/${safe}.md`
+  const architectDir = join(projectDir, 'ARCHITECT')
+  const scriptsPath = join(architectDir, 'scripts')
+  const statusLog = join(architectDir, 'outputs', `${safe}.md`)
 
   const upstream = zoneEdges.filter(edge => edge.target === zone.id).map(edge => zones.find(z => z.id === edge.source)?.data.label).filter(Boolean)
   const downstream = zoneEdges.filter(edge => edge.source === zone.id).map(edge => zones.find(z => z.id === edge.target)?.data.label).filter(Boolean)
@@ -1622,12 +1428,12 @@ function buildZoneSystemPrompt(
 
   const userSystem = (zone.data.systemPrompt ?? '').trim()
 
-  return `You are the **${zone.data.label}** zone-agent.
+  const header = `You are the **${zone.data.label}** zone-agent. Your participant ID is \`${safe}\`.
 ${zone.data.description ? `Zone description: ${zone.data.description}\n` : ''}
-${upstream.length ? `Upstream zones (read their status logs first): ${upstream.map(label => `ARCHITECT/outputs/${sanitize(label as string)}.md`).join(', ')}\n` : ''}${downstream.length ? `Downstream zones depending on you: ${downstream.join(', ')}\n` : ''}${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
+${upstream.length ? `Upstream zones (read their output logs when referenced): ${upstream.map(label => join(architectDir, 'outputs', `${sanitize(label as string)}.md`)).join(', ')}\n` : ''}${downstream.length ? `Downstream zones depending on you: ${downstream.join(', ')}\n` : ''}${tools.length ? `Enabled tools: ${tools.join(', ')}\n` : ''}
 ## What you own (reference)
 
-These components live in your zone on the architecture canvas. This is context about the parts of the system you are responsible for — NOT a build list. The current dispatch may touch none, some, or all of them. The Architect's task file tells you what to actually do; treat anything outside that file as existing context you should leave alone.
+These components live in your zone on the architecture canvas. This is context about the parts of the system you are responsible for — NOT a build list. The current task may touch none, some, or all of them. Treat anything outside what you're asked to do as existing context you should leave alone.
 
 ${compList}
 
@@ -1635,43 +1441,106 @@ ${compList}
 
 ${archLines}
 
-${skills ? `## Skills\n\n${skills}\n\n` : ''}${userSystem ? `## Behavior\n\n${userSystem}\n\n` : ''}## Instructions
+${skills ? `## Skills\n\n${skills}\n\n` : ''}${userSystem ? `## Behavior\n\n${userSystem}\n\n` : ''}`
 
-The Architect dispatches work to you by writing ARCHITECT/tasks/${safe}.md. The harness delivers each new or updated version directly into this CLI session as a message — you will receive a poke that carries a \`task_id\` and a \`round\` number. When a poke arrives, open the file, execute exactly what it says — nothing more. Do NOT expand scope by building unrequested components, rewriting files the task does not mention, or assuming the whole zone needs to be (re)built.
+  if (mode === 'solo') {
+    return header + `## Instructions
 
-You may be re-poked multiple times within a single conversation (iteration). Every poke starts a fresh round with a new \`task_id\`. Use the task_id from the CURRENT poke in all of the steps below — never reuse an old one.
+This zone was launched **standalone** — no Architect/Overseer is coordinating you and no mailbox is wired up. You work **directly with the user**: they prompt you, you respond, you do the work.
+
+**PATHS:** Your working directory is ${projectDir}. All paths referenced in this prompt are absolute.
 
 **WHERE TO CREATE FILES:**
-- All project files (source code, configs, scripts, etc.) go directly in the project root (current working directory). Do NOT put them inside ARCHITECT/.
-- ARCHITECT/ is only for coordination: tasks, prompts, status, and outputs.
-- ${statusLog} is your output log — append brief progress notes (the harness polls its mtime as a heartbeat, so actually writing to it during work matters).
+- All project files (source, configs, scripts, etc.) go directly in the project root (${projectDir}). Do NOT put them inside ${architectDir}/.
+- ${architectDir}/ is reserved for coordination state (prompts, outputs, mailbox, scripts) — it's fine to append to ${statusLog} as a progress scratchpad, but don't create new artifacts there.
 
-If you have downstream zones, document any interfaces you produce (ports, schemas, file paths) in your output log so the Architect can relay them.
+**Progress log:** append a line per significant step to \`${statusLog}\` so later dispatches (or the user reading after the fact) can see what you did.
 
-Work fully autonomously — do not stop or ask for clarification.
+Do NOT try to run \`mailbox-listen.sh\`, \`mailbox-send.sh\`, or reference a participant inbox — those scripts are for multi-zone dispatches and won't work here (the \`MBX_*\` env vars aren't set). Just respond to the user's prompt directly.
 
-## Round protocol (do these in order, every round)
+Work fully autonomously — do not stop to ask for clarification unless the user's request is genuinely ambiguous.`
+  }
 
-1. **Acknowledge immediately, before anything else.** As the very first shell command of the round, run exactly:
-   \`echo ARCHITECT_TASK_ACK <task_id>\`
-   where \`<task_id>\` is the id in the poke you just received. The harness watches for this echo; without it the task is considered undelivered after 45 seconds and the Architect will re-poke.
+  return header + `## Instructions — Mailbox protocol
 
-2. **Read and execute** \`ARCHITECT/tasks/${safe}.md\` exactly as written.
+The Architect (participant id \`overseer\`) dispatches work to you as messages in your inbox at \`${architectDir}/mailbox/${safe}/inbox/\`. You receive work by running a blocking listen script; you respond by running a send script. Helper scripts live in \`${scriptsPath}/\` with \`MBX_ROOT\`, \`MBX_SELF\` (= \`${safe}\`), \`MBX_SELF_LABEL\`, \`MBX_DISPATCH_ID\` already exported in your shell.
 
-3. **Log progress** to \`${statusLog}\` as you go — one line per significant step. The harness watches this file's mtime; long silences trigger an \`idle-stuck\` blocker.
+**PATHS:** Every path in this prompt is ABSOLUTE. Use them verbatim. Your working directory is ${projectDir}.
 
-4. **Write a receipt** when the round finishes, success OR blocked. Write valid JSON to \`ARCHITECT/outputs/${safe}.receipt.json\`:
-   \`\`\`json
-   {"task_id":"<the same id>","result":"success","summary":"<one-line>","durationMs":<integer>}
+**WHERE TO CREATE FILES:**
+- All project files (source, configs, scripts, etc.) go directly in the project root (${projectDir}). Do NOT put them inside ${architectDir}/.
+- ${architectDir}/ is only for coordination (mailbox, prompts, outputs, scripts).
+- ${statusLog} is your progress scratchpad — append a line per significant step. The harness polls its mtime as a heartbeat; long silences trigger a \`harness.heartbeat-missed\` event.
+
+Work fully autonomously — do not stop to ask for clarification.
+
+## Your listen-and-respond loop
+
+You MUST live in the loop below. Never stop calling \`mailbox-listen.sh\`. The only way out is the PTY being killed by the user.
+
+1. **Listen** (blocks until a message arrives):
+   \`\`\`bash
+   bash ${scriptsPath}/mailbox-listen.sh ${safe}
    \`\`\`
-   - \`result\`: \`"success"\` when the task is done; \`"blocked"\` when a hard dependency prevents completion (missing file, contradictory requirement, permission denial); \`"failed"\` on an unrecoverable internal error.
-   - \`summary\`: a single line the Architect will read. For blockers, state the blocker concretely ("file X referenced in task does not exist"). For success, say what you produced (ports, endpoints, files).
-   - Always include the correct \`task_id\` from the current poke — receipts with a stale id are ignored.
+   Stdout on return: lines like \`MESSAGE_ID=...\`, \`FROM=...\`, \`TO=...\`, \`FROM_LABEL=...\`, \`TYPE=...\`, \`IN_REPLY_TO=...\`, optionally \`STRUCTURED=<json>\`, then a \`---\` separator, then the content body. Parse these.
 
-5. **Signal done.** After the receipt is written, run exactly:
-   \`echo ARCHITECT_COMPLETE <task_id>\`
+2. **Dispatch on TYPE**:
 
-The harness promotes \`state\` on your status.json at each of these steps: \`running\` → \`ack\` on step 1, \`done\` / \`blocked\` on step 4. Missing step 1 or 4 causes the Architect to see a blocker and intervene.`
+   - \`task\` — the Architect has work for you. Read the content body; it describes what to build or change. Do the work using your normal tools (Read, Edit, Bash, etc). As you work, append one-liner progress notes to \`${statusLog}\`. When done (success, blocked, or failed), go to step 3 with a \`result\` message.
+
+   - \`answer\` — the Architect is replying to a \`question\` you asked. Use the new info to continue the task you were mid-way through. Then eventually reply with \`result\`.
+
+   - \`cancel\` — the Architect wants you to abort. Stop the current task cleanly if you can, then send a \`result\` with \`structured.result = "blocked"\` and \`structured.blocker.kind = "cancelled"\`. (After 60s of not responding, the harness will hard-cancel via SIGINT.)
+
+   - \`harness.wake\` — a liveness nudge from the harness. No-op; just loop back to step 1.
+
+   - Any \`session-ended\` or unknown type — note it and loop back.
+
+3. **Respond with a \`result\`** when you finish a task:
+   \`\`\`bash
+   BODY="\$(mktemp -t result.XXXXXX)"
+   cat > "\$BODY" <<'EOF'
+   One-line human-readable summary, then optional longer detail.
+   For success: what you produced (files, endpoints, interfaces).
+   For blocked/failed: concrete blocker (e.g. "file X does not exist").
+   EOF
+
+   STRUCT="\$(mktemp -t result.struct.XXXXXX)"
+   cat > "\$STRUCT" <<EOF
+   {
+     "taskId": "<task_id-if-structured-had-one>",
+     "result": "success",
+     "durationMs": 12345
+   }
+   EOF
+   # For blocked/failed:
+   # "result": "blocked", "blocker": { "kind": "missing-file", "message": "…" }
+
+   MBX_STRUCTURED_FILE="\$STRUCT" \\
+     bash ${scriptsPath}/mailbox-send.sh overseer result "\$BODY" "\$MESSAGE_ID"
+   rm -f "\$BODY" "\$STRUCT"
+   \`\`\`
+   The \`inReplyTo\` (last positional arg, = the task's \`MESSAGE_ID\`) lets the Architect correlate your result with its outbound task.
+
+4. **If you need more info to finish the task**, send a \`question\` instead of a \`result\`, also with \`inReplyTo = MESSAGE_ID\`:
+   \`\`\`bash
+   bash ${scriptsPath}/mailbox-send.sh overseer question "\$BODY" "\$MESSAGE_ID"
+   \`\`\`
+   The Architect will drain it, respond with an \`answer\` (which you'll pick up on the next \`mailbox-listen.sh\` call), and you continue.
+
+5. **IMMEDIATELY loop back to step 1.** After every response — even a non-op — run \`mailbox-listen.sh\` again. Never stop to ask the user what to do next. The loop is the job.
+
+## Including real code in responses
+
+When the Architect asks "what interfaces did you produce?", don't just describe — include actual file contents, type definitions, function signatures in your \`result\` body. Read the relevant files and paste the important parts. Downstream zones will consume your result to write their own code; prose alone is not enough.
+
+## Rules
+
+- **Never break the loop.** After every action, call \`mailbox-listen.sh\` again.
+- **Use \`FROM\` from the message as the recipient** when replying — don't hardcode \`overseer\` (though it's almost always \`overseer\`).
+- **Use \`MESSAGE_ID\` from the task as \`inReplyTo\`** on your result/question — this is how the Architect correlates.
+- **Append to \`${statusLog}\`** during work. The harness mtime-watches this file.
+- **Never write to \`${architectDir}/tasks/\` or \`${architectDir}/zones/\`** — those directories are gone in this protocol version.`
 }
 
 function setupWorkspace(
@@ -1683,7 +1552,7 @@ function setupWorkspace(
   userPrompt?: string,
 ) {
   const base = join(projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts', 'status', 'sessions', 'dispatches'].map(name => join(base, name))) {
+  for (const dir of ['outputs', 'prompts', 'sessions', 'dispatches'].map(name => join(base, name))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
@@ -1695,6 +1564,7 @@ function setupWorkspace(
   fs.writeFileSync(join(base, 'manifest.json'), JSON.stringify({
     generated: new Date().toISOString(),
     defaultRuntime: settings.defaultRuntime,
+    protocolVersion: MAILBOX_PROTOCOL_VERSION,
     unassignedComponents: unassignedComponents.map(c => ({
       id: c.id,
       label: c.data.label,
@@ -1705,16 +1575,19 @@ function setupWorkspace(
     })),
     zones: zones.map(zone => {
       const runtime = getZoneRuntime(zone, settings)
+      const safe = sanitize(zone.data.label)
       return {
         id: zone.id,
         label: zone.data.label,
+        participantId: safe,
         description: zone.data.description,
         runtime,
         runtimeLabel: getAgentRuntime(runtime).label,
         model: getZoneModel(zone, runtime),
         systemPrompt: zone.data.systemPrompt || null,
-        taskFile: `ARCHITECT/tasks/${sanitize(zone.data.label)}.md`,
-        outputFile: `ARCHITECT/outputs/${sanitize(zone.data.label)}.md`,
+        inboxDir: `ARCHITECT/mailbox/${safe}/inbox`,
+        outboxDir: `ARCHITECT/mailbox/${safe}/outbox`,
+        outputFile: `ARCHITECT/outputs/${safe}.md`,
         enabledTools: Object.entries(zone.data.tools ?? {}).filter(([, enabled]) => enabled).map(([key]) => key),
         upstream: zoneEdges.filter(e => e.target === zone.id).map(e => zones.find(z => z.id === e.source)?.data.label).filter(Boolean),
         downstream: zoneEdges.filter(e => e.source === zone.id).map(e => zones.find(z => z.id === e.target)?.data.label).filter(Boolean),
@@ -1731,345 +1604,428 @@ function setupWorkspace(
   }, null, 2))
 
   fs.writeFileSync(join(base, 'diagram.md'), buildMermaidDiagram(zones, componentsByZone, zoneEdges))
-  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(zones, componentsByZone, unassignedComponents, edges, settings, dispatchContext, userPrompt))
+  fs.writeFileSync(join(base, 'prompts', 'architect.md'), buildArchitectPrompt(zones, componentsByZone, unassignedComponents, edges, settings, dispatchContext, userPrompt, projectDir))
   for (const zone of zones) {
-    fs.writeFileSync(join(base, 'prompts', `${sanitize(zone.data.label)}.md`), buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones))
+    fs.writeFileSync(join(base, 'prompts', `${sanitize(zone.data.label)}.md`), buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones, projectDir, 'dispatch'))
+  }
+
+  // Mailbox scaffold — scripts + per-participant dirs. Idempotent: overwrites
+  // scripts (so script fixes land on every dispatch) and only creates
+  // participant dirs that don't already exist (so resumes preserve prior
+  // messages in inboxes/outboxes).
+  writeMailboxScripts(projectDir)
+  const existing = new Set(listParticipantIds(projectDir))
+  const ensure = (id: string, role: 'overseer' | 'zone', label: string) => {
+    if (!existing.has(id)) createParticipant(projectDir, { id, role, label })
+  }
+  ensure(MAILBOX_OVERSEER_ID, 'overseer', 'Architect')
+  for (const zone of zones) {
+    ensure(sanitize(zone.data.label), 'zone', zone.data.label)
   }
 }
 
-// Per-task timeouts. `DEFAULT_TASK_TIMEOUT_MS` can be overridden per zone via
-// `zone.data.behavior.timeoutMs`. `ACK_TIMEOUT_MS` is the deadline for the
-// zone to echo `ARCHITECT_TASK_ACK <task_id>`; misses flip status.json to
-// `blocker.kind = 'delivery-failed'`. `IDLE_THRESHOLD_MS` is the heartbeat
-// threshold against `outputs/<safe>.md` mtime.
+// Mailbox observer timing knobs (v4).
+//   DEFAULT_TASK_TIMEOUT_MS — per-task 30-min cap; zone config can only extend it.
+//   DELIVERY_WARNING_MS    — how long a `task` msg may sit `pending` in a zone inbox before we
+//                            emit `harness.delivery-warning` to the Overseer + `harness.wake` to the zone.
+//   IDLE_THRESHOLD_MS      — staleness threshold on BOTH outputs/<safe>.md mtime AND PTY
+//                            lastActivityMs for heartbeat checks. A zone is considered idle
+//                            only when BOTH signals go quiet; either one advancing keeps it live.
+//                            Set to 2 min: the PTY byte stream covers long tool calls (spinner,
+//                            reasoning, Bash output), so genuine silence across both channels
+//                            for 2 min is a reasonable early warning. Hard failure is still
+//                            DEFAULT_TASK_TIMEOUT_MS (30 min) via harness.timeout.
+//   HEARTBEAT_POLL_MS      — how often the heartbeat scan fires.
+//   HARD_CANCEL_MS         — after this long with an unconsumed `cancel` msg, SIGINT the zone PTY.
+//   AWAIT_READY_SOFT_MS    — soft gate on the one-shot bootstrap poke; on miss we poke anyway.
 const DEFAULT_TASK_TIMEOUT_MS = 30 * 60_000
-const ACK_TIMEOUT_MS = 45_000
-const IDLE_THRESHOLD_MS = 90_000
+const DELIVERY_WARNING_MS = 45_000
+const IDLE_THRESHOLD_MS = 2 * 60_000
 const HEARTBEAT_POLL_MS = 15_000
-// Soft gate on first-round delivery. On timeout the coordinator logs and
-// pokes anyway — we'd rather risk a slightly early poke than refuse delivery
-// when the xterm-headless cue misses.
+const HARD_CANCEL_MS = 60_000
 const AWAIT_READY_SOFT_MS = 10_000
 
-// Single-watcher coordinator for a multi-zone dispatch. All zones must already
-// be pre-spawned before this is called. It watches ARCHITECT/tasks/, pokes
-// the corresponding zone with a task id, and watches outputs/<safe>.receipt.json
-// for structured completion. Heartbeat / ack / task timers drive the blocker
-// field on status.json so the Architect can recover from stalls.
-function startDispatchCoordinator(
+// The Architect session's terminal id (unchanged from v3).
+const ARCHITECT_SESSION_ID = 'architect-agent'
+
+// Observer for a multi-zone dispatch. All participants (Overseer + zones)
+// must already have mailboxes scaffolded by setupWorkspace. The observer:
+//   - watches every participant's inbox/outbox for IPC broadcasts and _index.json
+//     refreshes (renderer observability)
+//   - watches zone inboxes for new `task` / `cancel` msgs and sets timers:
+//       task → DELIVERY_WARNING_MS → if still `pending`, inject harness.delivery-warning
+//                                    + harness.wake; also DEFAULT_TASK_TIMEOUT_MS → harness.timeout
+//       cancel → HARD_CANCEL_MS → if still `pending`, SIGINT the zone PTY
+//   - watches zone outboxes for `result` msgs that resolve in-flight tasks
+//   - runs a heartbeat loop that checks outputs/<safe>.md mtime against
+//     IDLE_THRESHOLD_MS for zones with in-flight tasks
+//   - hooks PTY exit to inject harness.pty-exit + flip participant to 'exited'
+//     in _index.json (tombstone: the participant dir is NOT removed)
+function startMailboxObserver(
   projectDir: string,
   zones: ZoneGraphNode[],
+  dispatchId: string,
 ): { stop: () => void } {
   const zoneBySafe = new Map(zones.map(z => [sanitize(z.data.label), z]))
-  const tasksDir = join(projectDir, 'ARCHITECT', 'tasks')
   const outputsDir = join(projectDir, 'ARCHITECT', 'outputs')
   fs.mkdirSync(outputsDir, { recursive: true })
 
-  const debounceTimers = new Map<string, NodeJS.Timeout>()
-  // Guards concurrent deliverTask runs on the same zone (watcher + initial
-  // sweep can both fire).
-  const inFlight = new Set<string>()
+  // In-flight tasks keyed by the task msgId. The harness learns about outgoing
+  // tasks by watching each zone's inbox — we don't trust outgoing msgIds from
+  // the overseer's outbox (same content, but inbox is the authoritative place
+  // the zone will pick from). `startedAt` anchors the heartbeat check so
+  // leftover outputs/<safe>.md from prior dispatches don't trigger a false
+  // harness.heartbeat-missed the instant a new task arrives.
+  interface TaskTracker {
+    zone: string
+    filename: string
+    startedAt: number
+    deliveryTimer: NodeJS.Timeout
+    timeoutTimer: NodeJS.Timeout
+  }
+  const taskTrackers = new Map<string, TaskTracker>()
+  const cancelTimers = new Map<string, NodeJS.Timeout>()
+  const resolvedTaskIds = new Set<string>()
+  const heartbeatEmittedFor = new Set<string>() // dedupe heartbeat-missed per task
 
-  // Per-zone timers for the in-flight round. All cleared on completion or
-  // coordinator teardown. Keyed by safe label.
-  const ackTimers = new Map<string, NodeJS.Timeout>()
-  const taskTimers = new Map<string, NodeJS.Timeout>()
-  const heartbeatTimer = setInterval(() => {
-    for (const safe of zoneBySafe.keys()) checkHeartbeat(safe)
-  }, HEARTBEAT_POLL_MS)
+  const watchers: fs.FSWatcher[] = []
+  const ptyUnsubs: Array<() => void> = []
 
-  // File watchers for receipts (one per outputs dir entry we care about).
-  let receiptWatcher: fs.FSWatcher | null = null
-  let tasksWatcher: fs.FSWatcher | null = null
-
-  for (const safe of zoneBySafe.keys()) initStatus(projectDir, safe)
-
-  function clearRoundTimers(safe: string): void {
-    const ackT = ackTimers.get(safe)
-    if (ackT) { clearTimeout(ackT); ackTimers.delete(safe) }
-    const taskT = taskTimers.get(safe)
-    if (taskT) { clearTimeout(taskT); taskTimers.delete(safe) }
+  function sessionIdForParticipant(pid: string): string | null {
+    if (pid === MAILBOX_OVERSEER_ID) return ARCHITECT_SESSION_ID
+    const zone = zoneBySafe.get(pid)
+    return zone?.id ?? null
   }
 
-  function checkHeartbeat(safe: string): void {
-    const status = readStatus(projectDir, safe)
-    if (!status) return
-    if (status.state !== 'running' && status.state !== 'ack') return
-    // Poll mtime of outputs/<safe>.md — zones append progress notes there, so
-    // mtime advancing means the zone is alive. Absence of the file is fine
-    // for an early-round zone that hasn't written yet.
-    const outPath = join(outputsDir, `${safe}.md`)
-    try {
-      const stat = fs.statSync(outPath)
-      const iso = stat.mtime.toISOString()
-      markActivity(projectDir, safe, iso)
-    } catch { /* no output yet */ }
+  function broadcastActivity(participantId: string, direction: 'inbox' | 'outbox', filename: string, msg?: MailboxMessage): void {
+    broadcast('mailbox:activity', {
+      dispatchId,
+      participantId,
+      direction,
+      filename,
+      msgId: msg?.id,
+      type: msg?.type,
+      from: msg?.from,
+      to: msg?.to,
+    })
+  }
 
-    // Re-read after activity update.
+  function injectHarnessMessage(
+    to: string,
+    type: MailboxMessageType,
+    content: string,
+    structured?: MailboxStructured,
+  ): void {
+    const result = writeInboxMessage({
+      projectDir,
+      from: MAILBOX_HARNESS_ID,
+      fromLabel: 'Harness',
+      to,
+      type,
+      content,
+      structured: structured ?? null,
+      dispatchId,
+    })
+    if (!result.ok) {
+      console.warn(`[mailbox-observer] failed to inject ${type} to ${to}: ${result.error}`)
+    }
+  }
+
+  function readMessageFile(path: string): MailboxMessage | null {
+    try { return JSON.parse(fs.readFileSync(path, 'utf-8')) as MailboxMessage } catch { return null }
+  }
+
+  function scheduleTaskTimers(zone: ZoneGraphNode, safe: string, msg: MailboxMessage, filename: string): void {
+    // Dedupe: fs.watch on macOS fires multiple events per atomic rename
+    // (rename + change), which would otherwise arm a second pair of timers
+    // and produce duplicate harness.* messages. Identity-keyed by msg.id.
+    if (taskTrackers.has(msg.id)) return
+
+    // v4 task timeout is for zone liveness, not for zone configuration. The
+    // UI's `behavior.timeoutMs` default (30s) was a v3 step-level concept
+    // with different semantics; respecting it here makes every real task
+    // time out after ~60s. Take the MAX of the default + any user override,
+    // so configuration can only extend the timeout, never shorten it.
+    const zoneOverride = zone.data?.behavior?.timeoutMs ?? 0
+    const timeoutMs = Math.max(DEFAULT_TASK_TIMEOUT_MS, zoneOverride)
+    const deliveryTimer = setTimeout(() => {
+      // Re-read the message file. If the zone consumed it (`read`), we're fine.
+      const full = join(inboxDir(projectDir, safe), filename)
+      const live = readMessageFile(full)
+      if (!live || live.status !== 'pending') return
+      injectHarnessMessage(
+        MAILBOX_OVERSEER_ID,
+        'harness.delivery-warning',
+        `Zone ${safe} has not consumed task ${msg.id} within ${DELIVERY_WARNING_MS / 1000}s. A harness.wake nudge has been sent to the zone.`,
+        { taskId: msg.id },
+      )
+      injectHarnessMessage(
+        safe,
+        'harness.wake',
+        `Still listening? Task ${msg.id} is waiting in your inbox.`,
+        { taskId: msg.id },
+      )
+    }, DELIVERY_WARNING_MS)
+
+    const timeoutTimer = setTimeout(() => {
+      if (resolvedTaskIds.has(msg.id)) return
+      injectHarnessMessage(
+        MAILBOX_OVERSEER_ID,
+        'harness.timeout',
+        `Zone ${safe} has not returned a result for task ${msg.id} within ${Math.round(timeoutMs / 1000)}s.`,
+        { taskId: msg.id, durationMs: timeoutMs },
+      )
+    }, timeoutMs)
+
+    taskTrackers.set(msg.id, { zone: safe, filename, startedAt: Date.now(), deliveryTimer, timeoutTimer })
+  }
+
+  function scheduleHardCancel(safe: string): void {
+    const prev = cancelTimers.get(safe)
+    if (prev) clearTimeout(prev)
+    const timer = setTimeout(() => {
+      cancelTimers.delete(safe)
+      const sessionId = sessionIdForParticipant(safe)
+      if (!sessionId) return
+      const session = sessions.get(sessionId)
+      if (!session) return
+      console.log(`[mailbox-observer] hard-cancel SIGINT to ${safe}`)
+      try { session.pty.kill('SIGINT') } catch {}
+    }, HARD_CANCEL_MS)
+    cancelTimers.set(safe, timer)
+  }
+
+  function clearTaskTracker(msgId: string): void {
+    const tracker = taskTrackers.get(msgId)
+    if (!tracker) return
+    clearTimeout(tracker.deliveryTimer)
+    clearTimeout(tracker.timeoutTimer)
+    taskTrackers.delete(msgId)
+    resolvedTaskIds.add(msgId)
+    heartbeatEmittedFor.delete(msgId)
+  }
+
+  function onZoneInboxWrite(safe: string, name: string): void {
+    const full = join(inboxDir(projectDir, safe), name)
+    const msg = readMessageFile(full)
+    if (!msg) return
+    broadcastActivity(safe, 'inbox', name, msg)
+    refreshIndex()
+    // Skip our own synthetic writes (they shouldn't schedule new timers).
+    if (msg.from === MAILBOX_HARNESS_ID) return
+    const zone = zoneBySafe.get(safe)
+    if (!zone) return
+    if (msg.type === 'task') {
+      scheduleTaskTimers(zone, safe, msg, name)
+    } else if (msg.type === 'cancel') {
+      scheduleHardCancel(safe)
+    }
+  }
+
+  function onZoneOutboxWrite(safe: string, name: string): void {
+    const full = join(outboxDir(projectDir, safe), name)
+    const msg = readMessageFile(full)
+    if (!msg) return
+    broadcastActivity(safe, 'outbox', name, msg)
+    // A zone's `result` (with inReplyTo) closes the loop on a tracked task.
+    if (msg.type === 'result' && msg.inReplyTo) {
+      clearTaskTracker(msg.inReplyTo)
+    }
+    refreshIndex()
+  }
+
+  function onOverseerInboxWrite(name: string): void {
+    const full = join(inboxDir(projectDir, MAILBOX_OVERSEER_ID), name)
+    const msg = readMessageFile(full)
+    broadcastActivity(MAILBOX_OVERSEER_ID, 'inbox', name, msg ?? undefined)
+    refreshIndex()
+  }
+
+  function onOverseerOutboxWrite(name: string): void {
+    const full = join(outboxDir(projectDir, MAILBOX_OVERSEER_ID), name)
+    const msg = readMessageFile(full)
+    broadcastActivity(MAILBOX_OVERSEER_ID, 'outbox', name, msg ?? undefined)
+    refreshIndex()
+  }
+
+  function watchDir(dir: string, handler: (name: string) => void): void {
+    fs.mkdirSync(dir, { recursive: true })
+    const w = fs.watch(dir, (_event, filename) => {
+      if (!filename) return
+      const name = String(filename)
+      if (!name.endsWith('.json')) return
+      // Small debounce: let atomic rename settle.
+      setTimeout(() => handler(name), 30)
+    })
+    watchers.push(w)
+  }
+
+  function checkHeartbeats(): void {
     const now = Date.now()
-    const fresh = readStatus(projectDir, safe)
-    if (!fresh) return
-    const anchor = fresh.lastActivityAt ?? fresh.acknowledgedAt ?? fresh.startedAt
-    if (!anchor) return
-    const age = now - Date.parse(anchor)
-    if (age < IDLE_THRESHOLD_MS) return
-    // Don't clobber a more specific blocker (delivery-failed, task-timeout).
-    if (fresh.blocker && fresh.blocker.kind !== 'idle-stuck') return
-    markBlocked(projectDir, safe, {
-      kind: 'idle-stuck',
-      message: `No activity for ${Math.round(age / 1000)}s (last at ${anchor})`,
-      since: fresh.blocker?.since ?? new Date().toISOString(),
-    })
-  }
+    for (const [msgId, tracker] of taskTrackers.entries()) {
+      if (heartbeatEmittedFor.has(msgId)) continue
+      const outPath = join(outputsDir, `${tracker.zone}.md`)
+      let mtime: number | null = null
+      try { mtime = fs.statSync(outPath).mtimeMs } catch { mtime = null }
 
-  // Processes a dropped `<safe>.receipt.json` file. If the receipt's task_id
-  // matches the round in flight, flip status.json to done/blocked and cancel
-  // round timers. Malformed JSON → blocker.kind='malformed-completion'.
-  function ingestReceipt(safe: string): void {
-    const zone = zoneBySafe.get(safe)
-    if (!zone) return
-    const receiptPath = join(outputsDir, `${safe}.receipt.json`)
-    let raw: string
-    try { raw = fs.readFileSync(receiptPath, 'utf-8') } catch { return }
-    let parsed: Partial<ZoneReceipt & { task_id: string; taskId: string }>
-    try {
-      parsed = JSON.parse(raw)
-    } catch {
-      markBlocked(projectDir, safe, {
-        kind: 'malformed-completion',
-        message: `Receipt at ${safe}.receipt.json is not valid JSON`,
-        since: new Date().toISOString(),
-      })
-      return
-    }
-    const status = readStatus(projectDir, safe)
-    if (!status || !status.taskId) return
-    const receiptTaskId = parsed.task_id ?? parsed.taskId
-    if (receiptTaskId !== status.taskId) {
-      // Stale receipt (from a previous round). Ignore silently — the current
-      // round is still in flight.
-      return
-    }
-    const result = parsed.result === 'blocked' || parsed.result === 'failed'
-      ? parsed.result
-      : 'success'
-    const durationMs = typeof parsed.durationMs === 'number'
-      ? parsed.durationMs
-      : status.startedAt ? Date.now() - Date.parse(status.startedAt) : 0
-    const summary = typeof parsed.summary === 'string' ? parsed.summary : ''
-    markDoneWithReceipt(projectDir, safe, { result, summary, durationMs })
-    clearRoundTimers(safe)
-    // Archive the receipt under the round number so iteration rounds get a
-    // clean slate.
-    try {
-      const archivePath = join(outputsDir, `${safe}.receipt.${status.round}.json`)
-      fs.renameSync(receiptPath, archivePath)
-    } catch { /* best effort */ }
-  }
-
-  function hookDoneOnce(zone: ZoneGraphNode): void {
-    const safe = sanitize(zone.data.label)
-    onSessionDone(zone.id, () => {
-      // ARCHITECT_COMPLETE was seen on the rendered screen. This is
-      // secondary to the receipt file. If the receipt already landed, the
-      // timers are cleared and status is done — nothing to do. If it hasn't
-      // landed within a short grace window, flag malformed-completion so the
-      // Architect can fall back to reading outputs/<safe>.md.
-      setTimeout(() => {
-        const fresh = readStatus(projectDir, safe)
-        if (!fresh) return
-        if (fresh.state === 'done' || fresh.state === 'blocked' || fresh.state === 'failed') return
-        markBlocked(projectDir, safe, {
-          kind: 'malformed-completion',
-          message: 'ARCHITECT_COMPLETE observed without a matching receipt.json',
-          since: new Date().toISOString(),
-        })
-      }, 2_000)
-    })
-  }
-  for (const zone of zones) hookDoneOnce(zone)
-
-  async function deliverTask(safe: string): Promise<void> {
-    if (inFlight.has(safe)) return
-    const filePath = join(tasksDir, `${safe}.md`)
-    let content: string
-    try { content = fs.readFileSync(filePath, 'utf-8') } catch { return }
-    if (!content.trim()) return
-    const hash = createHash('sha1').update(content).digest('hex')
-
-    const prev = readStatus(projectDir, safe)
-    // Same task already delivered AND still in flight → skip. If the zone
-    // finished the task and the Architect overwrites with new content, hash
-    // differs; if same hash but we're idle / done / blocked, we redeliver.
-    if (prev?.lastTaskHash === hash && (prev.state === 'running' || prev.state === 'ack')) return
-
-    const zone = zoneBySafe.get(safe)
-    if (!zone) return
-    const session = sessions.get(zone.id)
-    if (!session) {
-      console.warn(`[coordinator] no live PTY for zone ${safe}; cannot deliver task`)
-      return
-    }
-    if (session.lifecycle === 'failed') {
-      console.warn(`[coordinator] zone ${safe} in failed state; skipping`)
-      markFailed(projectDir, safe, {
-        kind: 'pty-exit',
-        message: session.lastError?.message ?? 'PTY is in failed state',
-        since: new Date().toISOString(),
-      })
-      return
-    }
-
-    inFlight.add(safe)
-    try {
-      try {
-        await awaitReady(zone.id, AWAIT_READY_SOFT_MS)
-      } catch (err) {
-        // Soft gate — log and proceed anyway. Either the ready cue missed
-        // under xterm emulation (false negative) or the CLI is genuinely
-        // unhealthy; the ack timer will catch the latter.
-        console.warn(`[coordinator] ${safe} not visibly ready, poking anyway: ${String(err)}`)
-      }
-
-      // Re-arm completion hook (observe splices doneCallbacks when the
-      // sentinel fires).
-      hookDoneOnce(zone)
-
-      const taskId = generateTaskId()
-      const round = (prev?.round ?? 0) + 1
-      setCurrentTaskId(zone.id, taskId)
-      clearRoundTimers(safe)
-      markRunning(projectDir, safe, hash, taskId)
-
-      const body = buildPokeBody({ safe, taskId, round })
-      const ok = sendPrompt(zone.id, body)
-      if (!ok) {
-        console.error(`[coordinator] sendPrompt failed for ${safe}`)
-        markFailed(projectDir, safe, {
-          kind: 'pty-exit',
-          message: 'sendPrompt failed; PTY may be dead',
-          since: new Date().toISOString(),
-        })
-        return
-      }
-
-      // Ack watcher. The observe() path resolves `awaitAck(taskId)` when the
-      // zone echoes ARCHITECT_TASK_ACK. On success, flip status → 'ack'. On
-      // timeout, set blocker.
-      void awaitAck(zone.id, taskId, ACK_TIMEOUT_MS).then(
-        () => { markAck(projectDir, safe) },
-        () => {
-          const status = readStatus(projectDir, safe)
-          if (!status || status.taskId !== taskId) return
-          if (status.state === 'done' || status.state === 'blocked' || status.state === 'failed') return
-          markBlocked(projectDir, safe, {
-            kind: 'delivery-failed',
-            message: `Zone did not ack within ${ACK_TIMEOUT_MS / 1000}s`,
-            since: new Date().toISOString(),
-          })
-        },
+      // Liveness is the MAX of three signals:
+      //   (a) outputs/<safe>.md mtime — if agent is writing progress notes
+      //   (b) PTY lastActivityMs     — if CLI is streaming ANY bytes (tool
+      //       output, reasoning traces, UI redraws). This catches long Edit
+      //       or Bash calls where the agent is clearly alive but not
+      //       appending to the scratchpad.
+      //   (c) tracker.startedAt      — floor that prevents stale pre-task
+      //       mtime from tripping an immediate false positive at task start.
+      // We fire heartbeat-missed only when ALL three have been quiet long
+      // enough, i.e. the zone is genuinely silent on every observable
+      // channel.
+      const sessionId = sessionIdForParticipant(tracker.zone)
+      const session = sessionId ? sessions.get(sessionId) : undefined
+      const ptyActivity = session?.lastActivityMs ?? 0
+      const activityFloor = Math.max(
+        mtime ?? 0,
+        ptyActivity,
+        tracker.startedAt,
       )
-
-      const timeoutMs = Math.max(
-        60_000,
-        zone.data?.behavior?.timeoutMs || DEFAULT_TASK_TIMEOUT_MS,
+      const age = now - activityFloor
+      if (age < IDLE_THRESHOLD_MS) continue
+      injectHarnessMessage(
+        MAILBOX_OVERSEER_ID,
+        'harness.heartbeat-missed',
+        `Zone ${tracker.zone} has produced no output (no outputs/${tracker.zone}.md write, no PTY activity) in ${Math.round(age / 1000)}s while task ${msgId} is in flight.`,
+        { taskId: msgId },
       )
-      const taskT = setTimeout(() => {
-        taskTimers.delete(safe)
-        const status = readStatus(projectDir, safe)
-        if (!status || status.taskId !== taskId) return
-        if (status.state === 'done' || status.state === 'blocked' || status.state === 'failed') return
-        markBlocked(projectDir, safe, {
-          kind: 'task-timeout',
-          message: `Task exceeded ${Math.round(timeoutMs / 1000)}s without a receipt`,
-          since: new Date().toISOString(),
-        })
-      }, timeoutMs)
-      taskTimers.set(safe, taskT)
-    } finally {
-      inFlight.delete(safe)
+      heartbeatEmittedFor.add(msgId)
+    }
+    refreshIndex()
+  }
+
+  const heartbeatTimer = setInterval(checkHeartbeats, HEARTBEAT_POLL_MS)
+
+  function computeParticipantState(participantId: string): { state: ParticipantLifecycle; exitCode?: number } {
+    const sessionId = sessionIdForParticipant(participantId)
+    if (!sessionId) return { state: 'unknown' }
+    const session = sessions.get(sessionId)
+    if (!session) return { state: 'exited' }
+    if (session.lifecycle === 'failed') return { state: 'exited' }
+    if (session.lifecycle === 'spawning') return { state: 'starting' }
+    const hasInFlight = Array.from(taskTrackers.values()).some(t => t.zone === participantId)
+    if (hasInFlight) return { state: 'running' }
+    const idleMs = Date.now() - session.lastActivityMs
+    if (idleMs > IDLE_THRESHOLD_MS) return { state: 'unknown' }
+    return { state: 'idle' }
+  }
+
+  function refreshIndex(): void {
+    try {
+      const participants: Record<string, ParticipantIndexEntry> = {}
+      for (const pid of listParticipantIds(projectDir)) {
+        if (pid.startsWith('.')) continue
+        const manifest = readParticipantManifest(projectDir, pid)
+        const role = manifest?.role ?? (pid === MAILBOX_OVERSEER_ID ? 'overseer' : 'zone')
+        const label = manifest?.label ?? pid
+        const inbox = readInbox(projectDir, pid)
+        const outbox = readOutbox(projectDir, pid)
+        const pendingCount = inbox.filter(m => m.status === 'pending').length
+        const pendingTaskIds = Array.from(taskTrackers.entries())
+          .filter(([, t]) => t.zone === pid)
+          .map(([msgId]) => msgId)
+        const { state, exitCode } = computeParticipantState(pid)
+        const session = (() => {
+          const sid = sessionIdForParticipant(pid)
+          return sid ? sessions.get(sid) : undefined
+        })()
+        participants[pid] = {
+          role,
+          label,
+          state,
+          lastActivityMs: session?.lastActivityMs ?? 0,
+          exitCode,
+          pendingTaskIds,
+          inboxPending: pendingCount,
+          outboxCount: outbox.length,
+          tail: session?.tail ?? '',
+        }
+      }
+      const index: MailboxIndex = {
+        dispatchId,
+        protocolVersion: MAILBOX_PROTOCOL_VERSION,
+        updatedAt: new Date().toISOString(),
+        participants,
+      }
+      writeIndex(projectDir, index)
+    } catch (err) {
+      console.error('[mailbox-observer] refreshIndex failed', err)
     }
   }
 
-  tasksWatcher = fs.watch(tasksDir, (_event, filename) => {
-    if (!filename?.endsWith('.md')) return
-    const safe = filename.slice(0, -3)
-    if (!zoneBySafe.has(safe)) return
-    const existing = debounceTimers.get(safe)
-    if (existing) clearTimeout(existing)
-    debounceTimers.set(safe, setTimeout(() => {
-      debounceTimers.delete(safe)
-      void deliverTask(safe)
-    }, 500))
-  })
+  function hookPtyExit(participantId: string, sessionId: string): void {
+    const session = sessions.get(sessionId)
+    if (!session) return
+    const handle = session.pty.onExit(({ exitCode }) => {
+      // Inject once. Subsequent invocations of this same dispatch wouldn't
+      // create a new handle since the session is gone — we hook pre-exit.
+      injectHarnessMessage(
+        MAILBOX_OVERSEER_ID,
+        'harness.pty-exit',
+        `Participant ${participantId} PTY exited with code ${exitCode ?? 0}. No more messages will arrive from this participant in this dispatch. Its mailbox dir is kept as a tombstone.`,
+      )
+      refreshIndex()
+    })
+    ptyUnsubs.push(() => { try { handle.dispose() } catch {} })
+  }
 
-  // Outputs watcher: receipts (`<safe>.receipt.json`) flip completion, and
-  // markdown (`<safe>.md`) writes advance lastActivityAt.
-  receiptWatcher = fs.watch(outputsDir, (_event, filename) => {
-    if (!filename) return
-    const name = String(filename)
-    if (name.endsWith('.receipt.json')) {
-      const safe = name.slice(0, -'.receipt.json'.length)
-      if (zoneBySafe.has(safe)) ingestReceipt(safe)
-    } else if (name.endsWith('.md')) {
-      const safe = name.slice(0, -3)
-      if (zoneBySafe.has(safe)) {
-        try {
-          const stat = fs.statSync(join(outputsDir, name))
-          markActivity(projectDir, safe, stat.mtime.toISOString())
-        } catch { /* file may have been removed */ }
-      }
-    }
-  })
+  // Wire every participant's watchers + PTY-exit hooks.
+  for (const safe of zoneBySafe.keys()) {
+    watchDir(inboxDir(projectDir, safe), name => onZoneInboxWrite(safe, name))
+    watchDir(outboxDir(projectDir, safe), name => onZoneOutboxWrite(safe, name))
+    const zone = zoneBySafe.get(safe)
+    if (zone) hookPtyExit(safe, zone.id)
+  }
+  watchDir(inboxDir(projectDir, MAILBOX_OVERSEER_ID), name => onOverseerInboxWrite(name))
+  watchDir(outboxDir(projectDir, MAILBOX_OVERSEER_ID), name => onOverseerOutboxWrite(name))
+  hookPtyExit(MAILBOX_OVERSEER_ID, ARCHITECT_SESSION_ID)
 
-  // Initial-write catch: fs.watch on macOS can miss the very first write to
-  // a freshly-created file. One short sweep catches any tasks written before
-  // the watcher was armed.
-  setTimeout(() => {
-    try {
-      for (const name of fs.readdirSync(tasksDir)) {
-        if (!name.endsWith('.md')) continue
-        const safe = name.slice(0, -3)
-        if (zoneBySafe.has(safe)) void deliverTask(safe)
-      }
-    } catch {}
-  }, 200)
+  // Initial index emission so the renderer has a snapshot to render even
+  // before any activity.
+  refreshIndex()
 
   const coord = {
     stop: () => {
-      for (const timer of debounceTimers.values()) clearTimeout(timer)
-      debounceTimers.clear()
-      for (const timer of ackTimers.values()) clearTimeout(timer)
-      ackTimers.clear()
-      for (const timer of taskTimers.values()) clearTimeout(timer)
-      taskTimers.clear()
+      for (const t of taskTrackers.values()) {
+        clearTimeout(t.deliveryTimer)
+        clearTimeout(t.timeoutTimer)
+      }
+      taskTrackers.clear()
+      for (const t of cancelTimers.values()) clearTimeout(t)
+      cancelTimers.clear()
       clearInterval(heartbeatTimer)
-      try { tasksWatcher?.close() } catch {}
-      try { receiptWatcher?.close() } catch {}
-      tasksWatcher = null
-      receiptWatcher = null
+      for (const w of watchers) {
+        try { w.close() } catch {}
+      }
+      for (const unsub of ptyUnsubs) {
+        try { unsub() } catch {}
+      }
+      watchers.length = 0
+      ptyUnsubs.length = 0
       if (activeDispatchCoordinator === coord) activeDispatchCoordinator = null
-      // activeWatcher is a legacy slot the assistant watcher also uses; leave
-      // it alone so other watchers aren't accidentally closed here.
     },
   }
   activeDispatchCoordinator = coord
   return coord
 }
 
-function buildPokeBody(opts: { safe: string; taskId: string; round: number }): string {
-  const { safe, taskId, round } = opts
-  return [
-    `New task from the Architect — round ${round}, task_id ${taskId}.`,
-    ``,
-    `Follow these steps in order:`,
-    `1. First, before anything else: echo ARCHITECT_TASK_ACK ${taskId}`,
-    `2. Read ARCHITECT/tasks/${safe}.md and execute it.`,
-    `3. Throughout, append brief progress notes to ARCHITECT/outputs/${safe}.md.`,
-    `4. When finished (success or blocked), write ARCHITECT/outputs/${safe}.receipt.json with:`,
-    `   {"task_id":"${taskId}","result":"success"|"blocked"|"failed","summary":"<one-line>","durationMs":<number>}`,
-    `5. Finally, echo ARCHITECT_COMPLETE ${taskId}`,
-  ].join('\n')
+// Body for the one-shot bootstrap poke. v4 uses this once per session, at
+// first-ready, to tell the agent to read its prompt file and enter its loop.
+// Per-task delivery goes through the mailbox, never the PTY.
+function buildBootstrapBody(role: 'overseer' | 'zone', participantId: string, projectDir: string): string {
+  const promptFile = role === 'overseer'
+    ? join(projectDir, 'ARCHITECT', 'prompts', 'architect.md')
+    : join(projectDir, 'ARCHITECT', 'prompts', `${participantId}.md`)
+  if (role === 'overseer') {
+    return `Read ${promptFile} and follow its instructions. Begin your drain-and-plan loop now.`
+  }
+  return `Read ${promptFile} and follow its instructions. Your participant ID is "${participantId}". Begin your listen-and-respond loop now by running bash ARCHITECT/scripts/mailbox-listen.sh ${participantId}.`
 }
 
 export interface RunGraphDispatch {
@@ -2077,6 +2033,18 @@ export interface RunGraphDispatch {
   model?: string
   planMode?: boolean
   onlyZoneIds?: string[]
+}
+
+// Harness-owned env vars every agent needs to talk to the mailbox. Shell scripts
+// read these; node-pty merges them into the spawned CLI's environment.
+function mailboxEnv(projectDir: string, participantId: string, label: string, dispatchId: string): Record<string, string> {
+  return {
+    MBX_ROOT: mailboxRoot(projectDir),
+    MBX_SELF: participantId,
+    MBX_SELF_LABEL: label,
+    MBX_DISPATCH_ID: dispatchId,
+    MBX_SCRIPTS: scriptsDir(projectDir),
+  }
 }
 
 export async function runGraph(
@@ -2104,14 +2072,22 @@ export async function runGraph(
   const selectedZoneIds = new Set(selectedZones.map(z => z.id))
   const filteredNodes = nodes.filter(n => n.type !== 'zone' || selectedZoneIds.has(n.id))
 
+  // Fresh dispatch: wipe the prior mailbox tree before rebuilding. Leaving
+  // stale messages in inboxes/outboxes would confuse the new Overseer (it'd
+  // drain old harness events + results from a previous run). Resume takes a
+  // different path (see `resumeDispatch`) and preserves the mailbox so
+  // pending-at-suspension messages survive.
+  wipeMailboxTree(projectDir)
   setupWorkspace(projectDir, filteredNodes, edges, settings, dispatchContext, userPrompt)
 
   const zoneEdges = edges.filter(e => selectedZoneIds.has(e.source) && selectedZoneIds.has(e.target))
   const sorted = topoSort(selectedZones, zoneEdges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
 
-  // Single-zone path: skip the Architect coordinator entirely. Always fresh —
-  // explicit resume goes through runZone / the zone launcher modal.
+  // Single-zone path: no Overseer, no mailbox orchestration. The lone zone
+  // runs as a regular interactive session with the user's prompt delivered
+  // via the CLI's positional-arg path. (Mailbox scaffold is still written by
+  // setupWorkspace but nothing watches it.)
   if (sorted.length === 1) {
     const zone = sorted[0]
     const runtime = getZoneRuntime(zone, settings)
@@ -2120,8 +2096,15 @@ export async function runGraph(
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
-    const baseSystemPrompt = fs.readFileSync(join(promptsDir, `${sanitize(zone.data.label)}.md`), 'utf-8')
+    // Rebuild in 'solo' mode — the dispatch version written to disk by
+    // setupWorkspace teaches the mailbox loop, which would mis-instruct a
+    // solo-launched zone (no Overseer, no MBX_* env vars).
     const { zones: canvasZones, componentsByZone: canvasComps } = indexGraph(nodes)
+    const soloIntraEdges = edges.filter(e =>
+      !canvasZones.some(z => z.id === e.source) && !canvasZones.some(z => z.id === e.target))
+    const baseSystemPrompt = buildZoneSystemPrompt(
+      zone, canvasComps, zoneEdges, soloIntraEdges, canvasZones, projectDir, 'solo',
+    )
     const contextBlock = buildArchitectureContextBlock(canvasZones, canvasComps, edges, zone.id)
     const systemPrompt = baseSystemPrompt + contextBlock
 
@@ -2148,8 +2131,13 @@ export async function runGraph(
     return [{ id: zone.id, label: zone.data.label, runtime }]
   }
 
+  // Generate a fresh dispatchId for this run. Stamped on every mailbox
+  // message's metadata; persisted on the DispatchRecord so resume passes
+  // the same id back to the resumed agents.
+  const dispatchId = randomBytes(8).toString('hex')
+
   const allInfo: TerminalInfo[] = [
-    { id: 'architect-agent', label: 'Architect', runtime: settings.defaultRuntime },
+    { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: settings.defaultRuntime },
     ...sorted.map(zone => ({ id: zone.id, label: zone.data.label, runtime: getZoneRuntime(zone, settings) })),
   ]
 
@@ -2158,19 +2146,23 @@ export async function runGraph(
   let architectSessionId: string | null = null
   const pendingZoneUpserts: Array<() => void> = []
 
-  // Pre-spawn every zone up front. Each zone's CLI boots with its system
-  // prompt, sits idle at its prompt, and waits for the coordinator to deliver
-  // a task-file poke. Dependency ordering lives in the Architect's prompt —
-  // not in spawn order.
+  // Pre-spawn every zone. Each zone CLI boots with:
+  //   - appendSystemPrompt  = zone.md (listen-loop semantics baked in)
+  //   - initialPrompt       = "Begin: run mailbox-listen.sh <safe>" (bootstrap)
+  //   - env vars MBX_*      = mailbox script wiring
+  // Dependency ordering lives in the Overseer's prompt, not spawn order.
   for (const zone of sorted) {
     const safe = sanitize(zone.data.label)
-    const env: Record<string, string> = {}
+    const env: Record<string, string> = {
+      ...mailboxEnv(projectDir, safe, zone.data.label, dispatchId),
+    }
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
     const runtime = getZoneRuntime(zone, settings)
     const model = getZoneModel(zone, runtime)
     const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
+    const bootstrap = buildBootstrapBody('zone', safe, projectDir)
 
     spawnAgentSession({
       win,
@@ -2179,7 +2171,7 @@ export async function runGraph(
       runtime,
       env,
       cwd: projectDir,
-      // No initialPrompt: the zone sits idle until the coordinator pokes it.
+      initialPrompt: bootstrap,
       appendSystemPrompt: systemPrompt,
       model,
       capture: {
@@ -2214,22 +2206,23 @@ export async function runGraph(
     })
   }
 
-  startDispatchCoordinator(projectDir, sorted)
+  startMailboxObserver(projectDir, sorted, dispatchId)
 
   const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
+  const architectEnv: Record<string, string> = mailboxEnv(projectDir, MAILBOX_OVERSEER_ID, 'Architect', dispatchId)
   spawnAgentSession({
     win,
-    id: 'architect-agent',
+    id: ARCHITECT_SESSION_ID,
     label: 'Architect',
     runtime: settings.defaultRuntime,
-    env: {},
+    env: architectEnv,
     cwd: projectDir,
     initialPrompt: architectPrompt,
     model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
     planMode: dispatch.planMode === true,
     capture: {
       projectDir,
-      zoneKey: 'architect-agent',
+      zoneKey: ARCHITECT_SESSION_ID,
       legacyKey: 'Architect',
       summary: dispatchSummary,
     },
@@ -2238,6 +2231,7 @@ export async function runGraph(
       const record: DispatchRecord = {
         architectSessionId: sessionId,
         architectRuntime: settings.defaultRuntime,
+        dispatchId,
         zoneIds: sorted.map(z => z.id),
         zoneLabels: sorted.map(z => z.data.label),
         zoneSessions: [],
@@ -2250,7 +2244,6 @@ export async function runGraph(
       try { saveDispatch(projectDir, record) } catch (err) {
         console.error('[dispatch-capture] failed to save', err)
       }
-      // Flush any zone captures that landed before Architect's id was known.
       for (const fn of pendingZoneUpserts.splice(0)) fn()
     },
   })
@@ -2364,14 +2357,17 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
 
   const safe = sanitize(zone.data.label)
   const base = join(opts.projectDir, 'ARCHITECT')
-  for (const dir of ['tasks', 'outputs', 'prompts', 'status', 'sessions', 'dispatches'].map(n => join(base, n))) {
+  for (const dir of ['outputs', 'prompts', 'sessions', 'dispatches'].map(n => join(base, n))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 
   const zoneIdSet = new Set(zones.map(z => z.id))
   const zoneEdges = opts.edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
   const intraEdges = opts.edges.filter(e => !zoneIdSet.has(e.source) && !zoneIdSet.has(e.target))
-  const systemPrompt = buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones)
+  // Solo launch — no Overseer, no mailbox observer, no MBX_* env vars. The
+  // prompt must not reference mailbox scripts or the agent will try to run
+  // mailbox-listen.sh and fail.
+  const systemPrompt = buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones, opts.projectDir, 'solo')
   fs.writeFileSync(join(base, 'prompts', `${safe}.md`), systemPrompt)
 
   const runtime = getZoneRuntime(zone, settings)
@@ -2500,12 +2496,17 @@ export async function resumeDispatch(
   const record = getDispatch(opts.projectDir, opts.dispatchId)
   if (!record) return { ok: false, error: 'not-found' }
 
-  // Legacy protocol gate: old dispatches were coordinated via .done markers
-  // and a different Architect prompt. They can't be resumed under the v2
-  // protocol without breaking the resumed Architect's conversation.
+  // Clean-cut v3 → v4 gate. v3 dispatches used tasks/ files + status.json;
+  // their conversation history tells the agents to echo ARCHITECT_TASK_ACK
+  // and write receipts. Resuming them under v4 would put the agents and
+  // the harness into different protocols. Reject.
   if ((record.protocolVersion ?? 0) < DISPATCH_PROTOCOL_VERSION) {
     return { ok: false, error: 'legacy-protocol' }
   }
+
+  // Use the pinned dispatchId if present; otherwise mint one. Pre-v4 records
+  // won't have it; that path is already blocked above, but defense in depth.
+  const dispatchId = record.dispatchId ?? randomBytes(8).toString('hex')
 
   const { zones: allZones } = indexGraph(opts.nodes)
   const zoneById = new Map(allZones.map(z => [z.id, z]))
@@ -2515,16 +2516,26 @@ export async function resumeDispatch(
 
   const zoneIds = new Set(dispatchZones.map(z => z.id))
   const filteredNodes = opts.nodes.filter(n => n.type !== 'zone' || zoneIds.has(n.id))
+  // Resume wipes the mailbox too. The resume picker lets the user pick ANY
+  // historical dispatch, not just the most recent, so whatever's currently
+  // in ARCHITECT/mailbox/ is almost certainly from a later run (or was
+  // wiped by one) — keeping it would only confuse the resumed Overseer with
+  // stale messages from an unrelated dispatch. Agents coming back via
+  // resumeSessionId reload their full conversation from the CLI's own
+  // session store; the mailbox was only ever the transport, not durable
+  // state, so wiping costs nothing.
+  wipeMailboxTree(opts.projectDir)
   setupWorkspace(opts.projectDir, filteredNodes, opts.edges, settings)
 
   const info: TerminalInfo[] = [
-    { id: 'architect-agent', label: 'Architect', runtime: record.architectRuntime },
+    { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: record.architectRuntime },
   ]
 
   // Resume each zone with the session pinned in the dispatch record. No
-  // initialPrompt / resumeUserPrompt — the zone comes back idle at its
-  // prompt. The coordinator pokes it via pty.write on the next task-file
-  // update from the Architect.
+  // initialPrompt / resumeUserPrompt — per memory/feedback_resume_user_prompt.md
+  // the user wants to drive the first turn on resume. The resumed conversation
+  // already has the listen-loop context baked in from the original dispatch's
+  // system prompt.
   for (const zone of dispatchZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const runtime = entry?.runtime ?? getZoneRuntime(zone, settings)
@@ -2535,7 +2546,10 @@ export async function resumeDispatch(
       continue
     }
 
-    const env: Record<string, string> = {}
+    const safe = sanitize(zone.data.label)
+    const env: Record<string, string> = {
+      ...mailboxEnv(opts.projectDir, safe, zone.data.label, dispatchId),
+    }
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
@@ -2552,18 +2566,14 @@ export async function resumeDispatch(
     })
   }
 
-  startDispatchCoordinator(opts.projectDir, dispatchZones)
+  startMailboxObserver(opts.projectDir, dispatchZones, dispatchId)
 
-  // No resumeUserPrompt — the Architect comes back idle at its prompt, ready
-  // for the user's next message. Launch/supervise rules are already in the
-  // Architect's conversation history from the original dispatch's system
-  // prompt (buildArchitectPrompt), which resumed sessions preserve.
   spawnAgentSession({
     win,
-    id: 'architect-agent',
+    id: ARCHITECT_SESSION_ID,
     label: 'Architect',
     runtime: record.architectRuntime,
-    env: {},
+    env: mailboxEnv(opts.projectDir, MAILBOX_OVERSEER_ID, 'Architect', dispatchId),
     cwd: opts.projectDir,
     model: record.model || DEFAULT_MODEL_BY_RUNTIME[record.architectRuntime],
     resumeSessionId: record.architectSessionId,
