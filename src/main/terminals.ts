@@ -411,28 +411,32 @@ function buildRuntimeArgs(
       else if (skipPermissions) args.push('--dangerously-skip-permissions')
       if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
+      // --append-system-prompt is ignored on resume (history already carries
+      // the original system prompt), so only pass it on fresh spawns.
       if (appendSystemPrompt && !resumeSessionId) args.push('--append-system-prompt', appendSystemPrompt)
-      // On resume, history already contains the prompt — don't replay it.
-      if (prompt && !resumeSessionId) args.push(prompt)
+      // claude accepts `claude --resume <id> <prompt>` — the prompt is sent
+      // as the first user message of the resumed conversation. Callers
+      // that want an idle resume simply omit `prompt`.
+      if (prompt) args.push(prompt)
       return args
     }
     case 'codex': {
       // `codex resume <UUID>` is a subcommand, not a flag. The standard
       // operating flags (--no-alt-screen, -a, -s, -m) are also accepted
-      // under `resume`, so we keep them for both modes. On resume the prior
-      // conversation is replayed, so don't push the prompt as a positional.
+      // under `resume`. codex also accepts a positional prompt after
+      // `resume <id>` and auto-submits it as the first user turn.
       const args: string[] = []
       if (resumeSessionId) args.push('resume', resumeSessionId)
       args.push('--no-alt-screen', '-a', 'never', '-s', 'workspace-write')
       if (model) args.push('--model', model)
-      if (prompt && !resumeSessionId) args.push(prompt)
+      if (prompt) args.push(prompt)
       return args
     }
     case 'gemini': {
       const args: string[] = ['--approval-mode', 'yolo']
       if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
-      if (prompt && !resumeSessionId) args.push('--prompt-interactive', prompt)
+      if (prompt) args.push('--prompt-interactive', prompt)
       return args
     }
     case 'opencode': {
@@ -445,7 +449,7 @@ function buildRuntimeArgs(
       // most-recently-spawned opencode instance). Use the explicit flag.
       const args: string[] = []
       if (resumeSessionId) args.push('--session', resumeSessionId)
-      if (prompt && !resumeSessionId) args.push('--prompt', prompt)
+      if (prompt) args.push('--prompt', prompt)
       if (model) args.push('--model', model)
       return args
     }
@@ -2344,11 +2348,13 @@ export async function resumeDispatch(
     { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: record.architectRuntime },
   ]
 
-  // Resume each zone with the session pinned in the dispatch record. No
-  // initialPrompt — per memory/feedback_resume_user_prompt.md the user wants
-  // to drive the first turn on resume. The resumed conversation already has
-  // the listen-loop context baked in from the original dispatch's system
-  // prompt.
+  // Resume each zone with the session pinned in the dispatch record. Zones
+  // are workers in mailbox mode — they should not wait for the user on
+  // resume. Pass the same bootstrap body used on fresh spawns as the
+  // resumed conversation's first user turn (delivered via the CLI's own
+  // prompt argv; see buildRuntimeArgs), so they re-enter their listen
+  // loop automatically. The Overseer still comes back idle (see the spawn
+  // below) per memory/feedback_resume_user_prompt.md.
   for (const zone of dispatchZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const runtime = entry?.runtime ?? getZoneRuntime(zone, settings)
@@ -2376,6 +2382,7 @@ export async function resumeDispatch(
       cwd: opts.projectDir,
       model: getZoneModel(zone, runtime),
       resumeSessionId: entry.sessionId,
+      initialPrompt: buildBootstrapBody('zone', safe, opts.projectDir),
     })
   }
 
