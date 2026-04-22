@@ -11,6 +11,7 @@ interface TerminalInfo {
   id: string
   label: string
   runtime: AgentRuntime | 'shell'
+  mailboxMode?: boolean
 }
 
 interface ElectronAPI {

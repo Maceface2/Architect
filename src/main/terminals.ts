@@ -221,6 +221,11 @@ export interface TerminalInfo {
   id: string
   label: string
   runtime: AgentRuntime | 'shell'
+  // True when this terminal is a mailbox-mode worker (zone in a multi-zone
+  // dispatch or resume). The renderer uses it to lock user input by default
+  // so accidental typing doesn't break the zone's listen loop. Never set on
+  // the Overseer, solo-zone launches, assistant, or shell sessions.
+  mailboxMode?: boolean
 }
 
 // Position + dimensions come straight from React Flow nodes.
@@ -365,6 +370,9 @@ interface SpawnAgentOptions {
   // Callers use this to serialize spawn ordering: wait for one zone's
   // session file to land on disk before snapshotting the next zone.
   onCaptureSettled?: (sessionId: string | null) => void
+  // See TerminalInfo.mailboxMode. Set true for zones spawned inside a
+  // multi-zone dispatch/resume; omitted everywhere else.
+  mailboxMode?: boolean
 }
 
 const sessions = new Map<string, Session>()
@@ -602,6 +610,7 @@ function spawnAgentSession({
   appendSystemPrompt,
   onSessionCaptured,
   onCaptureSettled,
+  mailboxMode,
 }: SpawnAgentOptions): TerminalInfo {
   // Reset any capture state from a prior spawn at this id (e.g. resume replacing
   // a fresh session). captureRuntime below will re-mark 'pending' if needed.
@@ -751,7 +760,7 @@ function spawnAgentSession({
     }
   }
 
-  return { id, label, runtime }
+  return { id, label, runtime, ...(mailboxMode ? { mailboxMode: true } : {}) }
 }
 
 export function spawnShellSession(win: BrowserWindow, cwd: string): TerminalInfo {
@@ -1908,7 +1917,7 @@ export async function startDispatch(
 
   const allInfo: TerminalInfo[] = [
     { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: settings.defaultRuntime },
-    ...sorted.map(zone => ({ id: zone.id, label: zone.data.label, runtime: getZoneRuntime(zone, settings) })),
+    ...sorted.map(zone => ({ id: zone.id, label: zone.data.label, runtime: getZoneRuntime(zone, settings), mailboxMode: true })),
   ]
 
   // Architect session id is captured first; zones that race ahead queue their
@@ -1954,6 +1963,7 @@ export async function startDispatch(
         initialPrompt: bootstrap,
         appendSystemPrompt: systemPrompt,
         model,
+        mailboxMode: true,
         capture: {
           projectDir,
           zoneKey: zone.id,
@@ -2358,7 +2368,7 @@ export async function resumeDispatch(
   for (const zone of dispatchZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const runtime = entry?.runtime ?? getZoneRuntime(zone, settings)
-    info.push({ id: zone.id, label: zone.data.label, runtime })
+    info.push({ id: zone.id, label: zone.data.label, runtime, mailboxMode: true })
 
     if (!entry) {
       console.warn(`[resume-dispatch] no session id stored for zone ${zone.data.label}, skipping`)
@@ -2383,6 +2393,7 @@ export async function resumeDispatch(
       model: getZoneModel(zone, runtime),
       resumeSessionId: entry.sessionId,
       initialPrompt: buildBootstrapBody('zone', safe, opts.projectDir),
+      mailboxMode: true,
     })
   }
 

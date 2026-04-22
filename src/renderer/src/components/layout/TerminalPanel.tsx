@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { ExternalLink, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Lock, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -21,6 +21,7 @@ interface TerminalInfo {
   id: string
   label: string
   runtime: AgentRuntime | 'shell'
+  mailboxMode?: boolean
 }
 
 interface Props {
@@ -57,8 +58,23 @@ const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['cl
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 
+// Lock state shared with the stable `term.onData` closure (attached once per
+// terminal, below). TermTab writes into this on every render; the closure
+// reads it synchronously to decide whether to forward keystrokes to the PTY.
+// When `true`, user input (typing, paste, control bytes) is swallowed.
+const termLockState = new Map<string, boolean>()
+
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
+  const [manualOverride, setManualOverride] = useState(false)
+  const isMailbox = !!info.mailboxMode
+  const locked = isMailbox && !manualOverride
+
+  // Sync the lock bit into the module-level map so the stable `term.onData`
+  // closure (attached once, below) can early-return without re-subscribing.
+  useEffect(() => {
+    termLockState.set(info.id, locked)
+  }, [info.id, locked])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -80,6 +96,9 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       termInstances.set(info.id, instance)
 
       term.onData(data => {
+        // Mailbox-mode zones are agent-driven; swallow keystrokes/paste/
+        // control bytes unless the user has taken manual control.
+        if (termLockState.get(info.id) === true) return
         window.electron.terminal.input(info.id, data)
       })
     }
@@ -128,10 +147,43 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
 
   return (
     <div
-      ref={containerRef}
-      className="w-full h-full"
+      className="w-full h-full flex flex-col"
       style={{ visibility: active ? 'visible' : 'hidden' }}
-    />
+    >
+      {isMailbox && (locked ? (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
+          <span className="text-[11px] text-slate-400 flex items-center gap-2">
+            <Lock size={11} /> Mailbox-controlled — user input disabled
+          </span>
+          <button
+            onClick={() => setManualOverride(true)}
+            className="px-2 py-0.5 text-[10px] font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40 transition-colors"
+          >
+            Take manual control
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/15 border-b border-red-500/40 flex-shrink-0">
+          <span className="text-[11px] text-red-300 flex items-center gap-2">
+            <AlertTriangle size={11} /> Manual override active — typing here may break the zone's listen loop
+          </span>
+          <button
+            onClick={() => setManualOverride(false)}
+            className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-700/60 text-slate-200 hover:bg-slate-700/80 border border-white/20 transition-colors"
+          >
+            Re-lock
+          </button>
+        </div>
+      ))}
+      <div className="flex-1 min-h-0 relative">
+        <div ref={containerRef} className="w-full h-full" />
+        {locked && (
+          <div className="absolute inset-0 bg-[#58A6FF]/10 flex items-center justify-center pointer-events-none">
+            <Lock size={112} strokeWidth={1.25} className="text-[#58A6FF]/40" />
+          </div>
+        )}
+      </div>
+    </div>
   )
 }
 
@@ -286,6 +338,9 @@ function PaneView({
                         isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
                       } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
                     />
+                  )}
+                  {s.mailboxMode && !isShell && !isArchitect && (
+                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Mailbox-controlled" />
                   )}
                   <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
                     {isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}
