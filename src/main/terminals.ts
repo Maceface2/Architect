@@ -359,6 +359,12 @@ interface SpawnAgentOptions {
   appendSystemPrompt?: string
   // Optional callback fired once a session ID is captured.
   onSessionCaptured?: (sessionId: string) => void
+  // Optional callback fired exactly once when capture polling has settled —
+  // on success, on timeout, or immediately for spawns that don't capture
+  // (resumes, non-capturing runtimes). Passes the captured id or null.
+  // Callers use this to serialize spawn ordering: wait for one zone's
+  // session file to land on disk before snapshotting the next zone.
+  onCaptureSettled?: (sessionId: string | null) => void
 }
 
 const sessions = new Map<string, Session>()
@@ -430,11 +436,15 @@ function buildRuntimeArgs(
       return args
     }
     case 'opencode': {
-      // Per upstream docs / issue #11680, the documented session-resume
-      // syntax pairs `--continue --session <id>`. `--session` alone is
-      // unreliable in TUI mode in current versions.
+      // `--continue` alone means "continue THE LAST session" (boolean, no id).
+      // `--session <id>` is the explicit form — "continue THIS session".
+      // Passing both is contradictory; opencode's order-/version-dependent
+      // resolution in that case would often pick "last" and ignore the id,
+      // silently loading the wrong conversation (e.g. every resumed zone
+      // ended up on the Architect's session because Architect was the
+      // most-recently-spawned opencode instance). Use the explicit flag.
       const args: string[] = []
-      if (resumeSessionId) args.push('--continue', '--session', resumeSessionId)
+      if (resumeSessionId) args.push('--session', resumeSessionId)
       if (prompt && !resumeSessionId) args.push('--prompt', prompt)
       if (model) args.push('--model', model)
       return args
@@ -587,6 +597,7 @@ function spawnAgentSession({
   planMode = false,
   appendSystemPrompt,
   onSessionCaptured,
+  onCaptureSettled,
 }: SpawnAgentOptions): TerminalInfo {
   // Reset any capture state from a prior spawn at this id (e.g. resume replacing
   // a fresh session). captureRuntime below will re-mark 'pending' if needed.
@@ -643,6 +654,9 @@ function spawnAgentSession({
     captureStates.set(id, 'pending')
     broadcast('terminal:capture-state', { id, state: 'pending' })
 
+    let capturedId: string | null = null
+    let settled = false
+
     const persistAndBroadcast = (sessionId: string): void => {
       try {
         appendZoneSession(capture.projectDir, capture.zoneKey, {
@@ -661,6 +675,7 @@ function spawnAgentSession({
           summary: capture.summary,
           dispatchId: capture.dispatchId,
         })
+        capturedId = sessionId
         onSessionCaptured?.(sessionId)
       } catch (err) {
         console.error(`[session-capture] ${capture.zoneKey}: failed to save`, err)
@@ -670,6 +685,12 @@ function spawnAgentSession({
     const markReady = (): void => {
       setCaptureReady(id)
       broadcast('terminal:capture-state', { id, state: 'ready' })
+      if (!settled) {
+        settled = true
+        try { onCaptureSettled?.(capturedId) } catch (err) {
+          console.error(`[session-capture] ${capture.zoneKey}: onCaptureSettled threw`, err)
+        }
+      }
     }
 
     if (claudeSnapshot) {
@@ -717,6 +738,12 @@ function spawnAgentSession({
     } else {
       // No snapshot path fired — nothing to capture.
       markReady()
+    }
+  } else {
+    // Not capturing (resume or non-capturing runtime). Still signal settled
+    // so callers that await onCaptureSettled don't hang.
+    try { onCaptureSettled?.(null) } catch (err) {
+      console.error(`[session-capture] ${id}: onCaptureSettled threw`, err)
     }
   }
 
@@ -1392,6 +1419,13 @@ const IDLE_THRESHOLD_MS = 2 * 60_000
 const HEARTBEAT_POLL_MS = 15_000
 const HARD_CANCEL_MS = 60_000
 const AWAIT_READY_SOFT_MS = 10_000
+// Per-zone hard ceiling on serialized session capture during startDispatch.
+// Session files typically land within 1–3 s of PTY spawn; this cap exists so
+// a misconfigured CLI can't wedge the rest of the dispatch. Set well below
+// each runtime's own poll timeout (30 s claude / 90 s codex/gemini/opencode)
+// so a late capture can still fire its onSessionCaptured upsert in the
+// background after we've moved on.
+const CAPTURE_SERIAL_TIMEOUT_MS = 20_000
 
 // The Architect session's terminal id (unchanged from v3).
 const ARCHITECT_SESSION_ID = 'architect-agent'
@@ -1878,11 +1912,13 @@ export async function startDispatch(
   let architectSessionId: string | null = null
   const pendingZoneUpserts: Array<() => void> = []
 
-  // Pre-spawn every zone. Each zone CLI boots with:
-  //   - appendSystemPrompt  = zone.md (listen-loop semantics baked in)
-  //   - initialPrompt       = "Begin: run mailbox-listen.sh <safe>" (bootstrap)
-  //   - env vars MBX_*      = mailbox script wiring
-  // Dependency ordering lives in the Overseer's prompt, not spawn order.
+  // Spawn every zone serially. Concurrent spawns + a shared session directory
+  // lets multiple zones' "first new session id" polls converge on the
+  // earliest-written file (see plans/melodic-orbiting-lemon.md). Awaiting
+  // each zone's onCaptureSettled before snapshotting the next guarantees the
+  // next zone's "before" set already contains all prior zones' ids.
+  // Dependency ordering still lives in the Overseer's prompt — we just
+  // serialize the boot sequence.
   for (const zone of sorted) {
     const safe = sanitize(zone.data.label)
     const env: Record<string, string> = {
@@ -1896,45 +1932,63 @@ export async function startDispatch(
     const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
     const bootstrap = buildBootstrapBody('zone', safe, projectDir)
 
-    spawnAgentSession({
-      win,
-      id: zone.id,
-      label: zone.data.label,
-      runtime,
-      env,
-      cwd: projectDir,
-      initialPrompt: bootstrap,
-      appendSystemPrompt: systemPrompt,
-      model,
-      capture: {
-        projectDir,
-        zoneKey: zone.id,
-        legacyKey: safe,
-        summary: dispatchSummary,
-      },
-      onSessionCaptured: zoneSessionId => {
-        const upsert = () => {
-          if (!architectSessionId) return
-          try {
-            upsertDispatchZoneSession(projectDir, architectSessionId, {
-              zoneId: zone.id,
-              label: zone.data.label,
-              runtime,
-              sessionId: zoneSessionId,
-            })
-          } catch (err) {
-            console.error('[dispatch-capture] failed to upsert zone session', err)
-          }
-          try {
-            const rec = getZoneSessionRecord(projectDir, zone.id, zoneSessionId, safe)
-            if (rec && !rec.dispatchId) {
-              appendZoneSession(projectDir, zone.id, { ...rec, dispatchId: architectSessionId })
+    await new Promise<void>(resolve => {
+      let settled = false
+      const done = (): void => { if (!settled) { settled = true; resolve() } }
+      const timer = setTimeout(() => {
+        console.warn(`[dispatch] zone "${zone.data.label}" capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`)
+        done()
+      }, CAPTURE_SERIAL_TIMEOUT_MS)
+
+      const zoneInfo = spawnAgentSession({
+        win,
+        id: zone.id,
+        label: zone.data.label,
+        runtime,
+        env,
+        cwd: projectDir,
+        initialPrompt: bootstrap,
+        appendSystemPrompt: systemPrompt,
+        model,
+        capture: {
+          projectDir,
+          zoneKey: zone.id,
+          legacyKey: safe,
+          summary: dispatchSummary,
+        },
+        onSessionCaptured: zoneSessionId => {
+          const upsert = () => {
+            if (!architectSessionId) return
+            try {
+              upsertDispatchZoneSession(projectDir, architectSessionId, {
+                zoneId: zone.id,
+                label: zone.data.label,
+                runtime,
+                sessionId: zoneSessionId,
+              })
+            } catch (err) {
+              console.error('[dispatch-capture] failed to upsert zone session', err)
             }
-          } catch {}
-        }
-        if (architectSessionId) upsert()
-        else pendingZoneUpserts.push(upsert)
-      },
+            try {
+              const rec = getZoneSessionRecord(projectDir, zone.id, zoneSessionId, safe)
+              if (rec && !rec.dispatchId) {
+                appendZoneSession(projectDir, zone.id, { ...rec, dispatchId: architectSessionId })
+              }
+            } catch {}
+          }
+          if (architectSessionId) upsert()
+          else pendingZoneUpserts.push(upsert)
+        },
+        onCaptureSettled: () => {
+          clearTimeout(timer)
+          done()
+        },
+      })
+      // Broadcast each tab as its PTY spawns so the renderer can reveal
+      // terminal tabs incrementally during the serialized-capture await.
+      // Without this the whole loop awaits silently and the UI only gets
+      // the list when startDispatch returns.
+      broadcast('terminal:spawned', zoneInfo)
     })
   }
 
@@ -1942,7 +1996,7 @@ export async function startDispatch(
 
   const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
   const architectEnv: Record<string, string> = mailboxEnv(projectDir, MAILBOX_OVERSEER_ID, 'Architect', dispatchId)
-  spawnAgentSession({
+  const architectInfo = spawnAgentSession({
     win,
     id: ARCHITECT_SESSION_ID,
     label: 'Architect',
@@ -1979,6 +2033,7 @@ export async function startDispatch(
       for (const fn of pendingZoneUpserts.splice(0)) fn()
     },
   })
+  broadcast('terminal:spawned', architectInfo)
 
   return allInfo
 }
