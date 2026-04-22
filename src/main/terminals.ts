@@ -357,9 +357,6 @@ interface SpawnAgentOptions {
   // When set and spawning a fresh Claude session (no resume), pass as
   // `--append-system-prompt` so the zone's behavior prompt is baked in.
   appendSystemPrompt?: string
-  // When set and resuming, write this prompt into the PTY ~1.5s after spawn
-  // so Claude takes it as the next user turn.
-  resumeUserPrompt?: string
   // Optional callback fired once a session ID is captured.
   onSessionCaptured?: (sessionId: string) => void
 }
@@ -589,7 +586,6 @@ function spawnAgentSession({
   skipPermissions = true,
   planMode = false,
   appendSystemPrompt,
-  resumeUserPrompt,
   onSessionCaptured,
 }: SpawnAgentOptions): TerminalInfo {
   // Reset any capture state from a prior spawn at this id (e.g. resume replacing
@@ -642,12 +638,6 @@ function spawnAgentSession({
   })
 
   createSession(win, id, ptyProcess, onExit, { kind: 'agent', runtime })
-
-  if (resumeUserPrompt && resumeSessionId) {
-    setTimeout(() => {
-      try { ptyProcess.write(resumeUserPrompt + '\r') } catch {}
-    }, 1500)
-  }
 
   if (captureRuntime && capture) {
     captureStates.set(id, 'pending')
@@ -1847,50 +1837,29 @@ export async function startDispatch(
   const sorted = topoSort(selectedZones, zoneEdges)
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
 
-  // Single-zone path: no Overseer, no mailbox orchestration. The lone zone
-  // runs as a regular interactive session with the user's prompt delivered
-  // via the CLI's positional-arg path. (Mailbox scaffold is still written by
-  // setupWorkspace but nothing watches it.)
+  // Single-zone path: no Overseer, no mailbox orchestration. Delegate to
+  // runZone so the Play-button flow and the dispatch-with-one-zone flow
+  // share one code path for system-prompt assembly, prompt delivery, and
+  // session capture. (Mailbox scaffold was still written by setupWorkspace
+  // above but nothing watches it — harmless.)
   if (sorted.length === 1) {
     const zone = sorted[0]
     const runtime = getZoneRuntime(zone, settings)
-    const model = dispatch.model || getZoneModel(zone, runtime)
-    const env: Record<string, string> = {}
-    for (const { key, value } of zone.data.envVars ?? []) {
-      if (key) env[key] = value
-    }
-    // Rebuild in 'solo' mode — the dispatch version written to disk by
-    // setupWorkspace teaches the mailbox loop, which would mis-instruct a
-    // solo-launched zone (no Overseer, no MBX_* env vars).
-    const { zones: canvasZones, componentsByZone: canvasComps } = indexGraph(nodes)
-    const soloIntraEdges = edges.filter(e =>
-      !canvasZones.some(z => z.id === e.source) && !canvasZones.some(z => z.id === e.target))
-    const baseSystemPrompt = buildZoneSystemPrompt(
-      zone, canvasComps, zoneEdges, soloIntraEdges, canvasZones, projectDir, 'solo',
-    )
-    const contextBlock = buildArchitectureContextBlock(canvasZones, canvasComps, edges, zone.id)
-    const systemPrompt = baseSystemPrompt + contextBlock
-
-    spawnAgentSession({
-      win,
-      id: zone.id,
-      label: zone.data.label,
-      runtime,
-      env,
-      cwd: projectDir,
-      initialPrompt: userPrompt || undefined,
-      model,
+    const result = await runZone(win, {
+      projectDir,
+      zoneId: zone.id,
+      nodes,
+      edges,
+      mode: 'new',
+      summary: dispatchSummary,
+      userPrompt,
+      model: dispatch.model,
       planMode: dispatch.planMode === true,
-      appendSystemPrompt: systemPrompt,
-      skipPermissions: false,
-      capture: {
-        projectDir,
-        zoneKey: zone.id,
-        legacyKey: sanitize(zone.data.label),
-        summary: dispatchSummary,
-      },
+      settings: rawSettings,
     })
-
+    if (!result.ok) {
+      throw new Error(`runZone failed: ${result.reason ?? 'unknown'}`)
+    }
     return [{ id: zone.id, label: zone.data.label, runtime }]
   }
 
@@ -2110,8 +2079,22 @@ export interface RunZoneResult {
   info?: TerminalInfo
 }
 
+// Only claude supports `--append-system-prompt`; codex/gemini/opencode drop
+// the flag silently. For solo launches on those runtimes we prepend the role
+// prompt into the first turn so the agent actually sees it.
+function buildSoloInitialPrompt(systemPrompt: string, userPrompt: string): string {
+  const user = userPrompt.trim() || "(waiting for user's first message — acknowledge the role above and ask what to work on)"
+  return `<<SYSTEM PROMPT — read this first, then respond to the user request at the bottom>>
+${systemPrompt}
+<<END SYSTEM PROMPT>>
+
+User request:
+${user}`
+}
+
 // Unified entry point for launching a single zone — handles both "start new
-// session" and "continue previous session" from the ZoneLaunchModal.
+// session" and "continue previous session" from the ZoneLaunchModal. Also
+// used by startDispatch's single-zone branch so the two paths can't drift.
 export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise<RunZoneResult> {
   const settings = normalizeProjectSettings(opts.settings)
   const { zones, componentsByZone } = indexGraph(opts.nodes)
@@ -2129,8 +2112,11 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const intraEdges = opts.edges.filter(e => !zoneIdSet.has(e.source) && !zoneIdSet.has(e.target))
   // Solo launch — no Overseer, no mailbox observer, no MBX_* env vars. The
   // prompt must not reference mailbox scripts or the agent will try to run
-  // mailbox-listen.sh and fail.
-  const systemPrompt = buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones, opts.projectDir, 'solo')
+  // mailbox-listen.sh and fail. The architecture context block adds sibling
+  // zones as reference so the agent understands the surrounding system.
+  const systemPrompt =
+    buildZoneSystemPrompt(zone, componentsByZone, zoneEdges, intraEdges, zones, opts.projectDir, 'solo')
+    + buildArchitectureContextBlock(zones, componentsByZone, opts.edges, zone.id)
   fs.writeFileSync(join(base, 'prompts', `${safe}.md`), systemPrompt)
 
   const runtime = getZoneRuntime(zone, settings)
@@ -2156,6 +2142,9 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     if (!rec) return { ok: false, reason: 'session-not-found' }
     if (rec.runtime !== runtime) return { ok: false, reason: `session-runtime-mismatch:${rec.runtime}` }
 
+    // Resume uses CLI-native conversation replay via resumeSessionId alone.
+    // We do not inject `userPrompt` into the PTY post-spawn — the user drives
+    // the first turn after resume (same philosophy as resumeDispatch).
     const info = spawnAgentSession({
       win,
       id: zone.id,
@@ -2165,7 +2154,6 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       cwd: opts.projectDir,
       model,
       resumeSessionId: rec.sessionId,
-      resumeUserPrompt: userPrompt || undefined,
       skipPermissions: false,
     })
     broadcast('terminal:spawned', info)
@@ -2177,6 +2165,13 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const summary = (opts.summary ?? '').trim() ||
     `${zone.data.label} · ${new Date().toLocaleString()}`
 
+  // Claude gets the role prompt via --append-system-prompt; other runtimes
+  // have no such flag, so fold it into the first-turn payload.
+  const initialPrompt = runtime === 'claude'
+    ? (userPrompt || undefined)
+    : buildSoloInitialPrompt(systemPrompt, userPrompt)
+  const appendForRuntime = runtime === 'claude' ? systemPrompt : undefined
+
   const info = spawnAgentSession({
     win,
     id: zone.id,
@@ -2184,8 +2179,8 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     runtime,
     env,
     cwd: opts.projectDir,
-    initialPrompt: userPrompt || undefined,
-    appendSystemPrompt: systemPrompt,
+    initialPrompt,
+    appendSystemPrompt: appendForRuntime,
     model,
     planMode: opts.planMode === true,
     skipPermissions: false,
@@ -2295,10 +2290,10 @@ export async function resumeDispatch(
   ]
 
   // Resume each zone with the session pinned in the dispatch record. No
-  // initialPrompt / resumeUserPrompt — per memory/feedback_resume_user_prompt.md
-  // the user wants to drive the first turn on resume. The resumed conversation
-  // already has the listen-loop context baked in from the original dispatch's
-  // system prompt.
+  // initialPrompt — per memory/feedback_resume_user_prompt.md the user wants
+  // to drive the first turn on resume. The resumed conversation already has
+  // the listen-loop context baked in from the original dispatch's system
+  // prompt.
   for (const zone of dispatchZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const runtime = entry?.runtime ?? getZoneRuntime(zone, settings)

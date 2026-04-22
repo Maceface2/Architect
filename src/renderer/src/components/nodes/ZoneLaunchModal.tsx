@@ -33,10 +33,10 @@ export default function ZoneLaunchModal({
   const [sessions, setSessions] = useState<ZoneSessionRecord[]>([])
   const [loading, setLoading] = useState(true)
   const [launching, setLaunching] = useState(false)
-  const [newSummary, setNewSummary] = useState('')
+  const [prompt, setPrompt] = useState('')
   const [editing, setEditing] = useState<{ sessionId: string; draft: string } | null>(null)
   const [error, setError] = useState<string | null>(null)
-  const summaryInputRef = useRef<HTMLInputElement>(null)
+  const promptInputRef = useRef<HTMLTextAreaElement>(null)
 
   const reload = useCallback(async () => {
     if (!projectDir) return
@@ -58,7 +58,7 @@ export default function ZoneLaunchModal({
   }, [onClose])
 
   useEffect(() => {
-    summaryInputRef.current?.focus()
+    promptInputRef.current?.focus()
   }, [])
 
   const latestBySession = useMemo(() => {
@@ -66,18 +66,23 @@ export default function ZoneLaunchModal({
     return sessions
   }, [sessions])
 
+  const trimmedPrompt = prompt.trim()
+  const canLaunch = trimmedPrompt.length > 0 && !launching
+
   const launchNew = async () => {
-    if (!projectDir || launching) return
+    if (!projectDir || !canLaunch) return
     setLaunching(true)
     setError(null)
     try {
+      const derivedSummary = trimmedPrompt.split('\n').map(s => s.trim()).find(Boolean)?.slice(0, 120) || undefined
       const result = await window.electron.zone.launch({
         projectDir,
         zoneId,
         nodes,
         edges,
         mode: 'new',
-        summary: newSummary.trim() || undefined,
+        userPrompt: trimmedPrompt,
+        summary: derivedSummary,
         settings: projectSettings,
       })
       if (!result?.ok) {
@@ -161,27 +166,33 @@ export default function ZoneLaunchModal({
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <section>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">Start new session</label>
-            <div className="flex items-center gap-2">
-              <input
-                ref={summaryInputRef}
-                value={newSummary}
-                onChange={e => setNewSummary(e.target.value)}
-                onKeyDown={e => {
-                  if (e.key === 'Enter') { e.preventDefault(); void launchNew() }
-                }}
-                placeholder="One-line summary (optional) — e.g. 'wire up auth routes'"
-                className="flex-1 bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-accent"
-              />
+            <label className="block text-xs font-medium text-slate-300 mb-1.5">
+              User prompt <span className="text-red-400/70">*</span>
+            </label>
+            <textarea
+              ref={promptInputRef}
+              value={prompt}
+              onChange={e => setPrompt(e.target.value)}
+              onKeyDown={e => {
+                if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
+                  e.preventDefault()
+                  void launchNew()
+                }
+              }}
+              placeholder="What should this zone do on this run?"
+              rows={5}
+              className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white resize-y focus:outline-none focus:border-accent"
+            />
+            <div className="flex items-center justify-between gap-2 mt-2">
+              <p className="text-[11px] text-slate-500">Cmd/Ctrl+Enter to launch. The zone's role + architecture context is loaded automatically.</p>
               <button
                 onClick={launchNew}
-                disabled={launching}
-                className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:bg-white/5 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+                disabled={!canLaunch}
+                className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:bg-white/5 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 flex-shrink-0"
               >
                 <Rocket size={14} /> Launch
               </button>
             </div>
-            <p className="text-[11px] text-slate-500 mt-1">Summary helps you find this session later; defaults to timestamp if left blank.</p>
           </section>
 
           <section>
