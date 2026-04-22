@@ -127,7 +127,7 @@ export function createParticipant(projectDir: string, desc: ParticipantDescripto
   atomicWriteJson(participantManifestPath(projectDir, desc.id), manifest, participantTmpDir(projectDir, desc.id))
 }
 
-// Wipe the entire mailbox tree. Called by both runGraph (fresh dispatch /
+// Wipe the entire mailbox tree. Called by both startDispatch (fresh dispatch /
 // redispatch) AND resumeDispatch — every entry point into a dispatch starts
 // with an empty mailbox.
 //

@@ -625,7 +625,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       const dispatchContext = isRedispatch
         ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
         : undefined
-      const sessions = await window.electron.runGraph(
+      const sessions = await window.electron.startDispatch(
         nodes,
         edges,
         projectDir,

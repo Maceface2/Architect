@@ -18,8 +18,9 @@ contextBridge.exposeInMainWorld('electron', {
   // Custom component discovery
   scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
-  // Graph execution
-  runGraph: (
+  // Start a fresh multi-zone (or single-zone) dispatch. Companion is
+  // dispatches.resume for replaying a prior DispatchRecord.
+  startDispatch: (
     nodes: unknown[],
     edges: unknown[],
     cwd: string,
@@ -27,7 +28,7 @@ contextBridge.exposeInMainWorld('electron', {
     dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
     dispatchContext?: unknown,
   ) =>
-    ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatch, dispatchContext),
+    ipcRenderer.invoke('dispatch:start', nodes, edges, cwd, settings, dispatch, dispatchContext),
 
   // Dispatch history
   dispatches: {

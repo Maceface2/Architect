@@ -65,9 +65,11 @@ Each zone contributes:
 
 At dispatch time Architect generates:
 
-- a zone system prompt file in `ARCHITECT/prompts/<zone>.md`
-- mailbox participant directories in `ARCHITECT/mailbox/<participant>/`
-- a matching output/status log path in `ARCHITECT/outputs/<zone>.md`
+- a zone system prompt file in `ARCHITECT/prompts/<zone>.md` (in `dispatch` mode for multi-zone dispatches, `solo` mode for single-zone launches)
+- per-zone mailbox directory `ARCHITECT/mailbox/<zone>/{inbox,outbox,.tmp,manifest.json}`
+- an output scratchpad at `ARCHITECT/outputs/<zone>.md` — zones append progress notes as they work (harness uses the mtime as one of three heartbeat signals)
+
+Zone tasks are not files in v4 — they are `task` messages delivered into the zone's mailbox inbox by the Overseer. See "Multi-Zone Orchestration" below.
 
 ## Prompt Layers
 
@@ -85,50 +87,60 @@ Generated from zone configuration and canvas context. It includes:
 - embedded `SKILL.md` contents
 - the freeform behavior text from the zone editor
 - the instruction to write real code in the project root
+- **in dispatch mode**: the full mailbox listen-and-respond loop (call `mailbox-listen.sh`, handle `task` / `answer` / `cancel` / `harness.wake` messages, reply via `mailbox-send.sh`, re-listen immediately)
+- **in solo mode**: instructions to work directly with the user; NO mailbox references (the scripts won't work without the MBX_* env vars set)
 
-This is built by `buildZoneSystemPrompt()`.
+This is built by `buildZoneSystemPrompt(..., mode: 'dispatch' | 'solo')`. Multi-zone dispatches use `dispatch`; single-zone launches via `runZone` use `solo`.
 
-### 2. Bootstrap / Task Layer
+### 2. Task Message Layer
 
-Dispatch-specific work is not delivered by PTY polling anymore.
+Per-dispatch work is delivered as **`task` messages** into the zone's mailbox inbox, not as files. The Overseer composes the task content (goals, files to touch, API contracts, acceptance criteria) and calls:
 
-In multi-zone mode:
+```bash
+bash $MBX_SCRIPTS/mailbox-send.sh <zone-id> task "$TMPFILE"
+```
 
-- each zone gets a one-shot bootstrap prompt telling it to read `ARCHITECT/prompts/<zone>.md`
-- the zone then enters the mailbox listen loop via `ARCHITECT/scripts/mailbox-listen.sh <participantId>`
-- the Architect coordinator and the zones exchange `task`, `result`, `cancel`, and harness messages through mailbox inbox/outbox JSON files
+which atomically writes a JSON message to `ARCHITECT/mailbox/<zone>/inbox/<iso-ts>-<msg-id>.json`. The zone's `mailbox-listen.sh` call returns with the message's metadata + content; the zone does the work using its normal tools (Read/Edit/Bash/etc.), then replies with a `result` message carrying `inReplyTo = <original-msg-id>` so the Overseer can correlate.
 
-That separation still matters:
+Zones are bootstrapped with a minimal instruction — "Read your prompt file and enter your listen loop now by running mailbox-listen.sh". After that, the PTY is never written to again; the mailbox is the only coordination channel.
 
-- the system prompt defines durable zone identity and working rules
-- mailbox messages carry the specific work for one dispatch
+That separation matters: the system prompt is durable zone identity, while task messages are per-dispatch instructions with full audit trail in the zone's inbox + Overseer's outbox.
 
 ## Multi-Zone Orchestration
 
-When there are two or more zones, Architect runs in coordinator mode.
+When there are two or more zones, Architect runs the **v4 mailbox protocol** (`DISPATCH_PROTOCOL_VERSION = 4`).
 
 ### Sequence
 
-1. `runGraph()` normalizes settings and filters the selected zones.
-2. `setupWorkspace()` writes the manifest, prompts, diagram, mailbox scaffold, and output directories.
-3. Architect pre-spawns every selected zone plus one `architect-agent` coordinator session.
-4. The coordinator gets `ARCHITECT/prompts/architect.md`.
-5. Each zone gets `ARCHITECT/prompts/<zone>.md`, `MBX_*` environment variables, and a bootstrap instruction to enter the mailbox loop.
-6. `startMailboxObserver()` watches every participant inbox/outbox, updates `ARCHITECT/mailbox/_index.json`, emits `mailbox:activity` renderer events, and injects harness warnings/timeouts when a task stalls.
-7. Task routing and handoffs happen through mailbox messages rather than `ARCHITECT/tasks/*.md` polling.
+1. `startDispatch()` normalizes settings, filters the selected zones, and generates a fresh `dispatchId` (16 hex chars).
+2. `wipeMailboxTree(projectDir)` removes any stale `ARCHITECT/mailbox/` from a prior run.
+3. `setupWorkspace()` writes the manifest, prompts, Mermaid diagram, mailbox shell scripts, and per-participant mailbox directories (one for `overseer`, one per zone).
+4. Architect **pre-spawns all zone PTYs concurrently** — no dependency-gated launching in v4. Each zone is spawned with `MBX_ROOT`, `MBX_SELF`, `MBX_SELF_LABEL`, `MBX_DISPATCH_ID`, `MBX_SCRIPTS` env vars and a bootstrap `initialPrompt` telling it to enter its listen loop.
+5. Architect spawns the `architect-agent` Overseer session with its prompt as `initialPrompt` (the content of `ARCHITECT/prompts/architect.md`).
+6. `startMailboxObserver` launches in the main process — it watches every participant's inbox/outbox via `fs.watch`, maintains `ARCHITECT/mailbox/_index.json`, broadcasts `mailbox:activity` IPC events to the renderer, and injects synthetic `harness.*` messages when zones stall.
+7. Each agent enters its prescribed loop:
+   - **Zones** repeat `mailbox-listen.sh <zone>` → process message → `mailbox-send.sh` reply → re-listen
+   - **Overseer** repeats `mailbox-listen.sh overseer 30` → `mailbox-drain.sh overseer` → plan over the batch → dispatch new tasks
+8. Dependency ordering lives in the **Overseer's reasoning**, not in spawn order. The Overseer sends upstream-zone tasks first, waits for their `result` messages, then fans out downstream tasks using the interfaces reported in the results.
+
+### Completion Is Not a Sentinel
+
+A zone is "done with a task" when it sends a `result` message with `structured.result = 'success'` and `inReplyTo` matching the Overseer's original `task` message. The Overseer's `mailbox-drain.sh` call returns that result as part of the batched JSON array; the Overseer reads `structured.result`, reads the content body for a summary, and (optionally) `ARCHITECT/outputs/<zone>.md` for the narrative scratchpad.
+
+A dispatch is "done" when the Overseer has collected successful `result` messages from every engaged zone and reports back to the user. There is no filesystem sentinel to parse, no `ARCHITECT_COMPLETE` string to match.
 
 ### What The Coordinator Is Told To Do
 
-The coordinator prompt instructs it to:
+The Overseer prompt (generated by `buildArchitectPrompt`) instructs it to:
 
-- read `ARCHITECT/manifest.json`
-- write mailbox `task` messages for the selected zones
-- read mailbox `result` / harness messages and react to them
-- monitor `ARCHITECT/outputs/`
-- coordinate downstream handoffs through mailbox traffic and prompt context
-- avoid using sub-agents or task tools
+- read `ARCHITECT/manifest.json` and the Mermaid diagram for canvas context
+- dispatch a `task` message to each engaged zone via `mailbox-send.sh <zone> task <tmpfile>`
+- cycle `mailbox-listen.sh overseer 30` + `mailbox-drain.sh overseer` — listen → batch drain → plan → dispatch
+- react to each `result` / `question` / `harness.*` message per the documented dispositions
+- NEVER break the drain-and-plan loop; the loop is the job
+- NEVER use sub-agents or task tools; NEVER write to `ARCHITECT/tasks/` (gone); NEVER poll `status.json` (gone)
 
-The coordinator is therefore a filesystem orchestrator, not a direct runtime supervisor.
+The Overseer is therefore a **mailbox-mediated scheduler**. The harness watches and reports, but doesn't drive per-task coordination.
 
 ## Single-Zone Behavior
 
@@ -145,24 +157,31 @@ Architect still writes prompt artifacts to `ARCHITECT/`, but the session launche
 
 ## Mailbox And Liveness Detection
 
-Architect does not use runtime-native task callbacks.
+Under v4, completion is a **message**, not a terminal string. When a zone finishes a task:
 
-Instead, the mailbox observer watches filesystem activity and PTY state:
+```bash
+# inside the zone's listen loop, after doing the work
+bash $MBX_SCRIPTS/mailbox-send.sh overseer result "$BODY" "$MESSAGE_ID"
+```
 
-- zone inbox files reveal newly delivered `task` and `cancel` messages
-- zone outbox files reveal `result` replies
-- `ARCHITECT/outputs/<zone>.md` mtimes provide one liveness signal
-- PTY byte activity provides another liveness signal
+This writes a JSON message to the Overseer's inbox with `type: 'result'`, `inReplyTo: <task-msg-id>`, and `structured.result ∈ {'success', 'blocked', 'failed'}`. The Overseer's `mailbox-drain.sh` call surfaces it in the batch; the Overseer matches `inReplyTo` against its outstanding task msgIds and knows which task completed with what outcome.
 
-If a task stays pending too long or a participant goes quiet, the observer injects harness messages such as:
+Benefits over v3's `ARCHITECT_COMPLETE` sentinel approach:
 
-- `harness.delivery-warning`
-- `harness.wake`
-- `harness.timeout`
-- `harness.heartbeat-missed`
-- `harness.pty-exit`
+- **No false positives from string collisions** — the result is typed JSON with a taskId
+- **Structured failure reporting** — `structured.blocker.kind` and `structured.blocker.message` are first-class fields
+- **Back-and-forth support** — a zone can send `question` instead of `result`; Overseer replies with `answer`; zone continues and eventually sends `result`
+- **Full audit trail** — every message is a file with timestamp + msgId in the zone's outbox and Overseer's inbox
 
-This is more accurate than the old sentinel-string flow, but it is still a file-mediated protocol rather than a runtime-native orchestration API.
+### Liveness signals (v4)
+
+When a zone *should* be producing output but isn't, the harness has three liveness signals it ORs together:
+
+1. `outputs/<zone>.md` file mtime — zone writing progress notes
+2. PTY `session.lastActivityMs` — any byte streaming from the CLI (spinner frames, tool output, reasoning traces)
+3. `tracker.startedAt` — floor timestamp marking when the current task was sent
+
+If the max of these three hasn't advanced in `IDLE_THRESHOLD_MS` (2 min), the harness fires one `harness.heartbeat-missed` into the Overseer's inbox. If no `result` arrives within `DEFAULT_TASK_TIMEOUT_MS` (30 min), the harness fires one `harness.timeout`. If the PTY itself exits, the harness fires `harness.pty-exit` and flips the participant's `_index.json` state to `'exited'` (tombstone; mailbox dir preserved for the Overseer to inspect).
 
 ## Session Persistence And Resume
 

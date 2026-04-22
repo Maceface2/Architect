@@ -1135,7 +1135,7 @@ Start by dispatching the first round of tasks for the zones the user's task requ
 //   - 'dispatch' — the zone is part of a multi-zone dispatch with an Overseer.
 //     Teaches the mailbox listen-and-respond loop; the agent lives in that loop.
 //   - 'solo' — the zone was launched standalone (ZoneLaunchModal Play button, or
-//     a single-zone runGraph). No Overseer is running and MBX_* env vars are NOT
+//     a single-zone startDispatch). No Overseer is running and MBX_* env vars are NOT
 //     set, so the prompt must not reference mailbox scripts. The agent works
 //     directly with the user.
 // The identity / components / skills / behavior header is shared; only the
@@ -1786,7 +1786,7 @@ function buildBootstrapBody(role: 'overseer' | 'zone', participantId: string, pr
   return `Read ${promptFile} and follow its instructions. Your participant ID is "${participantId}". Begin your listen-and-respond loop now by running bash ARCHITECT/scripts/mailbox-listen.sh ${participantId}.`
 }
 
-export interface RunGraphDispatch {
+export interface StartDispatchOptions {
   userPrompt: string
   model?: string
   planMode?: boolean
@@ -1805,13 +1805,18 @@ function mailboxEnv(projectDir: string, participantId: string, label: string, di
   }
 }
 
-export async function runGraph(
+// Entry point for fresh multi-zone (and single-zone fast path) dispatches.
+// Replaces v3's runGraph name — the "graph" in that name implied dependency-
+// gated topological spawning, which v4 doesn't do (all zones pre-spawn
+// concurrently; the Overseer decides task order via mailbox, not spawn order).
+// Companion is resumeDispatch for replaying a prior DispatchRecord.
+export async function startDispatch(
   win: BrowserWindow,
   nodes: GraphNode[],
   edges: GraphEdge[],
   projectDir: string,
   rawSettings: unknown,
-  dispatch: RunGraphDispatch,
+  dispatch: StartDispatchOptions,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   killAll()

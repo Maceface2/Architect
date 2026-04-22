@@ -4,7 +4,7 @@ import fs from 'fs'
 import path from 'path'
 import {
   initShellEnv,
-  runGraph,
+  startDispatch,
   runZone,
   resumeDispatch,
   resetZoneSession,
@@ -19,7 +19,7 @@ import {
   listZoneSessionsForZone,
   deleteZoneSessionEntry,
   renameZoneSessionEntry,
-  type RunGraphDispatch,
+  type StartDispatchOptions,
   type RunZoneOptions,
   type ResumeDispatchOptions,
 } from './terminals'
@@ -190,9 +190,9 @@ ipcMain.handle('scan-components', (_event, dirPath: string) => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('run-graph', (_event, nodes, edges, cwd, settings, dispatch: RunGraphDispatch, dispatchContext) => {
+ipcMain.handle('dispatch:start', (_event, nodes, edges, cwd, settings, dispatch: StartDispatchOptions, dispatchContext) => {
   if (!mainWindow) return []
-  return runGraph(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' }, dispatchContext)
+  return startDispatch(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' }, dispatchContext)
 })
 
 ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {

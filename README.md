@@ -91,17 +91,18 @@ When you dispatch a graph, Architect translates the canvas into a filesystem-bas
 
 ### Multi-Zone Dispatch
 
-If the canvas has two or more zones:
+If the canvas has two or more zones, Architect uses the **mailbox protocol (v4)** — peer-to-peer message passing through per-participant inboxes, inspired by [`claude-code-session-bridge`](https://github.com/PatilShreyas/claude-code-session-bridge).
 
-1. Architect wipes any prior mailbox transport state, then writes `ARCHITECT/manifest.json`, prompt files, mailbox scripts/directories, output folders, and a Mermaid diagram.
-2. It pre-spawns one coordinator session called `Architect` plus one PTY per selected zone.
-3. The coordinator reads `ARCHITECT/prompts/architect.md`.
-4. Each zone reads `ARCHITECT/prompts/<zone>.md`, gets `MBX_*` environment variables, and enters the mailbox listen loop.
-5. `startMailboxObserver()` watches `ARCHITECT/mailbox/**`, refreshes `ARCHITECT/mailbox/_index.json`, emits renderer activity events, and injects harness warnings/timeouts when a participant stalls.
-6. Zones exchange tasks, results, and handoff messages through mailbox inbox/outbox files rather than `ARCHITECT/tasks/*.md` polling.
-7. Each zone still writes progress and interface notes to `ARCHITECT/outputs/<zone>.md` for the preview/status UI.
+1. Architect wipes any prior mailbox transport state, then writes `ARCHITECT/manifest.json`, prompt files, the five mailbox shell scripts, per-participant mailbox directories, and a Mermaid diagram.
+2. It spawns one coordinator session called `Architect` (the Overseer) plus one PTY per zone — all concurrent, no dependency-gated launching.
+3. Each agent boots with a short bootstrap prompt telling it to read its role prompt and enter its mailbox loop:
+   - **Zones** block on `mailbox-listen.sh <zone>` — one task at a time, respond with a `result` message, immediately re-listen
+   - **Overseer** cycles `mailbox-listen.sh overseer 30` then `mailbox-drain.sh overseer` — batched reasoning over accumulated results, plan next round, dispatch new `task` messages
+4. The Overseer sends `task` messages to zones and receives `result` / `question` messages back. Zones can ask clarifying questions; the Overseer can send `answer` or `cancel` messages. All messages are atomic JSON files with `inReplyTo` correlation.
+5. The harness is a passive observer + synthetic-event injector — it watches `ARCHITECT/mailbox/**` via `fs.watch`, refreshes `ARCHITECT/mailbox/_index.json`, emits renderer activity events, and injects `harness.*` messages when zones stall (`pty-exit`, `delivery-warning`, `heartbeat-missed`, `timeout`, `wake`). The harness does NOT type into PTYs after bootstrap and does NOT scrape terminal output for sentinels.
+6. Each zone's narrative progress goes into `ARCHITECT/outputs/<zone>.md` as a human-readable scratchpad consumed by the preview/status UI. Completion is the `result` message itself, not a string sentinel.
 
-This gives Architect a file-mediated orchestration model rather than direct inter-agent messaging.
+This gives Architect a **mailbox-mediated orchestration model** — inspectable (every message is a file), testable (no PTY required for coordinator logic), and robust against broken listen loops (the harness injects `harness.wake` if a zone goes quiet with pending work). See [docs/agent-behavior.md](docs/agent-behavior.md) and `CLAUDE.md` for the full protocol spec.
 
 ### Single-Zone Dispatch
 
@@ -126,26 +127,34 @@ For each zone, Architect generates a system prompt that includes:
 - the zone behavior text from the UI
 - instructions about the project root and `ARCHITECT/` coordination artifacts
 
-Dispatch-specific work is separate from that system prompt:
+Zone system prompts and zone tasks are separate layers:
 
-- System prompt: who the zone is and how it should behave
-- Mailbox messages: what the current multi-zone dispatch wants done right now
+- **System prompt**: who the agent is and how it should behave — zone identity, components, skills, and (in dispatch mode) the listen-and-respond loop semantics. Baked in at spawn.
+- **Task message**: what this specific dispatch wants built right now — delivered as a `task` message in the zone's mailbox inbox, not a file.
+
+The same zone prompt generator emits two variants (`buildZoneSystemPrompt(..., mode: 'dispatch' | 'solo')`): `dispatch` mode teaches the mailbox listen loop for multi-zone coordination; `solo` mode omits mailbox references for single-zone launches where the user prompts the agent directly.
 
 ## `ARCHITECT/` Workspace Layout
 
 Each dispatch uses a project-local coordination directory:
 
+**Generated per dispatch** (regenerated on every `startDispatch` / `resumeDispatch`):
 - `ARCHITECT/manifest.json`: normalized dispatch description
 - `ARCHITECT/diagram.md`: Mermaid view of the zone graph
-- `ARCHITECT/prompts/architect.md`: coordinator instructions
-- `ARCHITECT/prompts/<zone>.md`: per-zone system prompt
-- `ARCHITECT/mailbox/<participant>/inbox/*.json`: incoming mailbox messages
-- `ARCHITECT/mailbox/<participant>/outbox/*.json`: outgoing mailbox messages
-- `ARCHITECT/mailbox/_index.json`: live observer snapshot of participant state
-- `ARCHITECT/scripts/`: mailbox helper scripts used by zone loops
-- `ARCHITECT/outputs/<zone>.md`: progress, handoff notes, completion summaries
-- `ARCHITECT/sessions/*.json`: persisted session metadata
-- `ARCHITECT/dispatches/*.json`: prior multi-zone dispatch records
+- `ARCHITECT/prompts/architect.md`: Overseer's drain-and-plan loop instructions
+- `ARCHITECT/prompts/<zone>.md`: per-zone listen-and-respond loop instructions
+- `ARCHITECT/scripts/mailbox-send.sh` + `listen.sh` + `drain.sh` + `status.sh` + `cleanup.sh`: mailbox protocol shell scripts (executable)
+
+**Mailbox (wiped on every dispatch entry point, rebuilt fresh)**:
+- `ARCHITECT/mailbox/_index.json`: harness-owned live snapshot of every participant's state
+- `ARCHITECT/mailbox/overseer/{inbox,outbox,.tmp,manifest.json}`: the Overseer's mailbox
+- `ARCHITECT/mailbox/<zone>/{inbox,outbox,.tmp,manifest.json}`: one per zone
+- Individual messages are `inbox/<iso-ts>-<msg-id>.json`, atomically written via `mktemp` + rename
+
+**Durable (survives dispatches)**:
+- `ARCHITECT/outputs/<zone>.md`: narrative progress scratchpad — zones append as they work
+- `ARCHITECT/sessions/<zoneKey>/<sessionId>.json`: captured CLI session records, feeds the ZoneLaunchModal history picker
+- `ARCHITECT/dispatches/<architectSessionId>.json`: prior multi-zone dispatch records — pins each zone's CLI session id for resume
 - `ARCHITECT/.assistant-context.md`: context file for the architecture assistant
 
 Project code is never meant to be written into `ARCHITECT/`. Agents are told to create actual source files in the project root working directory.
@@ -206,7 +215,7 @@ Main groups:
 
 - filesystem: `readDir`, `readFile`, `openDirectory`, `getHomeDir`
 - canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`
-- execution: `runGraph`, `zone.launch`, `zone.listSessions`, `zone.resetSession`, `dispatches.resume`
+- execution: `startDispatch`, `zone.launch`, `zone.listSessions`, `zone.resetSession`, `dispatches.resume`
 - assistant: `assistant.start`, `assistant.stop`
 - terminal control: `terminal.spawnShell`, `terminal.input`, `terminal.resize`, `terminal.killAll`, `terminal.popout`
 - history/session reads: `dispatches.list`, `dispatches.delete`, `dispatches.updateSummary`
@@ -239,7 +248,7 @@ There are currently no configured lint or test scripts.
 - The docs and UI still carry some Claude-first assumptions.
 - Runtime capabilities are not normalized; the abstraction is ahead of the implementation.
 - "Tools" and "permissions" are stored in zone config and shown in prompts, but they do not map to a unified enforcement layer across runtimes.
-- Multi-zone orchestration still depends on filesystem mailbox observation rather than richer runtime-native lifecycle hooks.
+- Multi-zone orchestration uses the v4 mailbox protocol (JSON message files + fs.watch) rather than richer runtime-native lifecycle hooks. Loop discipline is prompt-engineered; if an agent exits its listen loop, the harness injects a `harness.wake` message but can't force a restart.
 - System prompt injection is still Claude-only, even though session capture and resume now span all supported runtimes.
 - The system prompt field is presented as a generic zone feature, but only Claude currently receives it as a first-class CLI argument.
 

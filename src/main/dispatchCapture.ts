@@ -15,7 +15,7 @@ export interface DispatchRecord {
   // v4 mailbox correlation id. Passed to every agent as MBX_DISPATCH_ID env
   // var; stamped on every mailbox message's metadata. Independent from the
   // CLI session id (which is how we resume the conversation on the runtime
-  // side). Generated at runGraph/resumeDispatch start.
+  // side). Generated at startDispatch/resumeDispatch start.
   dispatchId?: string
   zoneIds: string[]
   zoneLabels: string[]

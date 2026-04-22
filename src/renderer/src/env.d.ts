@@ -25,7 +25,7 @@ interface ElectronAPI {
   unwatchCanvas: () => Promise<void>
   onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => () => void
   scanComponents: (dirPath: string) => Promise<unknown[]>
-  runGraph: (
+  startDispatch: (
     nodes: unknown[],
     edges: unknown[],
     cwd: string,
