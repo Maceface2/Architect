@@ -33,7 +33,6 @@ interface ElectronAPI {
     dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
     dispatchContext?: unknown
   ) => Promise<TerminalInfo[]>
-  listDispatches: (projectDir: string) => Promise<DispatchRecord[]>
   dispatches: {
     list: (projectDir: string) => Promise<DispatchRecord[]>
     delete: (projectDir: string, dispatchId: string) => Promise<boolean>

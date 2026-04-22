@@ -30,7 +30,6 @@ contextBridge.exposeInMainWorld('electron', {
     ipcRenderer.invoke('run-graph', nodes, edges, cwd, settings, dispatch, dispatchContext),
 
   // Dispatch history
-  listDispatches: (projectDir: string) => ipcRenderer.invoke('dispatches:list', projectDir),
   dispatches: {
     list: (projectDir: string) => ipcRenderer.invoke('dispatches:list', projectDir),
     delete: (projectDir: string, dispatchId: string) =>

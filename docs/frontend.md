@@ -1,266 +1,227 @@
-# Architect — Frontend Documentation
+# Architect Frontend
 
-Phase 1 of Architect: a visual architecture canvas built as an Electron desktop app. Users design system architectures by dragging component nodes onto a canvas, connecting them with edges, and writing per-node agent prompts that will later drive Claude AI agents.
+This document describes the current renderer implementation in Architect.
 
----
+The app is no longer the older "one prompt per node" prototype. The live UI is centered on two canvas node types:
+
+- `zone` nodes, which represent agent sessions and runtime configuration
+- `component` nodes, which represent design artifacts owned geometrically by zones
+
+The renderer is responsible for editing that canvas, launching dispatches, surfacing saved sessions, and showing live terminal/output state for active runs.
 
 ## Tech Stack
 
 | Layer | Technology |
-|---|---|
-| Desktop shell | Electron (main + preload + renderer) |
+| --- | --- |
+| Desktop shell | Electron |
 | Bundler | electron-vite |
 | UI framework | React 18 + TypeScript |
 | Canvas | `@xyflow/react` v12 |
 | Styling | Tailwind CSS v3 + PostCSS |
-| Icons | Lucide React |
+| Terminals | `@xterm/xterm` + `@xterm/addon-fit` |
 
----
+## Renderer Structure
 
-## Project Structure
-
-```
-src/
-├── main/
-│   └── index.ts              # Electron main process
-├── preload/
-│   └── index.ts              # Electron preload — contextBridge
-└── renderer/
-    ├── index.html
-    └── src/
-        ├── main.tsx           # React entry point
-        ├── App.tsx            # Root component + canvas orchestrator
-        ├── index.css          # Tailwind + React Flow overrides
-        ├── env.d.ts           # window.electron global type declaration
-        ├── types.ts           # Shared TypeScript types
-        ├── lib/
-        │   └── icons.ts       # Lucide icon registry
-        ├── data/
-        │   └── componentPalette.ts  # Palette item definitions
-        └── components/
-            ├── layout/
-            │   ├── TopNav.tsx        # Header bar with tabs + actions
-            │   ├── Sidebar.tsx       # Left component palette panel
-            │   ├── AgentLog.tsx      # Right agent output panel
-            │   ├── FilesPanel.tsx    # File browser (Files tab)
-            │   └── ResizablePanel.tsx  # Resizable + collapsible panel wrapper
-            ├── palette/
-            │   └── PaletteItem.tsx   # Draggable item in the sidebar
-            └── nodes/
-                ├── ArchitectNode.tsx  # Custom React Flow node component
-                └── nodeTypes.ts      # React Flow nodeTypes registry
+```text
+src/renderer/src/
+├── App.tsx                             # Root app, canvas state, dispatch + assistant flow
+├── types.ts                            # Zone/component types, settings, dispatch/session records
+├── env.d.ts                            # window.electron type declarations
+├── lib/
+│   ├── canvas.ts                       # Default zone/component data, normalization helpers
+│   └── icons.ts                        # Lucide icon registry
+├── context/
+│   ├── ProjectDirContext.tsx           # Active project directory
+│   └── ProjectSettingsContext.tsx      # Default runtime + assistant mode
+├── data/
+│   └── componentPalette.ts             # Built-in component presets
+└── components/
+    ├── dispatch/
+    │   └── DispatchModal.tsx           # New dispatch / resume previous dispatch
+    ├── layout/
+    │   ├── TopNav.tsx                  # Header, tabs, dispatch button, assistant controls
+    │   ├── Sidebar.tsx                 # Palette and component browser
+    │   ├── FilesPanel.tsx              # Project file browser
+    │   ├── TerminalPanel.tsx           # Multi-session terminal workspace
+    │   ├── PreviewPanel.tsx            # Per-zone output tail + localhost iframe preview
+    │   └── terminalLayout*.ts          # Terminal docking/splitting state
+    └── nodes/
+        ├── ZoneNode.tsx                # Resizable zone overlay
+        ├── ComponentNode.tsx           # Component card
+        ├── AgentConfigModal.tsx        # Zone runtime/model/system prompt editor
+        ├── ZoneLaunchModal.tsx         # Launch or resume one zone
+        ├── ComponentConfigModal.tsx    # Component editor
+        └── nodeTypes.ts                # React Flow node registry
 ```
 
----
+## Core Types
 
-## Electron Process Architecture
+`src/renderer/src/types.ts` defines the renderer's shared model.
 
-### Main Process — `src/main/index.ts`
+### `ZoneNodeData`
 
-Creates the `BrowserWindow` (1440×900, `backgroundColor: '#111111'`, `contextIsolation: true`) and registers three IPC handlers:
+Carries the agent-facing configuration for a zone:
 
-| Channel | Handler | Returns |
-|---|---|---|
-| `get-home-dir` | `app.getPath('home')` | `string` |
-| `read-dir` | `fs.readdirSync` | `{ name, isDirectory, path }[]` sorted dirs-first, no dotfiles |
-| `open-directory` | `dialog.showOpenDialog` | `string \| null` |
+- label, description, color, status
+- `systemPrompt`
+- runtime selection via `agentRuntimeMode` + `agentRuntime`
+- per-runtime model overrides in `providerModels`
+- `skills`, `tools`, `behavior`, `permissions`, `envVars`
 
-### Preload — `src/preload/index.ts`
+`ZoneNodeType` is `Node<ZoneNodeData, 'zone'>`.
 
-Exposes a typed `ElectronAPI` object to the renderer via `contextBridge.exposeInMainWorld('electron', ...)`:
+### `ComponentNodeData`
 
-```ts
-window.electron.platform        // OS platform string
-window.electron.getHomeDir()    // Promise<string>
-window.electron.readDir(path)   // Promise<FileEntry[]>
-window.electron.openDirectory() // Promise<string | null>
-```
+Carries the design artifact shown on the canvas:
 
-### Renderer Type Declaration — `src/renderer/src/env.d.ts`
+- label, description, specs
+- category
+- icon name
+- color
+- tag
 
-Augments `Window` with the `ElectronAPI` type. The file ends with `export {}` so TypeScript treats it as a module and activates the `declare global` block.
+`ComponentNodeType` is `Node<ComponentNodeData, 'component'>`.
 
----
+### Dispatch Types
 
-## Type Definitions — `src/renderer/src/types.ts`
+The renderer also models:
 
-```ts
-type ComponentCategory = 'infrastructure' | 'services' | 'storage'
-type NodeStatus = 'idle' | 'running' | 'done' | 'error'
+- `ProjectSettings`
+- `ZoneSessionRecord`
+- `DispatchRecord`
+- `DispatchRequest`
 
-interface ArchitectNodeData {
-  label: string        // Display name (e.g. "API Gateway")
-  description: string  // Short description (e.g. "Request routing")
-  category: ComponentCategory
-  iconName: string     // Key into the Lucide icon registry
-  color: string        // Hex accent color (e.g. "#fb923c")
-  tag: string          // Short abbreviation shown on the card (e.g. "API")
-  status: NodeStatus   // Current agent execution state
-  prompt: string       // User-written agent prompt
-  promptOpen: boolean  // Whether the prompt textarea is expanded
-}
+These mirror the preload bridge and let the UI render dispatch history, per-zone saved sessions, and resume actions without reaching into the main process directly.
 
-type ArchitectNodeType = Node<ArchitectNodeData, 'architectNode'>
-```
+## App Flow
 
----
+`App.tsx` owns the main renderer orchestration:
 
-## Component Palette — `src/renderer/src/data/componentPalette.ts`
+- mounts the project directory gate
+- loads/saves `architect-canvas.json`
+- normalizes canvas data
+- tracks tabs for Canvas / Files / Terminal / Preview
+- builds assistant context
+- opens `DispatchModal`
+- calls `window.electron.runGraph(...)` for new dispatches
+- calls `window.electron.dispatches.resume(...)` for saved multi-zone dispatches
 
-Defines 8 draggable component types across 3 categories:
+The canvas stays mounted while the user switches tabs so React Flow state, selection, and node geometry do not reset.
 
-| Label | Category | Tag | Color | Icon |
-|---|---|---|---|---|
-| Frontend | infrastructure | UI | `#f472b6` | Monitor |
-| API Gateway | infrastructure | API | `#fb923c` | Shield |
-| Auth | infrastructure | AUTH | `#4ade80` | Lock |
-| Service | services | SVC | `#60a5fa` | Settings2 |
-| AI Model | services | AI | `#a78bfa` | Brain |
-| Queue | services | QUEUE | `#fbbf24` | Layers |
-| Database | storage | DB | `#60a5fa` | Database |
-| Cache | storage | CACHE | `#34d399` | Zap |
+## Canvas Model
 
-Each item is a `PaletteItemConfig` object. `categoryOrder` and `categoryLabels` control the sidebar grouping order and display names.
+The canvas is a mixed graph of zones and components.
 
----
+### Zone ownership
 
-## Icon Registry — `src/renderer/src/lib/icons.ts`
+Component ownership is geometric, not edge-based. A component belongs to the smallest zone whose bounding box contains the component's center. This is why the renderer preserves zone position and dimensions carefully and why zone resizing matters at dispatch time.
 
-Maps `iconName` strings to Lucide icon components. Falls back to `Settings2` for unknown names. Used by `PaletteItem` and `ArchitectNode` to resolve icons at runtime without importing all of Lucide.
+### Drag/drop and defaults
 
----
+The sidebar emits palette payloads through `application/architect-node`. `App.tsx` converts those payloads into either:
 
-## Components
+- a new zone with default runtime-aware agent config
+- a new component with the selected category/icon/color/tag preset
 
-### `TopNav`
+`buildDemoGraph()` and the normalization helpers in `lib/canvas.ts` keep legacy or partially missing canvas data usable.
 
-Header bar. Props: `activeTab`, `onTabChange`, `onClear`, `onLoadDemo`.
+## Current UI Surface
 
-- Left: inline SVG architect logo + "architect" wordmark
-- Center: tab strip — Canvas, Files, Terminal, Preview
-- Right: version badge (`v0.1.0`), Clear button, Load demo button, Dispatch agents button (accent color, `Zap` icon — not yet wired)
+### `ZoneNode`
 
-### `Sidebar`
+`ZoneNode.tsx` renders the translucent overlay that represents one agent session.
 
-Left panel. Groups palette items by category using `categoryOrder`. Renders a section header for each category and a `PaletteItem` for each item within it.
+Key behaviors:
 
-### `PaletteItem`
+- `NodeResizer` exposes direct resize handles
+- the header shows status, runtime badge, and effective model
+- the launch button opens `ZoneLaunchModal`
+- the settings button opens `AgentConfigModal`
 
-A single draggable entry in the sidebar. On `dragstart`, serializes the `PaletteItemConfig` as JSON into the `application/architect-node` transfer slot. Icon color varies by category (blue = infrastructure, purple = services, emerald = storage).
+This is the main entry point for zone-level runtime overrides and one-off launches/resumes.
 
-### `AgentLog`
+### `ComponentNode`
 
-Right panel. Currently displays a placeholder empty state (ScrollText icon + "No agents running yet"). Wired up in phase 2 for live Claude agent output streams.
+`ComponentNode.tsx` renders a compact card for a design artifact.
 
-### `ResizablePanel`
+Key behaviors:
 
-Wraps the Sidebar and AgentLog. Props:
+- shows icon, tag, label, and short description
+- marks whether specs exist
+- opens `ComponentConfigModal` on edit or double-click
 
-| Prop | Type | Default |
-|---|---|---|
-| `side` | `'left' \| 'right'` | required |
-| `defaultWidth` | `number` | required |
-| `minWidth` | `number` | `120` |
-| `maxWidth` | `number` | `480` |
+Components are intentionally design-focused and do not carry runtime behavior.
 
-**Drag to resize:** `mousedown` on the 8px drag handle attaches `mousemove`/`mouseup` to `window`. Delta is applied in the correct direction based on `side`. No CSS transitions during drag to avoid lag.
+### `DispatchModal`
 
-**Collapse:** A chevron button appears on hover over the drag handle. Toggling collapsed sets the content div width to `0`. The chevron direction always points toward the panel content (visual hint to expand).
+`DispatchModal.tsx` is the current dispatch UI.
 
-### `FilesPanel`
+It supports:
 
-Full filesystem browser loaded on the Files tab. On mount, calls `window.electron.getHomeDir()` to set the initial path. Navigating into a directory pushes the current path to a history stack, enabling the back button. The "Open" button invokes `window.electron.openDirectory()` to show a native folder picker.
+- selecting which zones participate in a new dispatch
+- entering the user prompt
+- choosing the model for the coordinator runtime
+- toggling plan mode metadata
+- listing prior multi-zone dispatches
+- resuming a saved dispatch through `window.electron.dispatches.resume(...)`
 
-File entries: directories show `Folder` (amber), files show `File` (slate). Dotfiles are filtered out in the main process.
+### `TerminalPanel`
 
-### `ArchitectNode`
+`TerminalPanel.tsx` is the live PTY workspace, not a placeholder.
 
-Custom React Flow node. The node card is built with two layers to solve handle clipping:
+It provides:
 
-```
-<div className="relative">           ← outer wrapper, no overflow-hidden
-  <Handle type="target" ... />       ← left connector dot
-  <div className="... overflow-hidden"> ← card with rounded corners + accent strip
-    <div className="absolute left-0 ...">  ← colored 5px left accent strip
-    {/* tag + status dot + label */}
-    {/* prompt dropdown */}
-  </div>
-  <Handle type="source" ... />       ← right connector dot
-</div>
-```
+- xterm-backed tabs for spawned sessions
+- docked split panes with persistent layout
+- a project shell tab via `window.electron.terminal.spawnShell(...)`
+- pop-out terminals
+- saved-session resume buttons for Claude, Codex, Gemini, and OpenCode
 
-**Why two divs:** `overflow-hidden` is required on the card to render the left accent strip and rounded corners correctly. However, `overflow-hidden` clips React Flow's `Handle` components which are positioned at `-6px` outside the card boundary. The outer wrapper has no clipping so handles are always visible and interactive.
+Per-zone resume options are populated from `window.electron.zone.listSessions(...)`.
 
-**Handles:** 11×11px circles with `background: '#1e1e1e'` and `border: 2px solid nodeColor`. This matches the card background while the colored border makes them discoverable.
+### `PreviewPanel`
 
-**Status dot colors:**
+`PreviewPanel.tsx` reads `ARCHITECT/outputs/<zone>.md` for each zone and shows:
 
-| Status | Color |
-|---|---|
-| `idle` | same as `nodeColor` (accent) |
-| `running` | `#fbbf24` (amber) |
-| `done` | `#4ade80` (green) |
-| `error` | `#f87171` (red) |
+- the latest tail of zone status/output notes
+- runtime badges per zone
+- a localhost iframe preview when the output contains a preview URL
 
-**Prompt dropdown:** clicking "Agent prompt" toggles `promptOpen` in node data via `setNodes`. The `<textarea>` writes back via `updatePrompt`. Both use `useReactFlow().setNodes` so state lives in the React Flow store — no external state manager needed.
+This panel is intentionally lightweight: it watches output artifacts, not the full mailbox state.
 
----
+## Preload Contract Used By The Renderer
 
-## App Orchestration — `src/renderer/src/App.tsx`
+The renderer talks to Electron main only through `window.electron`.
 
-`ReactFlowProvider` wraps `ArchitectFlow` so that `useReactFlow()` is available both in `ArchitectFlow` itself and in any custom node rendered inside `<ReactFlow>`.
+The frontend depends heavily on these groups:
 
-**State:** `useNodesState<ArchitectNodeType>` and `useEdgesState<Edge>` manage the canvas state.
+- filesystem: `readDir`, `readFile`, `openDirectory`, `getHomeDir`
+- canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`, `unwatchCanvas`
+- dispatches: `runGraph`, `dispatches.list`, `dispatches.resume`, `dispatches.delete`, `dispatches.updateSummary`
+- zones: `zone.launch`, `zone.listSessions`, `zone.deleteSession`, `zone.updateSessionSummary`, `zone.resetSession`
+- terminals: `terminal.spawnShell`, `terminal.input`, `terminal.resize`, `terminal.close`, `terminal.popout`, `terminal.dock`
+- streaming events: `terminal.onData`, `terminal.onExit`, `terminal.onStatus`, `mailbox.onActivity`
 
-**Drag and drop:** `onDrop` reads `application/architect-node` from the drag transfer, converts the screen position to flow coordinates via `screenToFlowPosition`, and adds a new node. `onDragOver` sets `dropEffect: 'move'`.
+The older names `zone.run`, `zone.resume`, `zone.getSession`, and top-level `listDispatches` are not part of the current API contract.
 
-**Tab switching:** The canvas `<ReactFlow>` container is always mounted (toggled with `hidden` class) to preserve node/edge state when switching to other tabs. `FilesPanel` is conditionally rendered. Terminal and Preview show a "coming soon" placeholder.
+## Runtime-Related UI Caveats
 
-**Demo data:** `onLoadDemo` loads 3 pre-wired nodes (React App, API Gateway, PostgreSQL) with 2 edges.
+The renderer exposes a more uniform UI than the runtime adapters currently implement.
 
-**Edge styling:** `defaultEdgeOptions: { style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }`. React Flow's default bezier edge type produces smooth curved connections.
+Important caveats:
 
----
+- zone system prompt injection is only honored as a dedicated CLI argument for Claude
+- plan mode is recorded for every dispatch, but only Claude currently consumes it in runtime args
+- "Reset conversation" deletes saved zone session metadata generically, but the practical meaning still depends on the underlying runtime session store
 
-## Styling
+## Recommended Reading Order
 
-### Tailwind Color Tokens (`tailwind.config.ts`)
+If you need to understand the frontend quickly, read:
 
-| Token | Hex | Used for |
-|---|---|---|
-| `canvas` | `#111111` | Canvas background |
-| `panel` | `#191919` | Sidebar, top nav, agent log backgrounds |
-| `node` | `#212121` | Node card background, button hover states |
-| `node-border` | `#2d2d2d` | Borders throughout |
-| `node-border-active` | `#5b5bf0` | Selected node borders |
-| `accent` | `#5b5bf0` | Primary action button, edge active state |
-
-### React Flow CSS Overrides (`index.css`)
-
-- Canvas background: `#111111`
-- Controls: borderless, dark `#191919` buttons
-- Edges: `stroke: #5b5bf0`, `stroke-width: 2`
-- Selection box: `#5b5bf0` with 8% opacity fill
-
----
-
-## Running the App
-
-```bash
-cd /Users/masonostman/Documents/Architect
-npm install
-npm run dev
-```
-
-This starts the electron-vite dev server and launches the Electron window with hot module replacement.
-
----
-
-## Phase 2 — Agent Integration (Planned)
-
-The frontend is designed to hand off to the Claude Agent SDK. Each node's `prompt` field contains the user's intent for that component. The "Dispatch agents" button in `TopNav` is the entry point — when wired up, it will:
-
-1. Traverse the node graph to determine build order (respecting edges as dependencies)
-2. Spawn a Claude agent per node, passing the node `prompt` as the task description
-3. Stream agent output into the `AgentLog` panel
-4. Update each node's `status` field (`running` → `done` / `error`) to reflect progress in real time
+1. `src/renderer/src/types.ts`
+2. `src/renderer/src/lib/canvas.ts`
+3. `src/renderer/src/App.tsx`
+4. `src/renderer/src/components/dispatch/DispatchModal.tsx`
+5. `src/renderer/src/components/nodes/ZoneNode.tsx`
+6. `src/renderer/src/components/layout/TerminalPanel.tsx`
+7. `src/preload/index.ts`

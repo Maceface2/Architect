@@ -127,10 +127,6 @@ export function createParticipant(projectDir: string, desc: ParticipantDescripto
   atomicWriteJson(participantManifestPath(projectDir, desc.id), manifest, participantTmpDir(projectDir, desc.id))
 }
 
-export function deleteParticipant(projectDir: string, participantId: string): void {
-  try { fs.rmSync(participantDir(projectDir, participantId), { recursive: true, force: true }) } catch {}
-}
-
 // Wipe the entire mailbox tree. Called by both runGraph (fresh dispatch /
 // redispatch) AND resumeDispatch — every entry point into a dispatch starts
 // with an empty mailbox.

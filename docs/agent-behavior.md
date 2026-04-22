@@ -66,7 +66,7 @@ Each zone contributes:
 At dispatch time Architect generates:
 
 - a zone system prompt file in `ARCHITECT/prompts/<zone>.md`
-- optionally a zone task file in `ARCHITECT/tasks/<zone>.md`
+- mailbox participant directories in `ARCHITECT/mailbox/<participant>/`
 - a matching output/status log path in `ARCHITECT/outputs/<zone>.md`
 
 ## Prompt Layers
@@ -85,27 +85,23 @@ Generated from zone configuration and canvas context. It includes:
 - embedded `SKILL.md` contents
 - the freeform behavior text from the zone editor
 - the instruction to write real code in the project root
-- the requirement to finish by printing `ARCHITECT_COMPLETE`
 
 This is built by `buildZoneSystemPrompt()`.
 
-### 2. Task Prompt Layer
+### 2. Bootstrap / Task Layer
 
-This is dispatch-specific work. In multi-zone mode the Architect coordinator writes it to `ARCHITECT/tasks/<zone>.md`.
+Dispatch-specific work is not delivered by PTY polling anymore.
 
-The task file is supposed to contain:
+In multi-zone mode:
 
-- concrete responsibilities
-- file ownership
-- API contracts and schemas
-- handoff expectations from upstream zones
-- acceptance criteria
+- each zone gets a one-shot bootstrap prompt telling it to read `ARCHITECT/prompts/<zone>.md`
+- the zone then enters the mailbox listen loop via `ARCHITECT/scripts/mailbox-listen.sh <participantId>`
+- the Architect coordinator and the zones exchange `task`, `result`, `cancel`, and harness messages through mailbox inbox/outbox JSON files
 
-Zones are bootstrapped with a minimal instruction:
+That separation still matters:
 
-`Read ARCHITECT/tasks/<zone>.md and execute every instruction in it.`
-
-That separation matters because the system prompt is durable zone identity while task files are per-dispatch instructions.
+- the system prompt defines durable zone identity and working rules
+- mailbox messages carry the specific work for one dispatch
 
 ## Multi-Zone Orchestration
 
@@ -114,24 +110,22 @@ When there are two or more zones, Architect runs in coordinator mode.
 ### Sequence
 
 1. `runGraph()` normalizes settings and filters the selected zones.
-2. `setupWorkspace()` writes the manifest, prompts, diagram, and directories.
-3. Architect spawns an `architect-agent` session using the project default runtime.
-4. The coordinator receives `ARCHITECT/prompts/architect.md`.
-5. Architect watches `ARCHITECT/tasks/` for non-empty `*.md` files.
-6. When a task file appears for a zone, Architect marks that zone as task-ready.
-7. A task-ready zone is only spawned after all upstream zones are marked complete.
-8. Completion is detected by terminal output containing `ARCHITECT_COMPLETE`.
-9. When an upstream zone completes, downstream zones are rechecked.
+2. `setupWorkspace()` writes the manifest, prompts, diagram, mailbox scaffold, and output directories.
+3. Architect pre-spawns every selected zone plus one `architect-agent` coordinator session.
+4. The coordinator gets `ARCHITECT/prompts/architect.md`.
+5. Each zone gets `ARCHITECT/prompts/<zone>.md`, `MBX_*` environment variables, and a bootstrap instruction to enter the mailbox loop.
+6. `startMailboxObserver()` watches every participant inbox/outbox, updates `ARCHITECT/mailbox/_index.json`, emits `mailbox:activity` renderer events, and injects harness warnings/timeouts when a task stalls.
+7. Task routing and handoffs happen through mailbox messages rather than `ARCHITECT/tasks/*.md` polling.
 
 ### What The Coordinator Is Told To Do
 
 The coordinator prompt instructs it to:
 
 - read `ARCHITECT/manifest.json`
-- write a task file for every zone
-- write task files in dependency order
+- write mailbox `task` messages for the selected zones
+- read mailbox `result` / harness messages and react to them
 - monitor `ARCHITECT/outputs/`
-- coordinate downstream handoffs through updated task files
+- coordinate downstream handoffs through mailbox traffic and prompt context
 - avoid using sub-agents or task tools
 
 The coordinator is therefore a filesystem orchestrator, not a direct runtime supervisor.
@@ -143,48 +137,60 @@ If only one zone is selected, Architect skips the coordinator.
 Behavior changes:
 
 - no `Architect` coordinator session
-- no dependency watcher gating zone launch
+- no mailbox observer coordination loop
 - the user prompt goes directly to the zone runtime
 - the session is treated as interactive instead of autonomous coordinator-managed work
 
 Architect still writes prompt artifacts to `ARCHITECT/`, but the session launches directly with the user request.
 
-## Completion Detection
+## Mailbox And Liveness Detection
 
-Architect does not use runtime-native completion callbacks for agent work.
+Architect does not use runtime-native task callbacks.
 
-Instead:
+Instead, the mailbox observer watches filesystem activity and PTY state:
 
-- each zone prompt tells the agent to end with `echo ARCHITECT_COMPLETE`
-- the PTY session buffer is scanned for the string `ARCHITECT_COMPLETE`
-- that marks the zone as done
+- zone inbox files reveal newly delivered `task` and `cancel` messages
+- zone outbox files reveal `result` replies
+- `ARCHITECT/outputs/<zone>.md` mtimes provide one liveness signal
+- PTY byte activity provides another liveness signal
 
-This behavior is runtime-agnostic, but it is brittle:
+If a task stays pending too long or a participant goes quiet, the observer injects harness messages such as:
 
-- false positives are possible if the agent prints the string incidentally
-- failure to print the sentinel blocks downstream zones
-- completion semantics depend on prompt compliance
+- `harness.delivery-warning`
+- `harness.wake`
+- `harness.timeout`
+- `harness.heartbeat-missed`
+- `harness.pty-exit`
+
+This is more accurate than the old sentinel-string flow, but it is still a file-mediated protocol rather than a runtime-native orchestration API.
 
 ## Session Persistence And Resume
 
-Session persistence is implemented only for Claude.
+Session persistence is implemented for Claude, Codex, Gemini, and OpenCode.
 
 ### How It Works
 
-`src/main/sessionCapture.ts` watches `~/.claude/projects/<sanitized-cwd>/`.
+`src/main/sessionCapture.ts` snapshots each runtime's on-disk session store before spawn, then polls for a new session matching the current project.
 
-For fresh Claude sessions:
+Runtime-specific sources:
 
-1. Architect snapshots existing Claude session UUIDs before spawn.
-2. It spawns the new Claude PTY.
-3. It polls for a newly created `.jsonl` file.
+- Claude: `~/.claude/projects/<sanitized-cwd>/`
+- Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`
+- Gemini: `~/.gemini/tmp/<project>/chats/session-*.json`
+- OpenCode: the runtime's saved session metadata discovered by `snapshotOpencodeSessions()`
+
+For fresh sessions:
+
+1. Architect snapshots the runtime's existing sessions before spawn.
+2. It spawns the new PTY.
+3. It polls for a newly created session that matches the current project.
 4. It saves the discovered `sessionId` into `ARCHITECT/sessions/<zone>.json`.
 
 For resume:
 
 - Architect reads the saved session file
-- checks that runtime is still `claude`
-- launches `claude --resume <sessionId>`
+- checks that the runtime-specific session is still reachable on disk
+- launches the runtime-specific resume form (`claude --resume`, `codex resume`, `gemini --resume`, `opencode --continue --session`)
 - optionally writes the next user prompt after spawn if needed
 
 ### Where Resume Is Used
@@ -193,19 +199,8 @@ Resume support appears in:
 
 - zone re-open from the terminal panel
 - single-zone dispatch reruns
-- single-zone `Run` calls
+- zone launch/resume from the zone modal
 - assistant reopen
-
-### What Other Runtimes Lack
-
-Codex, Gemini, and OpenCode currently do not have:
-
-- session ID capture
-- persisted runtime-native conversation state
-- resume support in `resumeZone()`
-- conversation reset semantics beyond replacing the PTY
-
-This is not a UI-only omission. `resumeZone()` explicitly returns `resume-not-supported:<runtime>` for anything other than Claude.
 
 ## Runtime Argument Mapping
 
@@ -236,6 +231,7 @@ Arguments used:
 - `--no-alt-screen`
 - `-a never`
 - `-s workspace-write`
+- `resume <sessionId>` when resuming
 - `--model <model>`
 - positional prompt text
 
@@ -244,7 +240,7 @@ Consequences:
 - Codex always runs with approval mode effectively disabled from Architect's side.
 - Sandbox mode is fixed to `workspace-write`.
 - There is no runtime-specific plan mode support in the current adapter.
-- There is no persisted resume.
+- Saved Codex sessions can be resumed.
 - Zone system prompts are not passed as a separate first-class argument.
 
 ### Gemini CLI
@@ -252,13 +248,14 @@ Consequences:
 Arguments used:
 
 - `--approval-mode yolo`
+- `--resume <sessionId>` when resuming
 - `--model <model>`
 - `--prompt-interactive <prompt>`
 
 Consequences:
 
 - Gemini is always forced into an autonomous approval mode.
-- There is no persisted resume.
+- Saved Gemini sessions can be resumed.
 - There is no system prompt injection equivalent in the current adapter.
 - Plan mode in the UI does not translate into Gemini-specific runtime behavior.
 
@@ -266,6 +263,7 @@ Consequences:
 
 Arguments used:
 
+- `--continue --session <sessionId>` when resuming
 - `--prompt <prompt>`
 - `--model <model>`
 
@@ -273,7 +271,7 @@ Consequences:
 
 - OpenCode currently has the thinnest integration.
 - No explicit approval-mode mapping is configured.
-- No resume support is implemented.
+- Saved OpenCode sessions can be resumed.
 - No system prompt injection path exists in the adapter.
 - No plan mode handling exists.
 
@@ -288,8 +286,8 @@ Consequences:
 | Assistant panel support | Yes | Yes | Yes | Yes |
 | Zone env var injection | Yes | Yes | Yes | Yes |
 | Zone system prompt injection as dedicated runtime arg | Yes | No | No | No |
-| Saved session capture | Yes | No | No | No |
-| Resume saved session | Yes | No | No | No |
+| Saved session capture | Yes | Yes | Yes | Yes |
+| Resume saved session | Yes | Yes | Yes | Yes |
 | Reset conversation semantics | Yes | No | No | No |
 | Plan mode wired to runtime args | Yes | No | No | No |
 | Runtime-specific permission strategy implemented | Yes | Partial | Partial | Minimal |
@@ -312,7 +310,7 @@ Result:
 
 - non-Claude zones do not receive the zone behavior prompt through a dedicated system-prompt channel
 - in single-zone runs they only get the user prompt
-- in multi-zone runs they only get the bootstrap instruction to read the task file
+- in multi-zone runs they only get the bootstrap instruction to read the prompt file and enter the mailbox loop
 
 This is one of the biggest current parity gaps.
 
@@ -329,11 +327,11 @@ Result:
 
 - for Codex, Gemini, and OpenCode, checking the box currently changes recorded dispatch metadata but not CLI invocation behavior
 
-### Resume UI Is Claude-Specific In Practice
+### Resume UI Is Multi-Runtime
 
-The terminal panel only exposes resume for exited Claude sessions with saved state. This matches the implementation.
+The terminal panel exposes resume for exited Claude, Codex, Gemini, and OpenCode sessions when a saved session record is available.
 
-The zone editor's "Reset conversation" control is also Claude-specific in meaning because only Claude has persisted session state to clear.
+The zone editor's "Reset conversation" control deletes Architect's saved session record for that zone. That works across runtimes, but only Claude also has dedicated system-prompt support, so the practical effect still varies by runtime.
 
 ## Permissions And Autonomy Semantics
 
@@ -355,14 +353,18 @@ They are not a cross-runtime enforcement layer.
 
 ## Dispatch History
 
-Dispatch history is stored only for multi-zone runs after a Claude session ID is captured for the Architect coordinator.
+Dispatch history is stored for multi-zone runs after the Architect coordinator session is captured, regardless of whether that coordinator is Claude, Codex, Gemini, or OpenCode.
 
 Stored record fields:
 
 - `architectSessionId`
+- `architectRuntime`
+- `dispatchId`
 - `zoneIds`
 - `zoneLabels`
+- `zoneSessions`
 - `userPrompt`
+- `summary`
 - `model`
 - `planMode`
 - `timestamp`
@@ -371,7 +373,7 @@ This powers the "Prior Architect sessions" list in the dispatch modal.
 
 Practical limitation:
 
-- history persistence is coupled to captured coordinator sessions, which today means it is effectively Claude-centered even though the UI presents dispatch history more generally
+- history persistence is still coupled to successful coordinator session capture, so a failed or unreachable runtime session can still leave a dispatch without a resumable record
 
 ## Architecture Assistant Behavior
 
@@ -382,7 +384,7 @@ On start:
 1. Architect writes `ARCHITECT/.assistant-context.md`.
 2. It spawns the selected runtime.
 3. Fresh sessions get the prompt `Read ARCHITECT/.assistant-context.md`.
-4. Claude resumes prior assistant conversations when available.
+4. If a saved session for that runtime is still reachable on disk, Architect resumes it.
 
 The assistant prompt built in `App.tsx` teaches the runtime:
 
@@ -399,12 +401,12 @@ This makes the assistant an architecture editor, not the same thing as the dispa
 If Architect is meant to support multiple CLIs equally, these are the main missing pieces:
 
 1. Non-Claude system prompt support.
-2. Non-Claude resume/session persistence.
+2. Runtime-aware "reset conversation" semantics outside Claude.
 3. Runtime-aware plan mode behavior outside Claude.
 4. A normalized permission model rather than per-runtime hard-coded flags.
-5. Better completion tracking than string matching on terminal output.
+5. Better runtime-native orchestration than filesystem mailbox observation.
 6. Explicit runtime capability metadata so the UI can disable unsupported controls instead of implying parity.
-7. Dispatch history decoupled from Claude-specific session capture.
+7. Dispatch history decoupled from session-capture success.
 
 ## Recommended Reading Order In The Code
 

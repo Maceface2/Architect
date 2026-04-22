@@ -27,10 +27,11 @@ Preload (src/preload/index.ts)
   └── Exposes window.electron API via contextBridge (typed: readDir, runGraph, terminal.*)
 
 Renderer (src/renderer/src/)
-  ├── App.tsx        — Root: DirectoryGate → ArchitectFlow (tab layout: Canvas / Files / Terminal)
-  ├── types.ts       — All shared types (ArchitectNodeData, NodeSkillFile, NodeTools, etc.)
-  ├── components/layout/   — TopNav, Sidebar, AgentLog, FilesPanel, TerminalPanel, ResizablePanel
-  ├── components/nodes/    — ArchitectNode (ReactFlow custom node), nodeTypes registry
+  ├── App.tsx        — Root: directory gate, canvas state, dispatch flow, assistant context
+  ├── types.ts       — Shared zone/component canvas types, settings, dispatch/session records
+  ├── components/layout/   — TopNav, Sidebar, FilesPanel, TerminalPanel, PreviewPanel
+  ├── components/dispatch/ — DispatchModal (new/resume dispatch UI)
+  ├── components/nodes/    — ZoneNode, ComponentNode, config/launch modals, nodeTypes registry
   ├── components/palette/  — PaletteItem (drag source)
   └── data/componentPalette.ts — Pre-defined node templates (infrastructure/services/storage)
 ```
@@ -39,18 +40,21 @@ Renderer (src/renderer/src/)
 
 When the user clicks **Dispatch**:
 
-1. `window.electron.runGraph(nodes, edges, projectDir)` is called from the renderer.
-2. Main process (`terminals.ts → runGraph`) creates an `ARCHITECT/` workspace inside the project directory:
+1. `window.electron.runGraph(nodes, edges, projectDir, settings, dispatch, dispatchContext)` is called from the renderer.
+2. Main process (`terminals.ts → runGraph`) wipes any stale mailbox state, then creates an `ARCHITECT/` workspace inside the project directory:
    - `ARCHITECT/manifest.json` — full graph description
-   - `ARCHITECT/prompts/overseer.md` — Overseer's coordination instructions
-   - `ARCHITECT/prompts/<agent>.md` — per-agent role prompt (built from node data + edges)
-   - `ARCHITECT/tasks/` — written by Overseer at runtime
-   - `ARCHITECT/outputs/` — written by agents at runtime
-3. One `Codex --dangerously-skip-permissions` PTY is spawned per node **plus** one Overseer session.
-4. Sessions are detected as ready when their output matches `/[>❯]\s*$/`.
-5. Overseer is immediately told to read its prompt file and coordinate.
-6. Main process polls `ARCHITECT/tasks/<agent>.md` every 2s; when the Overseer writes a task file, the corresponding agent PTY is sent its prompt command.
-7. Terminal I/O streams back to the renderer via `terminal:data` / `terminal:exit` IPC events.
+   - `ARCHITECT/diagram.md` — Mermaid view of the zone graph
+   - `ARCHITECT/prompts/architect.md` — coordinator instructions
+   - `ARCHITECT/prompts/<zone>.md` — per-zone system prompt
+   - `ARCHITECT/mailbox/<participant>/{inbox,outbox}` — mailbox protocol state
+   - `ARCHITECT/mailbox/_index.json` — live observer snapshot for the renderer
+   - `ARCHITECT/outputs/` — per-zone status/output notes
+3. For multi-zone dispatches, one Architect coordinator PTY is spawned plus one PTY per selected zone. Zone sessions are pre-spawned up front and wired with `MBX_*` env vars for the mailbox scripts.
+4. Sessions are considered ready when their rendered PTY output looks like a CLI prompt, with a startup-timeout fallback for unknown TUIs.
+5. A one-shot bootstrap prompt tells each participant to read its prompt file and enter its mailbox loop.
+6. `startMailboxObserver()` watches inbox/outbox writes, updates `ARCHITECT/mailbox/_index.json`, emits `mailbox:activity` events to the renderer, and injects harness warnings/timeouts when zones stall.
+7. `runGraph()` captures new session IDs for Claude, Codex, Gemini, and OpenCode so dispatch history and per-zone resume can track whichever runtime was used.
+8. Single-zone dispatch skips the Architect coordinator and launches the zone directly with its prompt and generated system prompt.
 
 ### Skills system
 
@@ -59,9 +63,11 @@ When the user clicks **Dispatch**:
 ### IPC surface
 
 All renderer ↔ main communication goes through `window.electron` (defined in preload):
-- `readDir / readFile / readOutputs / getHomeDir / openDirectory` — file system ops
+- `readDir / readFile / getHomeDir / openDirectory` — file system ops
 - `runGraph` — start agent execution, returns `TerminalInfo[]`
-- `terminal.input / terminal.resize / terminal.killAll` — PTY control
+- `dispatches.list / dispatches.resume / dispatches.delete / dispatches.updateSummary` — saved multi-zone dispatch history
+- `zone.launch / zone.listSessions / zone.deleteSession / zone.updateSessionSummary / zone.resetSession` — per-zone launch + session history
+- `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll` — PTY control
 - `terminal.onData / terminal.onExit` — streaming terminal output (event listeners, return cleanup fn)
 
 ### Styling

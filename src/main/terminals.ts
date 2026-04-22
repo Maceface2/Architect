@@ -281,22 +281,20 @@ export interface GraphEdge {
 // ──────────────────────────────────────────────────────────────────────────
 // PTY lifecycle state machine.
 //
-//   spawning → ready → running → failed
+//   spawning → running → failed
 //
 // Transitions:
-//   - spawning → ready:   observe() sees the CLI prompt glyph
-//   - ready → running:    sendPrompt() delivers the one-shot bootstrap
-//                         prompt that tells the agent to enter its loop
-//   - * → failed:         PTY exits before ready / startup timeout fires
+//   - spawning → running: first PTY output is observed from the spawned CLI
+//   - * → failed:         PTY exits while the session is still live
 //
 // Under v4 (mailbox protocol) the 'finished' state is unused — agents live
 // in a continuous listen loop and only exit via pty-close. Per-task state
 // lives in ARCHITECT/mailbox/_index.json.participants[*].state, not here.
 // ──────────────────────────────────────────────────────────────────────────
 
-export type ZoneLifecycleState = 'spawning' | 'ready' | 'running' | 'failed'
+export type ZoneLifecycleState = 'spawning' | 'running' | 'failed'
 
-export type ZoneFailureKind = 'binary-missing' | 'prompt-delivery' | 'startup-timeout' | 'pty-exit'
+export type ZoneFailureKind = 'binary-missing' | 'pty-exit'
 
 export interface ZoneFailure {
   kind: ZoneFailureKind
@@ -306,7 +304,7 @@ export interface ZoneFailure {
 
 export interface ZoneEvent {
   seq: number
-  kind: string            // 'spawn' | 'ready' | 'send-prompt' | 'complete' | 'fail' | …
+  kind: string            // 'spawn' | 'running' | 'fail' | …
   state: ZoneLifecycleState
   message?: string
   ts: number
@@ -314,112 +312,17 @@ export interface ZoneEvent {
 
 interface Session {
   pty: pty.IPty
-  // Rendered-screen emulator. Every PTY chunk is fed into it so the
-  // `spawning → ready` prompt-glyph cue can be detected against the visible
-  // screen grid (ANSI already interpreted). The renderer still gets the raw
-  // stream over `terminal:data`. v4 only uses the emulator for ready-at-spawn
-  // detection — no per-task ACK/COMPLETE cue scraping.
   term: HeadlessTerminal
   lifecycle: ZoneLifecycleState
   events: ZoneEvent[]
   eventSeq: number
-  // 'agent' sessions run the observe/startup-timeout pipeline; 'shell'
-  // sessions are plain and bypass it.
   kind: 'agent' | 'shell'
   runtime: AgentRuntime | 'shell'
   createdAt: number
   lastError?: ZoneFailure
-  readyCallbacks: (() => void)[]
   // Recent PTY output tail — fed to `_index.json.tail` for debugger views.
   tail: string
   lastActivityMs: number
-  startupTimer?: NodeJS.Timeout
-}
-
-const STARTUP_TIMEOUT_MS = 30_000
-// Ported from claw-code's detect_ready_for_prompt (worker_boot.rs:830). TUI
-// CLIs render their prompt inside a bordered box (Claude Code, Codex, Gemini,
-// opencode), so the bottom non-empty line is typically the box border, not the
-// prompt glyph itself. Matching has to look for box-enclosed prompts + common
-// "ready for input" strings, and must reject bare shell prompts.
-const READY_TEXT_NEEDLES = [
-  'ready for input',
-  'ready for your input',
-  'ready for prompt',
-  'send a message',
-  'type a message',
-]
-
-// Walks the active buffer (scrollback + viewport) and returns the rendered
-// screen as plain text — ANSI escapes already interpreted by the emulator.
-function renderScreenText(term: HeadlessTerminal): string {
-  const buf = term.buffer.active
-  const lines: string[] = []
-  const top = Math.max(0, buf.baseY - 200) // keep a reasonable window
-  const bottom = buf.baseY + term.rows
-  for (let y = top; y < bottom; y++) {
-    const line = buf.getLine(y)
-    if (!line) continue
-    lines.push(line.translateToString(true))
-  }
-  return lines.join('\n')
-}
-
-function lastNonEmptyLine(rendered: string): string {
-  const lines = rendered.split('\n')
-  for (let i = lines.length - 1; i >= 0; i--) {
-    const trimmed = lines[i].trim()
-    if (trimmed) return trimmed
-  }
-  return ''
-}
-
-function isShellPrompt(trimmed: string): boolean {
-  return (
-    trimmed.endsWith('$') ||
-    trimmed.endsWith('%') ||
-    trimmed.endsWith('#') ||
-    trimmed.startsWith('$ ') ||
-    trimmed.startsWith('% ') ||
-    trimmed.startsWith('# ')
-  )
-}
-
-function looksLikePromptReady(rendered: string): boolean {
-  const lowered = rendered.toLowerCase()
-  for (const needle of READY_TEXT_NEEDLES) {
-    if (lowered.includes(needle)) return true
-  }
-
-  // Scan the last ~10 non-empty lines — TUI CLIs render footer hints /
-  // status bars below the input row, so the input cue is rarely the very
-  // bottom line.
-  const lines = rendered.split('\n')
-  let scanned = 0
-  for (let i = lines.length - 1; i >= 0 && scanned < 10; i--) {
-    const trimmed = lines[i].trim()
-    if (!trimmed) continue
-    scanned += 1
-    if (isShellPrompt(trimmed)) continue
-
-    if (
-      trimmed === '>' ||
-      trimmed === '›' ||
-      trimmed === '❯' ||
-      trimmed.startsWith('> ') ||
-      trimmed.startsWith('› ') ||
-      trimmed.startsWith('❯ ') ||
-      trimmed.startsWith('>>>') ||
-      // Box-drawn TUI prompts (Claude Code, Codex, Gemini). The input row
-      // looks like `│ > ` or `│ › ` inside a bordered rectangle.
-      trimmed.includes('│ >') ||
-      trimmed.includes('│ ›') ||
-      trimmed.includes('│ ❯')
-    ) {
-      return true
-    }
-  }
-  return false
 }
 
 interface SpawnAgentOptions {
@@ -462,7 +365,6 @@ interface SpawnAgentOptions {
 }
 
 const sessions = new Map<string, Session>()
-let activeWatcher: fs.FSWatcher | null = null
 let activeDispatchCoordinator: { stop: () => void } | null = null
 
 // Per-session capture readiness. 'pending' means a fresh spawn is still polling
@@ -472,15 +374,9 @@ let activeDispatchCoordinator: { stop: () => void } | null = null
 // absence means "no capture in flight, close is safe."
 type CaptureState = 'pending' | 'ready'
 const captureStates = new Map<string, CaptureState>()
-const captureWaiters = new Map<string, (() => void)[]>()
 
 function setCaptureReady(id: string): void {
   captureStates.set(id, 'ready')
-  const waiters = captureWaiters.get(id)
-  if (waiters) {
-    captureWaiters.delete(id)
-    for (const fn of waiters) fn()
-  }
 }
 
 export function getCaptureState(id: string): CaptureState | null {
@@ -592,36 +488,6 @@ function failSession(
   if (session.lifecycle === 'failed') return
   session.lastError = { kind, message, ts: Date.now() }
   setLifecycle(id, session, 'failed', 'fail', `${kind}: ${message}`)
-  if (session.startupTimer) {
-    clearTimeout(session.startupTimer)
-    session.startupTimer = undefined
-  }
-  // Unblock any awaiters so they don't hang forever.
-  session.readyCallbacks.splice(0).forEach(cb => cb())
-}
-
-// Observe-on-every-chunk dispatcher. Runs after each PTY chunk has been
-// written into the headless Terminal. v4 only uses this for the
-// `spawning → ready` transition at bootstrap; per-task ACK/COMPLETE cues
-// were removed when the mailbox protocol replaced stdin pokes.
-function observeZoneOutput(id: string): void {
-  const session = sessions.get(id)
-  if (!session || session.kind !== 'agent') return
-
-  // spawning → ready: bottom non-empty line looks like a CLI prompt. This
-  // gates the one-shot bootstrap poke so we don't type into the PTY before
-  // the CLI is accepting input.
-  if (session.lifecycle === 'spawning') {
-    const rendered = renderScreenText(session.term)
-    if (looksLikePromptReady(rendered)) {
-      if (session.startupTimer) {
-        clearTimeout(session.startupTimer)
-        session.startupTimer = undefined
-      }
-      setLifecycle(id, session, 'ready', 'ready', 'CLI prompt detected')
-      session.readyCallbacks.splice(0).forEach(cb => cb())
-    }
-  }
 }
 
 const TAIL_MAX_BYTES = 4_000
@@ -650,45 +516,21 @@ function createSession(
     kind,
     runtime,
     createdAt: Date.now(),
-    readyCallbacks: [],
     tail: '',
     lastActivityMs: Date.now(),
   }
   sessions.set(id, session)
   pushEvent(session, 'spawn', `pty spawned (${runtime})`)
 
-  // Agent sessions get a startup-timeout safety net. If the CLI is still in
-  // `spawning` after STARTUP_TIMEOUT_MS, optimistically transition to `ready`
-  // so unknown TUIs (whose prompt cues we haven't characterized) don't
-  // hard-fail. Mailbox observer will still surface real stalls via
-  // `harness.delivery-warning` / `harness.heartbeat-missed` synthetic events.
-  if (kind === 'agent') {
-    session.startupTimer = setTimeout(() => {
-      const live = sessions.get(id)
-      if (!live || live !== session) return
-      if (live.lifecycle !== 'spawning') return
-      console.warn(
-        `[registry] ${id}: no prompt cue seen within ${STARTUP_TIMEOUT_MS}ms — marking ready optimistically`,
-      )
-      setLifecycle(id, live, 'ready', 'ready', 'startup-timeout fallback (cue not matched)')
-      live.readyCallbacks.splice(0).forEach(cb => cb())
-    }, STARTUP_TIMEOUT_MS)
-  }
-
   ptyProcess.onData(data => {
     // Always broadcast the raw stream so the renderer's xterm instance
-    // sees the exact same bytes. Agent sessions additionally feed the
-    // headless emulator so the bootstrap ready cue can fire.
+    // sees the exact same bytes.
+    if (kind === 'agent' && session.lifecycle === 'spawning') {
+      setLifecycle(id, session, 'running', 'running', 'PTY output observed')
+    }
     broadcast('terminal:data', { id, data })
     session.lastActivityMs = Date.now()
     session.tail = (session.tail + data).slice(-TAIL_MAX_BYTES)
-    if (kind === 'agent') {
-      try {
-        term.write(data, () => observeZoneOutput(id))
-      } catch (err) {
-        console.error(`[registry] term.write failed on ${id}`, err)
-      }
-    }
   })
 
   ptyProcess.onExit(({ exitCode }) => {
@@ -698,85 +540,10 @@ function createSession(
       if (kind === 'agent' && session.lifecycle !== 'failed') {
         failSession(id, session, 'pty-exit', `PTY exited with code ${exitCode ?? 0}`)
       }
-      if (session.startupTimer) {
-        clearTimeout(session.startupTimer)
-        session.startupTimer = undefined
-      }
       try { session.term.dispose() } catch {}
       sessions.delete(id)
     }
     onExit?.()
-  })
-}
-
-// One-shot bootstrap poke. Under v4 this is called exactly once per agent
-// session — when the CLI reaches `ready` at startup — to type the initial
-// "enter your listen loop" prompt. Per-task delivery goes through the
-// mailbox, never through the PTY.
-// Body-then-CR split write preserves bracketed-paste semantics for Ink CLIs
-// (see memory/feedback_pty_paste_submit.md).
-function sendPrompt(id: string, body: string): boolean {
-  const session = sessions.get(id)
-  if (!session) {
-    console.warn(`[registry] no live session ${id}; cannot send prompt`)
-    return false
-  }
-  if (session.kind !== 'agent') {
-    console.warn(`[registry] session ${id} is not an agent; cannot send prompt`)
-    return false
-  }
-  if (session.lifecycle === 'failed') {
-    console.warn(`[registry] session ${id} is failed; cannot send prompt`)
-    return false
-  }
-  setLifecycle(id, session, 'running', 'send-prompt', 'bootstrap poke')
-  try {
-    session.pty.write(body)
-  } catch (err) {
-    console.error(`[registry] failed to write bootstrap body to ${id}`, err)
-    failSession(id, session, 'prompt-delivery', `pty.write body failed: ${String(err)}`)
-    return false
-  }
-  setTimeout(() => {
-    const live = sessions.get(id)
-    if (!live || live !== session) return
-    try { live.pty.write('\r') } catch (err) {
-      console.error(`[registry] failed to send CR to ${id}`, err)
-    }
-  }, 250)
-  return true
-}
-
-// Resolves when the session is `ready`, or rejects on timeout / failure.
-// Coordinator `await_ready` gate — blocks first-round poke until the CLI
-// actually shows its prompt.
-function awaitReady(id: string, timeoutMs = 15_000): Promise<void> {
-  return new Promise((resolve, reject) => {
-    const session = sessions.get(id)
-    if (!session) return reject(new Error(`no session ${id}`))
-    if (session.lifecycle === 'ready' || session.lifecycle === 'running') {
-      return resolve()
-    }
-    if (session.lifecycle === 'failed') {
-      return reject(new Error(`session ${id} failed: ${session.lastError?.message ?? 'unknown'}`))
-    }
-    let done = false
-    const timer = setTimeout(() => {
-      if (done) return
-      done = true
-      reject(new Error(`awaitReady timed out after ${timeoutMs}ms`))
-    }, timeoutMs)
-    session.readyCallbacks.push(() => {
-      if (done) return
-      done = true
-      clearTimeout(timer)
-      const live = sessions.get(id)
-      if (!live || live.lifecycle === 'failed') {
-        reject(new Error(`session ${id} failed while awaiting ready`))
-      } else {
-        resolve()
-      }
-    })
   })
 }
 
@@ -828,7 +595,6 @@ function spawnAgentSession({
   // Reset any capture state from a prior spawn at this id (e.g. resume replacing
   // a fresh session). captureRuntime below will re-mark 'pending' if needed.
   captureStates.delete(id)
-  captureWaiters.delete(id)
 
   const bin = resolveBinary(runtime)
   if (!bin) {
@@ -1006,21 +772,14 @@ export function resizeTerminal(id: string, cols: number, rows: number) {
 
 // Kills agent and assistant sessions; preserves user shell sessions.
 export function killAll() {
-  activeWatcher?.close()
-  activeWatcher = null
   activeDispatchCoordinator?.stop()
   activeDispatchCoordinator = null
   for (const [id, session] of sessions) {
     if (id.startsWith(SHELL_ID_PREFIX)) continue
-    if (session.startupTimer) {
-      clearTimeout(session.startupTimer)
-      session.startupTimer = undefined
-    }
     try { session.pty.kill() } catch {}
     try { session.term.dispose() } catch {}
     sessions.delete(id)
     captureStates.delete(id)
-    captureWaiters.delete(id)
   }
 }
 
@@ -1043,7 +802,6 @@ export function closeTerminal(id: string): { ok: boolean; reason?: string } {
   // / markReady callbacks remain valid.
   if (state !== 'pending') {
     captureStates.delete(id)
-    captureWaiters.delete(id)
   }
   return { ok: true }
 }
