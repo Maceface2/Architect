@@ -318,9 +318,9 @@ const ZONE_DEFAULT_WIDTH = 420
 const ZONE_DEFAULT_HEIGHT = 280
 
 export interface GraphEdge {
-  id: string;
-  source: string;
-  target: string;
+  id: string
+  source: string
+  target: string
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -621,7 +621,7 @@ function spawnErrorSession(
   runtime: AgentRuntime,
   cwd: string,
   message: string,
-  onExit?: () => void,
+  onExit?: () => void
 ): TerminalInfo {
   const shell = process.env.SHELL || '/bin/zsh'
   const ptyProcess = pty.spawn(shell, ['-lc', `echo ${JSON.stringify(message)}; exit 127`], {
@@ -675,7 +675,7 @@ function spawnAgentSession({
       cwd,
       `Architect could not find the ${getAgentRuntime(runtime).label} binary (${getAgentRuntime(runtime).binary}) on PATH.`,
       onExit,
-    );
+    )
   }
 
   // Decide whether to capture a session ID for this spawn. Every fresh spawn
@@ -841,7 +841,7 @@ function hashCwd(cwd: string): string {
 }
 
 export function writeToTerminal(id: string, data: string) {
-  sessions.get(id)?.pty.write(data);
+  sessions.get(id)?.pty.write(data)
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number) {
@@ -892,86 +892,19 @@ export function closeTerminal(id: string): { ok: boolean; reason?: string } {
 }
 
 function sanitize(label: string) {
-  return label.replace(/[^a-zA-Z0-9-_]/g, "-");
-}
-
-function getNodeFileStem(node: Pick<GraphNode, "id"> | string) {
-  return sanitize(typeof node === "string" ? node : node.id);
-}
-
-function getTaskFilePathForNode(node: Pick<GraphNode, "id"> | string) {
-  return `ARCHITECT/tasks/${getNodeFileStem(node)}.md`;
-}
-
-function getLegacyTaskFilePathForLabel(label: string) {
-  return `ARCHITECT/tasks/${sanitize(label)}.md`;
-}
-
-function getOutputFilePathForNode(node: Pick<GraphNode, "id"> | string) {
-  return `ARCHITECT/outputs/${getNodeFileStem(node)}.md`;
-}
-
-function getPromptFilePathForNode(node: Pick<GraphNode, "id"> | string) {
-  return `ARCHITECT/prompts/${getNodeFileStem(node)}.md`;
-}
-
-function normalizeRelativePaths(values: string[] | undefined) {
-  return [
-    ...new Set(
-      (values ?? [])
-        .map((value) =>
-          value
-            .trim()
-            .replace(/^\.?\//, "")
-            .replace(/\/+$/, ""),
-        )
-        .filter(Boolean),
-    ),
-  ];
-}
-
-function pathExists(projectDir: string, relPath: string) {
-  return fs.existsSync(relPath ? join(projectDir, relPath) : projectDir);
-}
-
-function outputExists(projectDir: string, node: GraphNode) {
-  return fs.existsSync(join(projectDir, getOutputFilePathForNode(node)));
-}
-
-function createEmptyPreflightCounts(): GraphPreflightSummary["counts"] {
-  return {
-    missing: 0,
-    adopted: 0,
-    needs_delta: 0,
-    blocked_by_upstream: 0,
-    unchanged: 0,
-  };
-}
-
-function hasUniqueNodeLabel(label: string, nodes: GraphNode[]) {
-  return nodes.filter((node) => node.data.label === label).length === 1;
+  return label.replace(/[^a-zA-Z0-9-_]/g, '-')
 }
 
 function readSkillContent(skillPath: string): string {
   try {
-    if (skillPath.startsWith("builtin:")) {
-      return fs
-        .readFileSync(
-          join(
-            __dirname,
-            "../../skills",
-            skillPath.replace("builtin:", ""),
-            "SKILL.md",
-          ),
-          "utf-8",
-        )
-        .trim();
+    if (skillPath.startsWith('builtin:')) {
+      return fs.readFileSync(join(__dirname, '../../skills', skillPath.replace('builtin:', ''), 'SKILL.md'), 'utf-8').trim()
     }
-    if (skillPath.startsWith("custom:")) {
-      return fs.readFileSync(skillPath.replace("custom:", ""), "utf-8").trim();
+    if (skillPath.startsWith('custom:')) {
+      return fs.readFileSync(skillPath.replace('custom:', ''), 'utf-8').trim()
     }
   } catch {}
-  return "";
+  return ''
 }
 
 function topoSort(nodes: ZoneGraphNode[], edges: GraphEdge[]): ZoneGraphNode[] {
@@ -989,23 +922,21 @@ function topoSort(nodes: ZoneGraphNode[], edges: GraphEdge[]): ZoneGraphNode[] {
   const result: ZoneGraphNode[] = []
 
   while (queue.length) {
-    const node = queue.shift()!;
-    result.push(node);
+    const node = queue.shift()!
+    result.push(node)
 
     for (const nextId of adj.get(node.id) ?? []) {
-      const degree = (inDegree.get(nextId) ?? 1) - 1;
-      inDegree.set(nextId, degree);
-      if (degree === 0)
-        queue.push(nodes.find((candidate) => candidate.id === nextId)!);
+      const degree = (inDegree.get(nextId) ?? 1) - 1
+      inDegree.set(nextId, degree)
+      if (degree === 0) queue.push(nodes.find(candidate => candidate.id === nextId)!)
     }
   }
 
-  nodes.forEach((node) => {
-    if (!result.find((candidate) => candidate.id === node.id))
-      result.push(node);
-  });
+  nodes.forEach(node => {
+    if (!result.find(candidate => candidate.id === node.id)) result.push(node)
+  })
 
-  return result;
+  return result
 }
 
 function getZoneRuntime(zone: ZoneGraphNode, settings: ProjectSettings): AgentRuntime {
@@ -1317,14 +1248,7 @@ function buildZoneSystemPrompt(
       return content ? `### ${skill.name}\n${content}` : ''
     })
     .filter(Boolean)
-    .join("\n\n");
-
-  const ownedPaths = normalizeRelativePaths(node.data.ownedPaths);
-  const expectedFiles = normalizeRelativePaths(node.data.expectedFiles);
-  const launchModeInstructions =
-    preflight.launchIntent === "build"
-      ? `This node is missing in the workspace. Treat the task as greenfield work inside the owned paths, but still inspect the repo first so you integrate with existing code around it.`
-      : `This node already has implementation in the repo. Inspect owned paths and expected files first, document the current behavior in ${statusLog}, and then make only the smallest concrete delta needed by the task. Do NOT recreate working files from scratch.`;
+    .join('\n\n')
 
   const comps = componentsByZone.get(zone.id) ?? []
   const compList = comps.length
@@ -1464,10 +1388,8 @@ When the Architect asks "what interfaces did you produce?", don't just describe 
 
 function setupWorkspace(
   projectDir: string,
-  scopedNodes: GraphNode[],
-  scopedEdges: GraphEdge[],
-  allNodes: GraphNode[],
-  allEdges: GraphEdge[],
+  nodes: GraphNode[],
+  edges: GraphEdge[],
   settings: ProjectSettings,
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
   userPrompt?: string,
@@ -1543,40 +1465,6 @@ function setupWorkspace(
   for (const zone of zones) {
     ensure(sanitize(zone.data.label), 'zone', zone.data.label)
   }
-
-  const reviewId = `overseer-review-${randomUUID().slice(0, 8)}`;
-  const prompt = buildOverseerReEngagementPrompt(
-    nodeId,
-    nodeLabel,
-    summary,
-    downstreamLabels,
-  );
-
-  console.log(
-    `[architect] resuming overseer (session ${activeOverseerSessionId}) to review ${nodeLabel}`,
-  );
-
-  spawnAgentSession({
-    win,
-    id: reviewId,
-    label: "Architect (review)",
-    runtime,
-    env: {},
-    cwd: projectDir,
-    initialPrompt: prompt,
-    model: DEFAULT_MODEL_BY_RUNTIME[runtime],
-    resumeSessionId: activeOverseerSessionId,
-    projectDir,
-    nodeId: "architect-agent",
-    completionToken: "ARCHITECT_OVERSEER_PROCEED",
-  });
-
-  onSessionDone(reviewId, () => {
-    console.log(
-      `[architect] overseer review complete for ${nodeLabel} — proceeding to downstream agents`,
-    );
-    onProceed();
-  });
 }
 
 // Mailbox observer timing knobs (v4). Three are user-configurable in Settings
@@ -2013,8 +1901,8 @@ function mailboxEnv(projectDir: string, participantId: string, label: string, di
 // Companion is resumeDispatch for replaying a prior DispatchRecord.
 export async function startDispatch(
   win: BrowserWindow,
-  allNodes: GraphNode[],
-  allEdges: GraphEdge[],
+  nodes: GraphNode[],
+  edges: GraphEdge[],
   projectDir: string,
   rawSettings: unknown,
   dispatch: StartDispatchOptions,
@@ -2228,10 +2116,7 @@ export async function startDispatch(
     broadcast('terminal:spawned', architectInfo)
   }))
 
-  return {
-    sessions: allInfo,
-    preflight,
-  };
+  return allInfo
 }
 
 const ASSISTANT_ZONES: Record<AssistantMode, string> = {

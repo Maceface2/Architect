@@ -20,7 +20,7 @@ import {
   Gauge,
   ClipboardList,
   type LucideIcon,
-} from "lucide-react";
+} from 'lucide-react'
 
 const iconMap: Record<string, LucideIcon> = {
   Monitor,
@@ -43,8 +43,8 @@ const iconMap: Record<string, LucideIcon> = {
   ScanLine,
   Gauge,
   ClipboardList,
-};
+}
 
 export function getIcon(name: string): LucideIcon {
-  return iconMap[name] ?? Settings2;
+  return iconMap[name] ?? Settings2
 }

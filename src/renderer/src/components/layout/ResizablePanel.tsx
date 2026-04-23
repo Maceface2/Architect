@@ -36,11 +36,11 @@ export default function ResizablePanel({
         setSize(Math.max(minSize, Math.min(maxSize, startSize + delta)))
       }
       const onUp = () => {
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
     },
     [collapsed, size, horizontal, leading, minSize, maxSize]
   )
@@ -88,7 +88,7 @@ export default function ResizablePanel({
         <CollapseIcon size={9} />
       </button>
     </div>
-  );
+  )
 
   const content = (
     <div
@@ -97,14 +97,11 @@ export default function ResizablePanel({
     >
       {children}
     </div>
-  );
+  )
 
   return leading ? (
     <>{content}{handle}</>
   ) : (
-    <>
-      {handle}
-      {content}
-    </>
-  );
+    <>{handle}{content}</>
+  )
 }

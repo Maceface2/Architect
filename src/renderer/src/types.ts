@@ -2,14 +2,10 @@ import type { Node } from '@xyflow/react'
 import type { AgentRuntime, AgentRuntimeMode, AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 export type { AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 
-export type ComponentCategory =
-  | "infrastructure"
-  | "services"
-  | "storage"
-  | "custom";
-export type NodeStatus = "idle" | "running" | "done" | "error";
-export type RunMode = "sequential" | "parallel" | "loop";
-export type OnFailure = "stop" | "retry" | "skip";
+export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
+export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
+export type RunMode = 'sequential' | 'parallel' | 'loop'
+export type OnFailure = 'stop' | 'retry' | 'skip'
 
 export interface NodeSkillFile {
   id: string
@@ -19,31 +15,31 @@ export interface NodeSkillFile {
 }
 
 export interface NodeTools {
-  webSearch: boolean;
-  codeExec: boolean;
-  fileRead: boolean;
-  fileWrite: boolean;
-  apiCalls: boolean;
-  shell: boolean;
+  webSearch: boolean
+  codeExec: boolean
+  fileRead: boolean
+  fileWrite: boolean
+  apiCalls: boolean
+  shell: boolean
 }
 
 export interface NodeBehavior {
-  mode: RunMode;
-  retries: number;
-  onFailure: OnFailure;
-  timeoutMs: number;
+  mode: RunMode
+  retries: number
+  onFailure: OnFailure
+  timeoutMs: number
 }
 
 export interface NodePermissions {
-  readFiles: boolean;
-  writeFiles: boolean;
-  network: boolean;
-  shell: boolean;
+  readFiles: boolean
+  writeFiles: boolean
+  network: boolean
+  shell: boolean
 }
 
 export interface NodeEnvVar {
-  key: string;
-  value: string;
+  key: string
+  value: string
 }
 
 export interface HarnessTimeouts {
@@ -189,10 +185,10 @@ export type CanvasNode = ZoneNodeType | ComponentNodeType
 export interface ArchitectCanvasData {
   nodes: CanvasNode[]
   edges: Array<{
-    id: string;
-    source: string;
-    target: string;
-  }>;
-  settings: ProjectSettings;
-  savedAt?: string;
+    id: string
+    source: string
+    target: string
+  }>
+  settings: ProjectSettings
+  savedAt?: string
 }

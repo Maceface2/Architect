@@ -23,27 +23,27 @@ const COLS_DEBOUNCE_MS = 100
 export type AssistantOrientation = 'right' | 'bottom'
 
 // Strip ANSI escape codes so we can search for plain-text markers
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g;
+const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g
 function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, "");
+  return s.replace(ANSI_RE, '')
 }
 
 const TERM_THEME = {
-  background: "#0d0d0d",
-  foreground: "#e2e8f0",
-  cursor: "#c084fc",
-  cursorAccent: "#0d0d0d",
-  black: "#1e1e1e",
-  red: "#f87171",
-  green: "#4ade80",
-  yellow: "#fbbf24",
-  blue: "#58A6FF",
-  magenta: "#c084fc",
-  cyan: "#38bdf8",
-  white: "#e2e8f0",
-  brightBlack: "#3a3a3a",
-  brightWhite: "#ffffff",
-};
+  background:   '#0d0d0d',
+  foreground:   '#e2e8f0',
+  cursor:       '#c084fc',
+  cursorAccent: '#0d0d0d',
+  black:        '#1e1e1e',
+  red:          '#f87171',
+  green:        '#4ade80',
+  yellow:       '#fbbf24',
+  blue:         '#58A6FF',
+  magenta:      '#c084fc',
+  cyan:         '#38bdf8',
+  white:        '#e2e8f0',
+  brightBlack:  '#3a3a3a',
+  brightWhite:  '#ffffff',
+}
 
 interface CanvasUpdate {
   zones?: unknown[]
@@ -435,5 +435,5 @@ export default function AssistantPanel({
         />
       )}
     </div>
-  );
+  )
 }

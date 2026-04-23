@@ -1,4 +1,4 @@
-import type { Edge } from "@xyflow/react";
+import type { Edge } from '@xyflow/react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
@@ -7,7 +7,7 @@ import {
   isAgentRuntimeMode,
   isEffortLevel,
   type AgentRuntime,
-} from "../../../shared/agentRuntimes";
+} from '../../../shared/agentRuntimes'
 import type {
   ArchitectCanvasData,
   CanvasNode,
@@ -70,7 +70,7 @@ export function createDefaultZoneAgentConfig(settings: ProjectSettings = createD
     behavior: { mode: 'sequential' as const, retries: 0, onFailure: 'stop' as const, timeoutMs: settings.dispatchTimeoutMs },
     permissions: { readFiles: false, writeFiles: false, network: false, shell: false },
     envVars: [],
-  };
+  }
 }
 
 export function createDefaultZoneData(settings: ProjectSettings = createDefaultProjectSettings()): ZoneNodeData {
@@ -95,38 +95,34 @@ export function getEffectiveModel(
   data: Pick<ZoneNodeData, 'providerModels' | 'agentRuntimeMode' | 'agentRuntime'>,
   settings: ProjectSettings
 ): string {
-  const runtime = getEffectiveRuntime(data, settings);
-  return data.providerModels?.[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime];
+  const runtime = getEffectiveRuntime(data, settings)
+  return data.providerModels?.[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
 }
 
 function normalizeProviderModels(
   rawData: Record<string, unknown>,
   dispatchRuntime: AgentRuntime
 ): RuntimeModelMap {
-  const rawProviderModels = rawData.providerModels;
-  const providerModels: RuntimeModelMap = {};
+  const rawProviderModels = rawData.providerModels
+  const providerModels: RuntimeModelMap = {}
 
-  if (rawProviderModels && typeof rawProviderModels === "object") {
+  if (rawProviderModels && typeof rawProviderModels === 'object') {
     for (const [runtime, value] of Object.entries(rawProviderModels)) {
-      if (
-        isAgentRuntime(runtime) &&
-        typeof value === "string" &&
-        value.trim()
-      ) {
-        providerModels[runtime] = value;
+      if (isAgentRuntime(runtime) && typeof value === 'string' && value.trim()) {
+        providerModels[runtime] = value
       }
     }
   }
 
-  if (typeof rawData.model === "string" && !providerModels.claude) {
-    providerModels.claude = rawData.model;
+  if (typeof rawData.model === 'string' && !providerModels.claude) {
+    providerModels.claude = rawData.model
   }
 
   if (!providerModels[dispatchRuntime]) {
     providerModels[dispatchRuntime] = DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
   }
 
-  return providerModels;
+  return providerModels
 }
 
 function normalizeDispatchModels(raw: unknown): RuntimeModelMap {
@@ -298,15 +294,10 @@ function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData
 }
 
 export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
-  const root =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const settings = normalizeProjectSettings(root.settings);
-  const rawNodes = Array.isArray(root.nodes)
-    ? (root.nodes as Array<Record<string, unknown>>)
-    : [];
-  const rawEdges = Array.isArray(root.edges)
-    ? (root.edges as Array<Record<string, unknown>>)
-    : [];
+  const root = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const settings = normalizeProjectSettings(root.settings)
+  const rawNodes = Array.isArray(root.nodes) ? (root.nodes as Array<Record<string, unknown>>) : []
+  const rawEdges = Array.isArray(root.edges) ? (root.edges as Array<Record<string, unknown>>) : []
 
   const nodes: CanvasNode[] = []
 
@@ -379,15 +370,15 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
   }
 
   const edges: Edge[] = rawEdges.map((edge, index) => ({
-    id: typeof edge.id === "string" ? edge.id : `edge-${index}`,
-    source: String(edge.source ?? ""),
-    target: String(edge.target ?? ""),
-  }));
+    id: typeof edge.id === 'string' ? edge.id : `edge-${index}`,
+    source: String(edge.source ?? ''),
+    target: String(edge.target ?? ''),
+  }))
 
   return {
     nodes,
     edges,
     settings,
-    savedAt: typeof root.savedAt === "string" ? root.savedAt : undefined,
-  };
+    savedAt: typeof root.savedAt === 'string' ? root.savedAt : undefined,
+  }
 }

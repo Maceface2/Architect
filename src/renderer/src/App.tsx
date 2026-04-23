@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from "react";
+import { useState, useCallback, useEffect, useRef } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -190,17 +190,17 @@ function buildPaletteContext(): string {
 }
 
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false)
 
   const pick = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
-      const dir = await window.electron.openDirectory();
-      if (dir) onOpen(dir);
+      const dir = await window.electron.openDirectory()
+      if (dir) onOpen(dir)
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   return (
     <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
@@ -214,13 +214,8 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
           <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">
-            Architect
-          </h1>
-          <p className="text-sm text-slate-500 mt-1">
-            Open a project folder to import existing code or continue where you
-            left off
-          </p>
+          <h1 className="text-2xl font-semibold text-white tracking-tight">Architect</h1>
+          <p className="text-sm text-slate-500 mt-1">Open a project folder to get started</p>
         </div>
       </div>
 
@@ -229,14 +224,14 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
         disabled={loading}
         className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium rounded-lg transition-colors"
       >
-        {loading ? "Opening…" : "Open Project Folder"}
+        {loading ? 'Opening…' : 'Open Project Folder'}
       </button>
 
       <p className="text-xs text-slate-700">
         All agents will be scoped to this directory
       </p>
     </div>
-  );
+  )
 }
 
 function CanvasConflictModal({
@@ -542,9 +537,9 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [persistCanvasRaw, dispatchedGraph])
 
   const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-  }, []);
+    event.preventDefault()
+    event.dataTransfer.dropEffect = 'move'
+  }, [])
 
   const onDrop = useCallback(
     (event: React.DragEvent<HTMLDivElement>) => {
@@ -613,7 +608,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     }, 1000)
   }, [onNodesChange, persistCanvasRaw])
 
-      return `You are an architecture assistant embedded in Architect — a tool for visually composing multi-agent and software systems.
+  const handleEdgesChange = useCallback((changes: Parameters<typeof onEdgesChange>[0]) => {
+    onEdgesChange(changes)
+    setIsDirty(true)
+  }, [onEdgesChange])
 
   const onClear = useCallback(() => {
     if (autoSaveTimerRef.current) {
@@ -1194,44 +1192,9 @@ Only discuss and advise without editing the file when the user is asking for cri
             )}
           </div>
 
-              {isFiles && (
-                <div className="flex-1 overflow-hidden">
-                  <FilesPanel rootDir={projectDir} />
-                </div>
-              )}
-
-              <div
-                className={`flex-1 overflow-hidden ${isTerminal ? "" : "hidden"}`}
-              >
-                <TerminalPanel
-                  sessions={terminalSessions}
-                  isVisible={isTerminal}
-                />
-              </div>
-
-              {!isCanvas && !isFiles && !isTerminal && (
-                <div className="flex-1 flex items-center justify-center">
-                  <span className="text-slate-600 text-sm">
-                    {activeTab} — coming soon
-                  </span>
-                </div>
-              )}
-
-              <ResizablePanel
-                key={assistantOpen ? "assistant" : "agentlog"}
-                side="right"
-                defaultWidth={assistantOpen ? 420 : 256}
-              >
-                {assistantOpen ? (
-                  <AssistantPanel
-                    onClose={handleAssistantClose}
-                    onCanvasUpdate={applyCanvasUpdate}
-                    runtime={assistantRuntime ?? projectSettings.defaultRuntime}
-                  />
-                ) : (
-                  <AgentLog projectDir={projectDir} preflight={lastPreflight} />
-                )}
-              </ResizablePanel>
+          {isFiles && (
+            <div className="flex-1 overflow-hidden">
+              <FilesPanel rootDir={projectDir} />
             </div>
           )}
 
@@ -1307,17 +1270,14 @@ function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
 
   if (!projectDir) {
-    return <DirectoryGate onOpen={setProjectDir} />;
+    return <DirectoryGate onOpen={setProjectDir} />
   }
 
   return (
     <ReactFlowProvider>
-      <ArchitectFlow
-        projectDir={projectDir}
-        onChangeDir={() => setProjectDir(null)}
-      />
+      <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
     </ReactFlowProvider>
-  );
+  )
 }
 
 export default function App() {

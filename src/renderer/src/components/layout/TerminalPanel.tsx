@@ -36,21 +36,21 @@ interface Props {
 }
 
 const TERM_THEME = {
-  background: "#0d0d0d",
-  foreground: "#e2e8f0",
-  cursor: "#58A6FF",
-  cursorAccent: "#0d0d0d",
-  black: "#1e1e1e",
-  red: "#f87171",
-  green: "#4ade80",
-  yellow: "#fbbf24",
-  blue: "#58A6FF",
-  magenta: "#c084fc",
-  cyan: "#38bdf8",
-  white: "#e2e8f0",
-  brightBlack: "#3a3a3a",
-  brightWhite: "#ffffff",
-};
+  background:  '#0d0d0d',
+  foreground:  '#e2e8f0',
+  cursor:      '#58A6FF',
+  cursorAccent:'#0d0d0d',
+  black:       '#1e1e1e',
+  red:         '#f87171',
+  green:       '#4ade80',
+  yellow:      '#fbbf24',
+  blue:        '#58A6FF',
+  magenta:     '#c084fc',
+  cyan:        '#38bdf8',
+  white:       '#e2e8f0',
+  brightBlack: '#3a3a3a',
+  brightWhite: '#ffffff',
+}
 
 const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
@@ -78,14 +78,13 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   }, [info.id, locked])
 
   useEffect(() => {
-    if (!containerRef.current) return;
+    if (!containerRef.current) return
 
     let instance = termInstances.get(info.id)
     if (!instance) {
       const term = new Terminal({
         theme: TERM_THEME,
-        fontFamily:
-          '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
+        fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
         fontSize: 13,
         lineHeight: 1.4,
         cursorBlink: true,
@@ -107,7 +106,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       })
     }
 
-    const { term, fit } = instance;
+    const { term, fit } = instance
 
     // First mount: open the terminal here. Subsequent mounts (different pane):
     // physically move the existing element so we don't double-init xterm.
@@ -119,18 +118,18 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
 
     const doFit = () => {
       try {
-        fit.fit();
-        window.electron.terminal.resize(info.id, term.cols, term.rows);
+        fit.fit()
+        window.electron.terminal.resize(info.id, term.cols, term.rows)
       } catch {}
-    };
+    }
 
     if (active) {
-      doFit();
-      const ro = new ResizeObserver(doFit);
-      ro.observe(containerRef.current);
-      return () => ro.disconnect();
+      doFit()
+      const ro = new ResizeObserver(doFit)
+      ro.observe(containerRef.current)
+      return () => ro.disconnect()
     }
-  }, [info.id, active]);
+  }, [info.id, active])
 
   // Stream data → term (subscribed once per id, regardless of mount).
   useEffect(() => {
@@ -143,13 +142,11 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   useEffect(() => {
     const unsub = window.electron.terminal.onExit(({ id }) => {
       if (id === info.id) {
-        termInstances
-          .get(info.id)
-          ?.term.write("\r\n\x1b[33m[process exited]\x1b[0m\r\n");
+        termInstances.get(info.id)?.term.write('\r\n\x1b[33m[process exited]\x1b[0m\r\n')
       }
-    });
-    return unsub;
-  }, [info.id]);
+    })
+    return unsub
+  }, [info.id])
 
   return (
     <div
@@ -808,5 +805,5 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
         onResize={(splitId, sizes) => onLayoutChange(setSplitSizes(layout, splitId, sizes))}
       />
     </div>
-  );
+  )
 }

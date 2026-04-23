@@ -2,9 +2,9 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord } from './types'
 
 interface FileEntry {
-  name: string;
-  isDirectory: boolean;
-  path: string;
+  name: string
+  isDirectory: boolean
+  path: string
 }
 
 interface TerminalInfo {
@@ -147,8 +147,8 @@ interface ElectronAPI {
 
 declare global {
   interface Window {
-    electron: ElectronAPI;
+    electron: ElectronAPI
   }
 }
 
-export {};
+export {}

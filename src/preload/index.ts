@@ -1,7 +1,6 @@
-import { contextBridge, ipcRenderer } from "electron";
-import type { RunGraphOptions } from "../shared/graphDispatch";
+import { contextBridge, ipcRenderer } from 'electron'
 
-contextBridge.exposeInMainWorld("electron", {
+contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
 
   // File system
@@ -17,8 +16,7 @@ contextBridge.exposeInMainWorld("electron", {
   unwatchCanvas: () => ipcRenderer.invoke('unwatch-canvas'),
 
   // Custom component discovery
-  scanComponents: (dirPath: string) =>
-    ipcRenderer.invoke("scan-components", dirPath),
+  scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
 
   // Start a fresh multi-zone (or single-zone) dispatch. Companion is
   // dispatches.resume for replaying a prior DispatchRecord.
@@ -90,12 +88,13 @@ contextBridge.exposeInMainWorld("electron", {
       ipcRenderer.invoke('terminal:spawn-shell', cwd),
 
     input: (id: string, data: string) =>
-      ipcRenderer.send("terminal:input", id, data),
+      ipcRenderer.send('terminal:input', id, data),
 
     resize: (id: string, cols: number, rows: number) =>
-      ipcRenderer.send("terminal:resize", id, cols, rows),
+      ipcRenderer.send('terminal:resize', id, cols, rows),
 
-    killAll: () => ipcRenderer.send("terminal:kill-all"),
+    killAll: () =>
+      ipcRenderer.send('terminal:kill-all'),
 
     close: (id: string) =>
       ipcRenderer.invoke('terminal:close', id),
@@ -129,28 +128,15 @@ contextBridge.exposeInMainWorld("electron", {
     },
 
     onData: (cb: (event: { id: string; data: string }) => void) => {
-      const handler = (_: unknown, event: { id: string; data: string }) =>
-        cb(event);
-      ipcRenderer.on("terminal:data", handler);
-      return () => ipcRenderer.removeListener("terminal:data", handler);
+      const handler = (_: unknown, event: { id: string; data: string }) => cb(event)
+      ipcRenderer.on('terminal:data', handler)
+      return () => ipcRenderer.removeListener('terminal:data', handler)
     },
 
     onExit: (cb: (event: { id: string; exitCode: number }) => void) => {
-      const handler = (_: unknown, event: { id: string; exitCode: number }) =>
-        cb(event);
-      ipcRenderer.on("terminal:exit", handler);
-      return () => ipcRenderer.removeListener("terminal:exit", handler);
-    },
-
-    onNodeSessionSaved: (
-      cb: (event: { nodeId: string; sessionId: string }) => void,
-    ) => {
-      const handler = (
-        _: unknown,
-        event: { nodeId: string; sessionId: string },
-      ) => cb(event);
-      ipcRenderer.on("node:session-saved", handler);
-      return () => ipcRenderer.removeListener("node:session-saved", handler);
+      const handler = (_: unknown, event: { id: string; exitCode: number }) => cb(event)
+      ipcRenderer.on('terminal:exit', handler)
+      return () => ipcRenderer.removeListener('terminal:exit', handler)
     },
 
     popout: (opts: { id: string; label: string; runtime: string }) =>
@@ -246,4 +232,4 @@ contextBridge.exposeInMainWorld("electron", {
       return () => ipcRenderer.removeListener('mailbox:activity', handler)
     },
   },
-});
+})
