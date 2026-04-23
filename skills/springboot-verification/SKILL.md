@@ -29,13 +29,11 @@ If build fails, stop and fix.
 ## Phase 2: Static Analysis
 
 Maven (common plugins):
-
 ```bash
 mvn -T 4 spotbugs:check pmd:check checkstyle:check
 ```
 
 Gradle (if configured):
-
 ```bash
 ./gradlew checkstyleMain pmdMain spotbugsMain
 ```
@@ -50,7 +48,6 @@ mvn jacoco:report   # verify 80%+ coverage
 ```
 
 Report:
-
 - Total tests, passed/failed
 - Coverage % (lines/branches)
 
@@ -203,7 +200,6 @@ git diff
 ```
 
 Checklist:
-
 - No debugging logs left (`System.out`, `log.debug` without guards)
 - Meaningful errors and HTTP statuses
 - Transactions and validation present where needed

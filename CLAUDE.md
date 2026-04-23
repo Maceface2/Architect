@@ -14,7 +14,7 @@ No lint or test scripts are configured yet.
 
 ## Architecture
 
-Architect is an **Electron + React** desktop app that lets users visually compose multi-agent systems using a drag-and-drop canvas, then dispatch them as real coding-agent CLI sessions.
+Architect is an **Electron + React** desktop app that lets users visually compose multi-agent systems using a drag-and-drop canvas, then dispatch them as real Claude Code CLI sessions.
 
 ### Process model
 
@@ -38,18 +38,6 @@ Renderer (src/renderer/src/)
   ├── components/palette/   — PaletteItem (drag source)
   └── data/componentPalette.ts — Pre-defined node templates (infrastructure/services/storage)
 ```
-
-### Multi-runtime support
-
-Each node (and the project globally) can target one of four runtimes: `claude`, `codex`, `gemini`, or `opencode`. `src/shared/agentRuntimes.ts` is the canonical definition — add new runtimes there first. `agentCli.ts:buildRuntimeArgs` maps each runtime to its CLI flags. The runtime's binary is resolved via `resolveBinary`, which checks Homebrew paths before falling back to a shell `which` call.
-
-### Canvas persistence
-
-The canvas is saved as `architect-canvas.json` in the user's project directory. The renderer polls this file every 1.2 s (when not dirty) so the Architecture Assistant's edits appear in real time. `src/renderer/src/lib/canvas.ts:migrateCanvasData` handles forward-compatibility when the schema changes.
-
-### Project bootstrap
-
-When a project has no `architect-canvas.json`, `projectAnalyzer.ts:bootstrapProjectCanvas` runs a deterministic repo scan (`ProjectStructureSummary`) and, if confidence is low, falls back to a one-shot agent call (`runOneShotAgentPrompt`) to produce a `ProjectBootstrapResult`. The result is turned into nodes and edges and saved as the initial canvas.
 
 ### Execution flow
 
@@ -242,7 +230,7 @@ Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral 
 
 ### Skills system
 
-`skills/` at the repo root contains markdown skill files (`SKILL.md`) grouped by topic. Node agents can be assigned skills; their content is embedded verbatim into the agent's prompt. Built-in skills are referenced as `builtin:<skill-folder-name>`, custom skills as `custom:<absolute-path>`.
+`skills/` at the repo root contains markdown skill files (`SKILL.md`) grouped by topic (e.g., `skills/python-testing/SKILL.md`). Node agents can be assigned skills; their content is embedded verbatim into the agent's prompt. Built-in skills are referenced as `builtin:<skill-folder-name>`, custom skills as `custom:<absolute-path>`.
 
 ### IPC surface
 

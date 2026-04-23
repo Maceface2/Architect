@@ -118,3 +118,4 @@ src/integrations/
 - `backend-patterns`
 - `mcp-server-patterns`
 - `github-ops`
+

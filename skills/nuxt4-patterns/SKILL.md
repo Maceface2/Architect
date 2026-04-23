@@ -36,25 +36,17 @@ Use when building or debugging Nuxt 4 apps with SSR, hybrid rendering, route rul
 - Trim payload size with `pick` and prefer shallower payloads when deep reactivity is unnecessary.
 
 ```ts
-const route = useRoute();
+const route = useRoute()
 
-const {
-  data: article,
-  status,
-  error,
-  refresh,
-} = await useAsyncData(
+const { data: article, status, error, refresh } = await useAsyncData(
   () => `article:${route.params.slug}`,
   () => $fetch(`/api/articles/${route.params.slug}`),
-);
+)
 
-const { data: comments } = await useFetch(
-  `/api/articles/${route.params.slug}/comments`,
-  {
-    lazy: true,
-    server: false,
-  },
-);
+const { data: comments } = await useFetch(`/api/articles/${route.params.slug}/comments`, {
+  lazy: true,
+  server: false,
+})
 ```
 
 ## Route Rules
@@ -64,13 +56,13 @@ Prefer `routeRules` in `nuxt.config.ts` for rendering and caching strategy:
 ```ts
 export default defineNuxtConfig({
   routeRules: {
-    "/": { prerender: true },
-    "/products/**": { swr: 3600 },
-    "/blog/**": { isr: true },
-    "/admin/**": { ssr: false },
-    "/api/**": { cache: { maxAge: 60 * 60 } },
+    '/': { prerender: true },
+    '/products/**': { swr: 3600 },
+    '/blog/**': { isr: true },
+    '/admin/**': { ssr: false },
+    '/api/**': { cache: { maxAge: 60 * 60 } },
   },
-});
+})
 ```
 
 - `prerender`: static HTML at build time

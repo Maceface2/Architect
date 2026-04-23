@@ -18,10 +18,10 @@ Build applications with the Anthropic Claude API and SDKs.
 
 ## Model Selection
 
-| Model     | ID                        | Best For                                    |
-| --------- | ------------------------- | ------------------------------------------- |
-| Opus 4.1  | `claude-opus-4-1`         | Complex reasoning, architecture, research   |
-| Sonnet 4  | `claude-sonnet-4-0`       | Balanced coding, most development tasks     |
+| Model | ID | Best For |
+|-------|-----|----------|
+| Opus 4.1 | `claude-opus-4-1` | Complex reasoning, architecture, research |
+| Sonnet 4 | `claude-sonnet-4-0` | Balanced coding, most development tasks |
 | Haiku 3.5 | `claude-3-5-haiku-latest` | Fast responses, high-volume, cost-sensitive |
 
 Default to Sonnet 4 unless the task requires deep reasoning (Opus) or speed/cost optimization (Haiku). For production, prefer pinned snapshot IDs over aliases.
@@ -92,7 +92,9 @@ const client = new Anthropic(); // reads ANTHROPIC_API_KEY from env
 const message = await client.messages.create({
   model: "claude-sonnet-4-0",
   max_tokens: 1024,
-  messages: [{ role: "user", content: "Explain async/await in TypeScript" }],
+  messages: [
+    { role: "user", content: "Explain async/await in TypeScript" }
+  ],
 });
 console.log(message.content[0].text);
 ```
@@ -107,10 +109,7 @@ const stream = client.messages.stream({
 });
 
 for await (const event of stream) {
-  if (
-    event.type === "content_block_delta" &&
-    event.delta.type === "text_delta"
-  ) {
+  if (event.type === "content_block_delta" && event.delta.type === "text_delta") {
     process.stdout.write(event.delta.text);
   }
 }
@@ -298,13 +297,13 @@ while True:
 
 ## Cost Optimization
 
-| Strategy                | Savings                    | When to Use                              |
-| ----------------------- | -------------------------- | ---------------------------------------- |
-| Prompt caching          | Up to 90% on cached tokens | Repeated system prompts or context       |
-| Batches API             | 50%                        | Non-time-sensitive bulk processing       |
-| Haiku instead of Sonnet | ~75%                       | Simple tasks, classification, extraction |
-| Shorter max_tokens      | Variable                   | When you know output will be short       |
-| Streaming               | None (same cost)           | Better UX, same price                    |
+| Strategy | Savings | When to Use |
+|----------|---------|-------------|
+| Prompt caching | Up to 90% on cached tokens | Repeated system prompts or context |
+| Batches API | 50% | Non-time-sensitive bulk processing |
+| Haiku instead of Sonnet | ~75% | Simple tasks, classification, extraction |
+| Shorter max_tokens | Variable | When you know output will be short |
+| Streaming | None (same cost) | Better UX, same price |
 
 ## Error Handling
 
