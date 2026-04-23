@@ -1,7 +1,7 @@
 {
   "name": "architect",
   "productName": "Architect",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Visual architecture builder for agentic coding CLIs",
   "main": "./out/main/index.js",
   "scripts": {
@@ -9,6 +9,7 @@
     "build": "electron-vite build",
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder",
+    "dmg": "electron-vite build && electron-builder --mac dmg",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null; chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null; true"
   },
   "build": {
