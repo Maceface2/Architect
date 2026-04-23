@@ -5,15 +5,19 @@ import fs from 'fs'
 import { execFileSync, spawn } from 'child_process'
 import { randomBytes } from 'crypto'
 import { Terminal as HeadlessTerminal } from '@xterm/headless'
+import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/terminalDims'
 import {
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
+  effortArgsFor,
   getAgentRuntime,
   isAgentRuntime,
   isAgentRuntimeMode,
   isAssistantMode,
+  isEffortLevel,
   type AgentRuntime,
   type AssistantMode,
+  type EffortLevel,
 } from '../shared/agentRuntimes'
 import {
   appendZoneSession,
@@ -148,14 +152,50 @@ export async function initShellEnv(): Promise<void> {
   }
 }
 
+interface HarnessTimeouts {
+  deliveryWarningMs: number
+  idleThresholdMs: number
+  taskTimeoutMs: number
+}
+
+// Main-side settings shape. Only fields that affect dispatch/zone execution
+// live here — the side-panel assistant intentionally bypasses this path:
+// `startAssistant` takes runtime + model directly from the renderer and never
+// reads ProjectSettings. Adding an `assistant*` field to this interface
+// would re-couple the two and is a code smell.
 interface ProjectSettings {
-  defaultRuntime: AgentRuntime
+  dispatchRuntime: AgentRuntime
+  dispatchEffort: EffortLevel
+  harnessTimeouts: HarnessTimeouts
+}
+
+const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
+  deliveryWarningMs: 45_000,
+  idleThresholdMs: 2 * 60_000,
+  taskTimeoutMs: 30 * 60_000,
+}
+
+function normalizeHarnessTimeouts(raw: unknown): HarnessTimeouts {
+  const base = { ...DEFAULT_HARNESS_TIMEOUTS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  for (const key of Object.keys(base) as (keyof HarnessTimeouts)[]) {
+    const v = rec[key]
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) base[key] = v
+  }
+  return base
 }
 
 function normalizeProjectSettings(raw: unknown): ProjectSettings {
   const settings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  // Accept both the new `dispatch*` and legacy `default*` keys so older
+  // canvas payloads passing through IPC resolve correctly.
+  const rawRuntime = settings.dispatchRuntime ?? settings.defaultRuntime
+  const rawEffort = settings.dispatchEffort ?? settings.defaultEffort
   return {
-    defaultRuntime: isAgentRuntime(settings.defaultRuntime) ? settings.defaultRuntime : DEFAULT_AGENT_RUNTIME,
+    dispatchRuntime: isAgentRuntime(rawRuntime) ? rawRuntime : DEFAULT_AGENT_RUNTIME,
+    dispatchEffort: isEffortLevel(rawEffort) ? rawEffort : 'medium',
+    harnessTimeouts: normalizeHarnessTimeouts(settings.harnessTimeouts),
   }
 }
 
@@ -359,6 +399,8 @@ interface SpawnAgentOptions {
   // When set, Claude will start with `--permission-mode plan` instead of
   // `--dangerously-skip-permissions`.
   planMode?: boolean
+  // Unified reasoning-effort setting; mapped per CLI by effortArgsFor().
+  effort?: EffortLevel
   // When set and spawning a fresh Claude session (no resume), pass as
   // `--append-system-prompt` so the zone's behavior prompt is baked in.
   appendSystemPrompt?: string
@@ -411,7 +453,9 @@ function buildRuntimeArgs(
   skipPermissions = true,
   planMode = false,
   appendSystemPrompt?: string,
+  effort?: EffortLevel,
 ): string[] {
+  const effortArgs = effort ? effortArgsFor(runtime, effort) : []
   switch (runtime) {
     case 'claude': {
       const args: string[] = []
@@ -419,6 +463,7 @@ function buildRuntimeArgs(
       else if (skipPermissions) args.push('--dangerously-skip-permissions')
       if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
+      args.push(...effortArgs)
       // --append-system-prompt is ignored on resume (history already carries
       // the original system prompt), so only pass it on fresh spawns.
       if (appendSystemPrompt && !resumeSessionId) args.push('--append-system-prompt', appendSystemPrompt)
@@ -437,6 +482,7 @@ function buildRuntimeArgs(
       if (resumeSessionId) args.push('resume', resumeSessionId)
       args.push('--no-alt-screen', '-a', 'never', '-s', 'workspace-write')
       if (model) args.push('--model', model)
+      args.push(...effortArgs)
       if (prompt) args.push(prompt)
       return args
     }
@@ -444,6 +490,7 @@ function buildRuntimeArgs(
       const args: string[] = ['--approval-mode', 'yolo']
       if (resumeSessionId) args.push('--resume', resumeSessionId)
       if (model) args.push('--model', model)
+      args.push(...effortArgs)
       if (prompt) args.push('--prompt-interactive', prompt)
       return args
     }
@@ -459,6 +506,7 @@ function buildRuntimeArgs(
       if (resumeSessionId) args.push('--session', resumeSessionId)
       if (prompt) args.push('--prompt', prompt)
       if (model) args.push('--model', model)
+      args.push(...effortArgs)
       return args
     }
   }
@@ -521,8 +569,8 @@ function createSession(
   const kind = opts?.kind ?? 'agent'
   const runtime = opts?.runtime ?? 'shell'
   const term = new HeadlessTerminal({
-    cols: 220,
-    rows: 50,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
     allowProposedApi: true,
     scrollback: 500,
   })
@@ -578,8 +626,8 @@ function spawnErrorSession(
   const shell = process.env.SHELL || '/bin/zsh'
   const ptyProcess = pty.spawn(shell, ['-lc', `echo ${JSON.stringify(message)}; exit 127`], {
     name: 'xterm-256color',
-    cols: 220,
-    rows: 50,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
     cwd,
     env: process.env as Record<string, string>,
   })
@@ -607,6 +655,7 @@ function spawnAgentSession({
   capture,
   skipPermissions = true,
   planMode = false,
+  effort,
   appendSystemPrompt,
   onSessionCaptured,
   onCaptureSettled,
@@ -651,12 +700,12 @@ function spawnAgentSession({
     else if (captureRuntime === 'opencode') opencodeSnapshotPromise = snapshotOpencodeSessions()
   }
 
-  const spawnArgs = buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt)
+  const spawnArgs = buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt, effort)
   console.log(`[spawn] ${runtime} (zone=${id}) cwd=${cwd} cmd=${bin} args=${JSON.stringify(spawnArgs)}${resumeSessionId ? ' [RESUME]' : ''}`)
   const ptyProcess = pty.spawn(bin, spawnArgs, {
     name: 'xterm-256color',
-    cols: 220,
-    rows: 50,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
     cwd,
     env: { ...process.env, ...env } as Record<string, string>,
   })
@@ -677,6 +726,7 @@ function spawnAgentSession({
           sessionId,
           capturedAt: new Date().toISOString(),
           summary: capture.summary,
+          model,
           dispatchId: capture.dispatchId,
         })
         console.log(`[session-capture] ${capture.zoneKey}: appended ${captureRuntime} session ${sessionId}`)
@@ -686,6 +736,7 @@ function spawnAgentSession({
           sessionId,
           runtime: captureRuntime,
           summary: capture.summary,
+          model,
           dispatchId: capture.dispatchId,
         })
         capturedId = sessionId
@@ -773,8 +824,8 @@ export function spawnShellSession(win: BrowserWindow, cwd: string): TerminalInfo
   const shell = process.env.SHELL || '/bin/zsh'
   const ptyProcess = pty.spawn(shell, ['-l'], {
     name: 'xterm-256color',
-    cols: 220,
-    rows: 50,
+    cols: DEFAULT_COLS,
+    rows: DEFAULT_ROWS,
     cwd,
     env: process.env as Record<string, string>,
   })
@@ -796,8 +847,12 @@ export function writeToTerminal(id: string, data: string) {
 export function resizeTerminal(id: string, cols: number, rows: number) {
   const session = sessions.get(id)
   if (!session) return
-  try { session.pty.resize(cols, rows) } catch {}
-  try { session.term.resize(cols, rows) } catch {}
+  // Clamp at the pty boundary: node-pty (especially winpty on Windows) throws
+  // on 0 / NaN / negative sizes. Mirrors VS Code's TerminalProcess.resize.
+  const safeCols = Math.max(Math.floor(cols) || 1, 1)
+  const safeRows = Math.max(Math.floor(rows) || 1, 1)
+  try { session.pty.resize(safeCols, safeRows) } catch {}
+  try { session.term.resize(safeCols, safeRows) } catch {}
 }
 
 // Kills agent and assistant sessions; preserves user shell sessions.
@@ -889,7 +944,7 @@ function getZoneRuntime(zone: ZoneGraphNode, settings: ProjectSettings): AgentRu
     && zone.data.agentRuntimeMode === 'override'
     && isAgentRuntime(zone.data.agentRuntime)
     ? zone.data.agentRuntime
-    : settings.defaultRuntime
+    : settings.dispatchRuntime
 }
 
 function getZoneModel(zone: ZoneGraphNode, runtime: AgentRuntime): string {
@@ -1351,7 +1406,7 @@ function setupWorkspace(
 
   fs.writeFileSync(join(base, 'manifest.json'), JSON.stringify({
     generated: new Date().toISOString(),
-    defaultRuntime: settings.defaultRuntime,
+    dispatchRuntime: settings.dispatchRuntime,
     protocolVersion: MAILBOX_PROTOCOL_VERSION,
     unassignedComponents: unassignedComponents.map(c => ({
       id: c.id,
@@ -1412,23 +1467,18 @@ function setupWorkspace(
   }
 }
 
-// Mailbox observer timing knobs (v4).
-//   DEFAULT_TASK_TIMEOUT_MS — per-task 30-min cap; zone config can only extend it.
-//   DELIVERY_WARNING_MS    — how long a `task` msg may sit `pending` in a zone inbox before we
-//                            emit `harness.delivery-warning` to the Overseer + `harness.wake` to the zone.
-//   IDLE_THRESHOLD_MS      — staleness threshold on BOTH outputs/<safe>.md mtime AND PTY
-//                            lastActivityMs for heartbeat checks. A zone is considered idle
-//                            only when BOTH signals go quiet; either one advancing keeps it live.
-//                            Set to 2 min: the PTY byte stream covers long tool calls (spinner,
-//                            reasoning, Bash output), so genuine silence across both channels
-//                            for 2 min is a reasonable early warning. Hard failure is still
-//                            DEFAULT_TASK_TIMEOUT_MS (30 min) via harness.timeout.
-//   HEARTBEAT_POLL_MS      — how often the heartbeat scan fires.
-//   HARD_CANCEL_MS         — after this long with an unconsumed `cancel` msg, SIGINT the zone PTY.
-//   AWAIT_READY_SOFT_MS    — soft gate on the one-shot bootstrap poke; on miss we poke anyway.
-const DEFAULT_TASK_TIMEOUT_MS = 30 * 60_000
-const DELIVERY_WARNING_MS = 45_000
-const IDLE_THRESHOLD_MS = 2 * 60_000
+// Mailbox observer timing knobs (v4). Three are user-configurable in Settings
+// (projectSettings.harnessTimeouts) and arrive via startMailboxObserver; the
+// rest stay module-local.
+//   harnessTimeouts.taskTimeoutMs      — per-task cap (default 30 min); zone config can only extend it.
+//   harnessTimeouts.deliveryWarningMs  — how long a `task` msg may sit `pending` in a zone inbox before we
+//                                        emit `harness.delivery-warning` to the Overseer + `harness.wake` to the zone.
+//   harnessTimeouts.idleThresholdMs    — staleness threshold on BOTH outputs/<safe>.md mtime AND PTY
+//                                        lastActivityMs for heartbeat checks. A zone is considered idle
+//                                        only when BOTH signals go quiet; either one advancing keeps it live.
+//   HEARTBEAT_POLL_MS                  — how often the heartbeat scan fires.
+//   HARD_CANCEL_MS                     — after this long with an unconsumed `cancel` msg, SIGINT the zone PTY.
+//   AWAIT_READY_SOFT_MS                — soft gate on the one-shot bootstrap poke; on miss we poke anyway.
 const HEARTBEAT_POLL_MS = 15_000
 const HARD_CANCEL_MS = 60_000
 const AWAIT_READY_SOFT_MS = 10_000
@@ -1460,7 +1510,9 @@ function startMailboxObserver(
   projectDir: string,
   zones: ZoneGraphNode[],
   dispatchId: string,
+  settings: ProjectSettings,
 ): { stop: () => void } {
+  const { deliveryWarningMs: DELIVERY_WARNING_MS, idleThresholdMs: IDLE_THRESHOLD_MS, taskTimeoutMs: DEFAULT_TASK_TIMEOUT_MS } = settings.harnessTimeouts
   const zoneBySafe = new Map(zones.map(z => [sanitize(z.data.label), z]))
   const outputsDir = join(projectDir, 'ARCHITECT', 'outputs')
   fs.mkdirSync(outputsDir, { recursive: true })
@@ -1916,7 +1968,7 @@ export async function startDispatch(
   const dispatchId = randomBytes(8).toString('hex')
 
   const allInfo: TerminalInfo[] = [
-    { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: settings.defaultRuntime },
+    { id: ARCHITECT_SESSION_ID, label: 'Architect', runtime: settings.dispatchRuntime },
     ...sorted.map(zone => ({ id: zone.id, label: zone.data.label, runtime: getZoneRuntime(zone, settings), mailboxMode: true })),
   ]
 
@@ -1945,7 +1997,7 @@ export async function startDispatch(
     const systemPrompt = fs.readFileSync(join(promptsDir, `${safe}.md`), 'utf-8')
     const bootstrap = buildBootstrapBody('zone', safe, projectDir)
 
-    await new Promise<void>(resolve => {
+    await serializeAgentSpawn(() => new Promise<void>(resolve => {
       let settled = false
       const done = (): void => { if (!settled) { settled = true; resolve() } }
       const timer = setTimeout(() => {
@@ -1963,6 +2015,7 @@ export async function startDispatch(
         initialPrompt: bootstrap,
         appendSystemPrompt: systemPrompt,
         model,
+        effort: settings.dispatchEffort,
         mailboxMode: true,
         capture: {
           projectDir,
@@ -2003,51 +2056,65 @@ export async function startDispatch(
       // Without this the whole loop awaits silently and the UI only gets
       // the list when startDispatch returns.
       broadcast('terminal:spawned', zoneInfo)
-    })
+    }))
   }
 
-  startMailboxObserver(projectDir, sorted, dispatchId)
+  startMailboxObserver(projectDir, sorted, dispatchId, settings)
 
   const architectPrompt = fs.readFileSync(join(promptsDir, 'architect.md'), 'utf-8')
   const architectEnv: Record<string, string> = mailboxEnv(projectDir, MAILBOX_OVERSEER_ID, 'Architect', dispatchId)
-  const architectInfo = spawnAgentSession({
-    win,
-    id: ARCHITECT_SESSION_ID,
-    label: 'Architect',
-    runtime: settings.defaultRuntime,
-    env: architectEnv,
-    cwd: projectDir,
-    initialPrompt: architectPrompt,
-    model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
-    planMode: dispatch.planMode === true,
-    capture: {
-      projectDir,
-      zoneKey: ARCHITECT_SESSION_ID,
-      legacyKey: 'Architect',
-      summary: dispatchSummary,
-    },
-    onSessionCaptured: sessionId => {
-      architectSessionId = sessionId
-      const record: DispatchRecord = {
-        architectSessionId: sessionId,
-        architectRuntime: settings.defaultRuntime,
-        dispatchId,
-        zoneIds: sorted.map(z => z.id),
-        zoneLabels: sorted.map(z => z.data.label),
-        zoneSessions: [],
-        userPrompt,
+  await serializeAgentSpawn(() => new Promise<void>(resolve => {
+    let settled = false
+    const done = (): void => { if (!settled) { settled = true; resolve() } }
+    const timer = setTimeout(() => {
+      console.warn(`[dispatch] Architect capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`)
+      done()
+    }, CAPTURE_SERIAL_TIMEOUT_MS)
+
+    const architectInfo = spawnAgentSession({
+      win,
+      id: ARCHITECT_SESSION_ID,
+      label: 'Architect',
+      runtime: settings.dispatchRuntime,
+      env: architectEnv,
+      cwd: projectDir,
+      initialPrompt: architectPrompt,
+      model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.dispatchRuntime],
+      planMode: dispatch.planMode === true,
+      effort: settings.dispatchEffort,
+      capture: {
+        projectDir,
+        zoneKey: ARCHITECT_SESSION_ID,
+        legacyKey: 'Architect',
         summary: dispatchSummary,
-        model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.defaultRuntime],
-        planMode: dispatch.planMode === true,
-        timestamp: new Date().toISOString(),
-      }
-      try { saveDispatch(projectDir, record) } catch (err) {
-        console.error('[dispatch-capture] failed to save', err)
-      }
-      for (const fn of pendingZoneUpserts.splice(0)) fn()
-    },
-  })
-  broadcast('terminal:spawned', architectInfo)
+      },
+      onSessionCaptured: sessionId => {
+        architectSessionId = sessionId
+        const record: DispatchRecord = {
+          architectSessionId: sessionId,
+          architectRuntime: settings.dispatchRuntime,
+          dispatchId,
+          zoneIds: sorted.map(z => z.id),
+          zoneLabels: sorted.map(z => z.data.label),
+          zoneSessions: [],
+          userPrompt,
+          summary: dispatchSummary,
+          model: dispatch.model || DEFAULT_MODEL_BY_RUNTIME[settings.dispatchRuntime],
+          planMode: dispatch.planMode === true,
+          timestamp: new Date().toISOString(),
+        }
+        try { saveDispatch(projectDir, record) } catch (err) {
+          console.error('[dispatch-capture] failed to save', err)
+        }
+        for (const fn of pendingZoneUpserts.splice(0)) fn()
+      },
+      onCaptureSettled: () => {
+        clearTimeout(timer)
+        done()
+      },
+    })
+    broadcast('terminal:spawned', architectInfo)
+  }))
 
   return allInfo
 }
@@ -2065,57 +2132,209 @@ const ASSISTANT_LABELS: Record<AssistantMode, string> = {
   general:      'General Assistant',
 }
 
+export interface StartAssistantOpts {
+  // User's explicit model pick. Falls back to DEFAULT_MODEL_BY_RUNTIME.
+  model?: string
+  // Which session to use when spawning this mode's PTY. Read only when main
+  // actually spawns — a live PTY is reused (ignoring this) unless `force`.
+  session?: { mode: 'new' } | { mode: 'resume'; sessionId: string }
+  // Optional seed prompt for a fresh session. When omitted, defaults to
+  // "Read ARCHITECT/.assistant-context.<mode>.md" — each mode has its own
+  // context file so prompts don't trample each other.
+  initialPrompt?: string
+  // Force kill-and-respawn even if this mode's PTY is already alive. Set
+  // by the launcher modal (Start new / Resume specific / model change);
+  // NOT set by implicit open / mode-switch flows, which should reuse the
+  // existing PTY and ignore the opts.
+  force?: boolean
+}
+
+// Spawns or reuses a side-panel assistant session.
+//
+// Design invariant: this function does NOT receive a ProjectSettings argument
+// and intentionally reads nothing from the project's dispatch/zone config.
+// All behavior (runtime, model, seed prompt, session intent) comes from the
+// caller's explicit args. Keeps the assistant fully decoupled from the
+// Settings-page `dispatch*` state — changing dispatch runtime, effort, tools,
+// or timeout must never silently retarget or reconfigure the assistant.
+// If you ever need the assistant to honor a new knob, add an `assistant*`
+// field in AssistantSettings and thread it through as an explicit arg here.
+// Global serializer for any fresh CLI spawn that arms session capture.
+// Dispatch zones, single-zone launches (runZone), and both assistant modes
+// all write new session files into the same per-runtime CLI directories
+// (~/.claude/projects/<cwd>, ~/.codex/sessions/..., etc.). Two concurrent
+// captures run diff-based attribution against those dirs and can cross-
+// attribute IDs when their "before" snapshots overlap. Routing every
+// fresh spawn through this single queue guarantees each spawn's snapshot
+// already contains all prior spawns' new IDs — same invariant startDispatch
+// enforces internally per zone, now extended across flows.
+//
+// Resumes do NOT need queueing: they don't create a new session file, so
+// no diff is computed. Shell spawns also don't capture.
+let globalAgentSpawnQueue: Promise<unknown> = Promise.resolve()
+
+function serializeAgentSpawn<T>(task: () => Promise<T>): Promise<T> {
+  const p = globalAgentSpawnQueue.then(task)
+  // Keep the chain alive on rejection — one failure shouldn't poison
+  // subsequent spawns.
+  globalAgentSpawnQueue = p.then(() => undefined, () => undefined)
+  return p
+}
+
 export function startAssistant(
   win: BrowserWindow,
   projectDir: string,
   contextMd: string,
   runtime: AgentRuntime,
   mode: AssistantMode,
-): TerminalInfo {
+  opts?: StartAssistantOpts,
+): Promise<TerminalInfo> {
+  return serializeAgentSpawn(
+    () => doStartAssistant(win, projectDir, contextMd, runtime, mode, opts),
+  )
+}
+
+async function doStartAssistant(
+  win: BrowserWindow,
+  projectDir: string,
+  contextMd: string,
+  runtime: AgentRuntime,
+  mode: AssistantMode,
+  opts?: StartAssistantOpts,
+): Promise<TerminalInfo> {
   const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
   const sessionId = ASSISTANT_SESSION_IDS[safeMode]
   const zoneKey = ASSISTANT_ZONES[safeMode]
 
-  const existing = sessions.get(sessionId)
-  if (existing) {
-    try { existing.pty.kill() } catch {}
-    try { existing.term.dispose() } catch {}
-    sessions.delete(sessionId)
-  }
-
   const safeRuntime = isAgentRuntime(runtime) ? runtime : DEFAULT_AGENT_RUNTIME
   const architectDir = join(projectDir, 'ARCHITECT')
   fs.mkdirSync(architectDir, { recursive: true })
-  // Always keep the context file fresh so the assistant can re-read on demand
-  // ("re-read ARCHITECT/.assistant-context.md"), but don't auto-inject it.
-  const contextFile = join(architectDir, '.assistant-context.md')
+  // Per-mode context files so Architecture and General don't trample each
+  // other's system prompt. A shared path caused the wrong mode's content to
+  // be loaded if the user told a still-running assistant to "re-read the
+  // context file" after the other mode had written to it.
+  const contextFilename = `.assistant-context.${safeMode}.md`
+  const contextFile = join(architectDir, contextFilename)
   fs.writeFileSync(contextFile, contextMd)
 
-  // Assistant has no per-session picker UI — resume the most recent record
-  // for this runtime if one is reachable, otherwise start fresh.
-  const saved = latestReachableSession(projectDir, zoneKey, safeRuntime)
-  const canResume = !!saved
+  // Reuse vs. respawn: the launcher modal sets `opts.force` when the user
+  // explicitly asks for a new/different session or model. Everything else
+  // (implicit open, mode toggle) reuses the live PTY and ignores `opts` —
+  // the renderer eagerly passes the last-session pair, but a matching PTY
+  // is already the right answer.
+  const existing = sessions.get(sessionId)
+  if (existing && !opts?.force) {
+    return {
+      id: sessionId,
+      label: ASSISTANT_LABELS[safeMode],
+      runtime: existing.runtime,
+    }
+  }
+  if (existing) {
+    stopAssistantMode(safeMode)
+  }
+
+  // Resolve resumeSessionId:
+  //   - opts.session?.mode === 'resume' → honor it verbatim
+  //   - opts.session?.mode === 'new'    → force fresh (no resume)
+  //   - no opts                         → auto-resume latest reachable (legacy)
+  let resumeSessionId: string | undefined
+  if (opts?.session?.mode === 'resume') {
+    resumeSessionId = opts.session.sessionId
+  } else if (opts?.session?.mode === 'new') {
+    resumeSessionId = undefined
+  } else {
+    const saved = latestReachableSession(projectDir, zoneKey, safeRuntime)
+    resumeSessionId = saved?.sessionId
+  }
+
+  const model = opts?.model ?? DEFAULT_MODEL_BY_RUNTIME[safeRuntime]
+  const initialPrompt = resumeSessionId
+    ? undefined
+    : opts?.initialPrompt ?? `Read ARCHITECT/${contextFilename}`
+
   console.log(
-    `[assistant] mode=${safeMode} runtime=${safeRuntime} saved=${saved ? saved.sessionId : 'none'} → ${canResume ? 'RESUMING' : 'fresh start'}`,
+    `[assistant] mode=${safeMode} runtime=${safeRuntime} model=${model} ` +
+    `${resumeSessionId ? `resume=${resumeSessionId}` : 'fresh'}` +
+    `${opts ? ' (explicit)' : ''}`,
   )
 
-  return spawnAgentSession({
-    win,
-    id: sessionId,
-    label: ASSISTANT_LABELS[safeMode],
-    runtime: safeRuntime,
-    env: {},
-    cwd: projectDir,
-    initialPrompt: canResume ? undefined : 'Read ARCHITECT/.assistant-context.md',
-    resumeSessionId: canResume ? saved!.sessionId : undefined,
-    model: DEFAULT_MODEL_BY_RUNTIME[safeRuntime],
-    capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
-    // Interactive: keep normal permission prompts. The user is sitting here.
-    skipPermissions: false,
+  // Fresh spawns arm session capture and need to settle before we return —
+  // otherwise the next queued startAssistant's snapshot may not yet include
+  // this spawn's new session file. Resumes have no capture armed, so they
+  // return as soon as spawnAgentSession synchronously hands back info.
+  if (resumeSessionId) {
+    return spawnAgentSession({
+      win,
+      id: sessionId,
+      label: ASSISTANT_LABELS[safeMode],
+      runtime: safeRuntime,
+      env: {},
+      cwd: projectDir,
+      initialPrompt,
+      resumeSessionId,
+      model,
+      capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
+      skipPermissions: false,
+    })
+  }
+
+  return await new Promise<TerminalInfo>((resolve, reject) => {
+    let returned: TerminalInfo | null = null
+    let settled = false
+    const done = (): void => {
+      if (settled || !returned) return
+      settled = true
+      resolve(returned)
+    }
+    const timer = setTimeout(() => {
+      console.warn(
+        `[assistant] capture for mode=${safeMode} did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`,
+      )
+      done()
+    }, CAPTURE_SERIAL_TIMEOUT_MS)
+
+    try {
+      returned = spawnAgentSession({
+        win,
+        id: sessionId,
+        label: ASSISTANT_LABELS[safeMode],
+        runtime: safeRuntime,
+        env: {},
+        cwd: projectDir,
+        initialPrompt,
+        model,
+        capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
+        skipPermissions: false,
+        onCaptureSettled: () => {
+          clearTimeout(timer)
+          done()
+        },
+      })
+    } catch (err) {
+      clearTimeout(timer)
+      reject(err)
+    }
   })
 }
 
-export function stopAssistant() {
+// Tears down a single assistant mode's PTY. Used by the launcher modal when
+// the user picks "Start new", "Resume <session>", or changes model. The OTHER
+// mode's session is untouched.
+export function stopAssistantMode(mode: AssistantMode) {
+  const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
+  const sessionId = ASSISTANT_SESSION_IDS[safeMode]
+  const session = sessions.get(sessionId)
+  if (!session) return
+  try { session.pty.kill() } catch {}
+  try { session.term.dispose() } catch {}
+  sessions.delete(sessionId)
+}
+
+// Tears down both assistant PTYs. Intended for true teardown (project dir
+// change, app quit); NOT called when the panel is closed or the mode toggle
+// flips — those paths keep the sessions alive.
+export function stopAllAssistants() {
   for (const sessionId of Object.values(ASSISTANT_SESSION_IDS)) {
     const session = sessions.get(sessionId)
     if (session) {
@@ -2124,6 +2343,37 @@ export function stopAssistant() {
       sessions.delete(sessionId)
     }
   }
+}
+
+// Per-assistant-mode wrappers around the zone session store. The assistant
+// already writes capture records keyed by ASSISTANT_ZONES[mode], so we just
+// expose the same read/delete/rename helpers under an "assistant.*" facade
+// so the renderer doesn't leak "zone" terminology.
+export function listAssistantSessions(
+  projectDir: string,
+  mode: AssistantMode,
+): ZoneSessionRecord[] {
+  const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
+  return listZoneSessions(projectDir, ASSISTANT_ZONES[safeMode])
+}
+
+export function deleteAssistantSession(
+  projectDir: string,
+  mode: AssistantMode,
+  sessionId: string,
+): boolean {
+  const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
+  return deleteZoneSession(projectDir, ASSISTANT_ZONES[safeMode], sessionId)
+}
+
+export function updateAssistantSessionSummary(
+  projectDir: string,
+  mode: AssistantMode,
+  sessionId: string,
+  summary: string,
+): boolean {
+  const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
+  return updateZoneSessionSummary(projectDir, ASSISTANT_ZONES[safeMode], sessionId, summary)
 }
 
 export interface RunZoneOptions {
@@ -2241,25 +2491,49 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     : buildSoloInitialPrompt(systemPrompt, userPrompt)
   const appendForRuntime = runtime === 'claude' ? systemPrompt : undefined
 
-  const info = spawnAgentSession({
-    win,
-    id: zone.id,
-    label: zone.data.label,
-    runtime,
-    env,
-    cwd: opts.projectDir,
-    initialPrompt,
-    appendSystemPrompt: appendForRuntime,
-    model,
-    planMode: opts.planMode === true,
-    skipPermissions: false,
-    capture: {
-      projectDir: opts.projectDir,
-      zoneKey: zone.id,
-      legacyKey: safe,
-      summary,
-    },
-  })
+  const info = await serializeAgentSpawn(() => new Promise<TerminalInfo>((resolve, reject) => {
+    let returned: TerminalInfo | null = null
+    let settled = false
+    const done = (): void => {
+      if (settled || !returned) return
+      settled = true
+      resolve(returned)
+    }
+    const timer = setTimeout(() => {
+      console.warn(`[runZone] "${zone.data.label}" capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`)
+      done()
+    }, CAPTURE_SERIAL_TIMEOUT_MS)
+
+    try {
+      returned = spawnAgentSession({
+        win,
+        id: zone.id,
+        label: zone.data.label,
+        runtime,
+        env,
+        cwd: opts.projectDir,
+        initialPrompt,
+        appendSystemPrompt: appendForRuntime,
+        model,
+        planMode: opts.planMode === true,
+        effort: settings.dispatchEffort,
+        skipPermissions: false,
+        capture: {
+          projectDir: opts.projectDir,
+          zoneKey: zone.id,
+          legacyKey: safe,
+          summary,
+        },
+        onCaptureSettled: () => {
+          clearTimeout(timer)
+          done()
+        },
+      })
+    } catch (err) {
+      clearTimeout(timer)
+      reject(err)
+    }
+  }))
   broadcast('terminal:spawned', info)
   return { ok: true, info }
 }
@@ -2393,11 +2667,12 @@ export async function resumeDispatch(
       model: getZoneModel(zone, runtime),
       resumeSessionId: entry.sessionId,
       initialPrompt: buildBootstrapBody('zone', safe, opts.projectDir),
+      effort: settings.dispatchEffort,
       mailboxMode: true,
     })
   }
 
-  startMailboxObserver(opts.projectDir, dispatchZones, dispatchId)
+  startMailboxObserver(opts.projectDir, dispatchZones, dispatchId, settings)
 
   spawnAgentSession({
     win,
@@ -2409,6 +2684,7 @@ export async function resumeDispatch(
     model: record.model || DEFAULT_MODEL_BY_RUNTIME[record.architectRuntime],
     resumeSessionId: record.architectSessionId,
     planMode: record.planMode === true,
+    effort: settings.dispatchEffort,
   })
 
   return { ok: true, info }

@@ -1,9 +1,11 @@
 import type { Edge } from '@xyflow/react'
 import {
+  AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
   isAgentRuntime,
   isAgentRuntimeMode,
+  isEffortLevel,
   type AgentRuntime,
 } from '../../../shared/agentRuntimes'
 import type {
@@ -11,41 +13,74 @@ import type {
   CanvasNode,
   ComponentNodeData,
   ComponentNodeType,
+  HarnessTimeouts,
+  NodeTools,
   ProjectSettings,
   RuntimeModelMap,
   ZoneNodeData,
   ZoneNodeType,
 } from '../types'
 
+export const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
+  deliveryWarningMs: 45_000,
+  idleThresholdMs: 2 * 60_000,
+  taskTimeoutMs: 30 * 60_000,
+}
+
+export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
+
+export const DEFAULT_TOOLS: NodeTools = {
+  webSearch: false,
+  codeExec: false,
+  fileRead: false,
+  fileWrite: false,
+  apiCalls: false,
+  shell: false,
+}
+
+function buildDispatchModels(): RuntimeModelMap {
+  const map: RuntimeModelMap = {}
+  for (const runtime of AGENT_RUNTIMES) map[runtime.id] = runtime.defaultModel
+  return map
+}
+
 export function createDefaultProjectSettings(): ProjectSettings {
   return {
-    defaultRuntime: DEFAULT_AGENT_RUNTIME,
+    dispatchRuntime: DEFAULT_AGENT_RUNTIME,
     assistantMode: 'architecture',
+    dispatchModels: buildDispatchModels(),
+    dispatchEffort: 'medium',
+    dispatchPlanMode: false,
+    dispatchTools: { ...DEFAULT_TOOLS },
+    dispatchTimeoutMs: DEFAULT_ZONE_TIMEOUT_MS,
+    harnessTimeouts: { ...DEFAULT_HARNESS_TIMEOUTS },
   }
 }
 
-export function createDefaultZoneAgentConfig(defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME) {
+export function createDefaultZoneAgentConfig(settings: ProjectSettings = createDefaultProjectSettings()) {
+  const runtime = settings.dispatchRuntime
+  const seedModel = settings.dispatchModels[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
   return {
     agentRuntimeMode: 'inherit' as const,
-    agentRuntime: defaultRuntime,
-    providerModels: { [defaultRuntime]: DEFAULT_MODEL_BY_RUNTIME[defaultRuntime] } as RuntimeModelMap,
+    agentRuntime: runtime,
+    providerModels: { [runtime]: seedModel } as RuntimeModelMap,
     openSections: [],
     skills: [],
-    tools: { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false },
-    behavior: { mode: 'sequential' as const, retries: 0, onFailure: 'stop' as const, timeoutMs: 30000 },
+    tools: { ...settings.dispatchTools },
+    behavior: { mode: 'sequential' as const, retries: 0, onFailure: 'stop' as const, timeoutMs: settings.dispatchTimeoutMs },
     permissions: { readFiles: false, writeFiles: false, network: false, shell: false },
     envVars: [],
   }
 }
 
-export function createDefaultZoneData(defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME): ZoneNodeData {
+export function createDefaultZoneData(settings: ProjectSettings = createDefaultProjectSettings()): ZoneNodeData {
   return {
     label: 'Zone',
     description: '',
     color: '#58A6FF',
     status: 'idle',
     systemPrompt: '',
-    ...createDefaultZoneAgentConfig(defaultRuntime),
+    ...createDefaultZoneAgentConfig(settings),
   }
 }
 
@@ -53,7 +88,7 @@ export function getEffectiveRuntime(
   data: Pick<ZoneNodeData, 'agentRuntimeMode' | 'agentRuntime'>,
   settings: ProjectSettings
 ): AgentRuntime {
-  return data.agentRuntimeMode === 'override' ? data.agentRuntime : settings.defaultRuntime
+  return data.agentRuntimeMode === 'override' ? data.agentRuntime : settings.dispatchRuntime
 }
 
 export function getEffectiveModel(
@@ -66,7 +101,7 @@ export function getEffectiveModel(
 
 function normalizeProviderModels(
   rawData: Record<string, unknown>,
-  defaultRuntime: AgentRuntime
+  dispatchRuntime: AgentRuntime
 ): RuntimeModelMap {
   const rawProviderModels = rawData.providerModels
   const providerModels: RuntimeModelMap = {}
@@ -83,26 +118,139 @@ function normalizeProviderModels(
     providerModels.claude = rawData.model
   }
 
-  if (!providerModels[defaultRuntime]) {
-    providerModels[defaultRuntime] = DEFAULT_MODEL_BY_RUNTIME[defaultRuntime]
+  if (!providerModels[dispatchRuntime]) {
+    providerModels[dispatchRuntime] = DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
   }
 
   return providerModels
 }
 
+function normalizeDispatchModels(raw: unknown): RuntimeModelMap {
+  const map = buildDispatchModels()
+  if (!raw || typeof raw !== 'object') return map
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (isAgentRuntime(runtime) && typeof value === 'string' && value.trim()) {
+      map[runtime] = value
+    }
+  }
+  return map
+}
+
+function normalizeDispatchTools(raw: unknown): NodeTools {
+  const base = { ...DEFAULT_TOOLS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  for (const key of Object.keys(base) as (keyof NodeTools)[]) {
+    if (typeof rec[key] === 'boolean') base[key] = rec[key] as boolean
+  }
+  return base
+}
+
+function normalizeHarnessTimeouts(raw: unknown): HarnessTimeouts {
+  const base = { ...DEFAULT_HARNESS_TIMEOUTS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  for (const key of Object.keys(base) as (keyof HarnessTimeouts)[]) {
+    const v = rec[key]
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) base[key] = v
+  }
+  return base
+}
+
 export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   const rawSettings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
-  const defaultRuntime = isAgentRuntime(rawSettings.defaultRuntime)
-    ? rawSettings.defaultRuntime
-    : DEFAULT_AGENT_RUNTIME
+  // Backwards compat: older canvas files used `default*` names for what are
+  // now `dispatch*` fields. Accept both on read so existing projects keep
+  // working; writes always use the new names.
+  const dispatchRuntime = isAgentRuntime(rawSettings.dispatchRuntime)
+    ? rawSettings.dispatchRuntime
+    : isAgentRuntime(rawSettings.defaultRuntime)
+      ? rawSettings.defaultRuntime
+      : DEFAULT_AGENT_RUNTIME
   const assistantMode =
     rawSettings.assistantMode === 'general' ? 'general' : 'architecture'
+  const rawDispatchEffort = rawSettings.dispatchEffort ?? rawSettings.defaultEffort
+  const dispatchEffort = isEffortLevel(rawDispatchEffort) ? rawDispatchEffort : 'medium'
+  const dispatchPlanMode = rawSettings.dispatchPlanMode === true || rawSettings.defaultPlanMode === true
+  const rawDispatchTimeoutMs = rawSettings.dispatchTimeoutMs ?? rawSettings.defaultTimeoutMs
+  const dispatchTimeoutMs =
+    typeof rawDispatchTimeoutMs === 'number' && rawDispatchTimeoutMs >= 0
+      ? rawDispatchTimeoutMs
+      : DEFAULT_ZONE_TIMEOUT_MS
 
-  return { defaultRuntime, assistantMode }
+  const assistantModels = normalizeAssistantModels(rawSettings.assistantModels)
+  const assistantRuntimeByMode = normalizeAssistantRuntimeByMode(rawSettings.assistantRuntimeByMode, rawSettings.assistantRuntime)
+  const assistantLastSessionByMode = normalizeAssistantLastSessionByMode(rawSettings.assistantLastSessionByMode)
+
+  const rawDispatchModels = rawSettings.dispatchModels ?? rawSettings.defaultModels
+  const rawDispatchTools = rawSettings.dispatchTools ?? rawSettings.defaultTools
+
+  return {
+    dispatchRuntime,
+    assistantMode,
+    dispatchModels: normalizeDispatchModels(rawDispatchModels),
+    ...(assistantModels ? { assistantModels } : {}),
+    ...(assistantRuntimeByMode ? { assistantRuntimeByMode } : {}),
+    ...(assistantLastSessionByMode ? { assistantLastSessionByMode } : {}),
+    dispatchEffort,
+    dispatchPlanMode,
+    dispatchTools: normalizeDispatchTools(rawDispatchTools),
+    dispatchTimeoutMs,
+    harnessTimeouts: normalizeHarnessTimeouts(rawSettings.harnessTimeouts),
+  }
+}
+
+function normalizeAssistantModels(raw: unknown): RuntimeModelMap | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: RuntimeModelMap = {}
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (isAgentRuntime(runtime) && typeof value === 'string' && value.trim()) {
+      map[runtime] = value
+    }
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeAssistantRuntimeByMode(
+  raw: unknown,
+  legacyAssistantRuntime: unknown,
+): Partial<Record<'architecture' | 'general', import('../../../shared/agentRuntimes').AgentRuntime>> | undefined {
+  const map: Partial<Record<'architecture' | 'general', import('../../../shared/agentRuntimes').AgentRuntime>> = {}
+  if (raw && typeof raw === 'object') {
+    for (const [mode, value] of Object.entries(raw as Record<string, unknown>)) {
+      if ((mode === 'architecture' || mode === 'general') && isAgentRuntime(value)) {
+        map[mode] = value
+      }
+    }
+  }
+  // Legacy migration: the prior single `assistantRuntime` field applied to
+  // both modes. Seed both entries so existing projects keep their override.
+  if (Object.keys(map).length === 0 && isAgentRuntime(legacyAssistantRuntime)) {
+    map.architecture = legacyAssistantRuntime
+    map.general = legacyAssistantRuntime
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeAssistantLastSessionByMode(
+  raw: unknown,
+): Partial<Record<'architecture' | 'general', { runtime: import('../../../shared/agentRuntimes').AgentRuntime; sessionId: string; model?: string }>> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: Partial<Record<'architecture' | 'general', { runtime: import('../../../shared/agentRuntimes').AgentRuntime; sessionId: string; model?: string }>> = {}
+  for (const [mode, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (mode !== 'architecture' && mode !== 'general') continue
+    if (!value || typeof value !== 'object') continue
+    const entry = value as Record<string, unknown>
+    if (!isAgentRuntime(entry.runtime)) continue
+    if (typeof entry.sessionId !== 'string' || !entry.sessionId.trim()) continue
+    const model = typeof entry.model === 'string' && entry.model.trim() ? entry.model : undefined
+    map[mode] = { runtime: entry.runtime, sessionId: entry.sessionId, ...(model ? { model } : {}) }
+  }
+  return Object.keys(map).length > 0 ? map : undefined
 }
 
 function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettings): ZoneNodeData {
-  const defaults = createDefaultZoneAgentConfig(settings.defaultRuntime)
+  const defaults = createDefaultZoneAgentConfig(settings)
   const agentRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : DEFAULT_AGENT_RUNTIME
 
   // Legacy migration: pre-refactor zones stored their behavior customization under `prompt`.
@@ -121,7 +269,7 @@ function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettin
     systemPrompt,
     agentRuntimeMode: isAgentRuntimeMode(raw.agentRuntimeMode) ? raw.agentRuntimeMode : defaults.agentRuntimeMode,
     agentRuntime,
-    providerModels: normalizeProviderModels(raw, settings.defaultRuntime),
+    providerModels: normalizeProviderModels(raw, settings.dispatchRuntime),
     openSections: Array.isArray(raw.openSections) ? (raw.openSections as string[]) : defaults.openSections,
     skills: Array.isArray(raw.skills) ? (raw.skills as ZoneNodeData['skills']) : defaults.skills,
     tools: raw.tools && typeof raw.tools === 'object' ? (raw.tools as ZoneNodeData['tools']) : defaults.tools,

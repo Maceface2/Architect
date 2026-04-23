@@ -10,6 +10,10 @@ export interface ZoneSessionRecord {
   sessionId: string
   capturedAt: string
   summary: string
+  // Model passed to the CLI at spawn. Used to replay the exact same config on
+  // resume — the per-CLI default or the user's current picker selection may
+  // have drifted since this session was started.
+  model?: string
   // When the session was spawned as part of a multi-zone dispatch, points to
   // the Architect session that orchestrated it. Used by the renderer to show
   // a "from dispatch" badge in the zone launcher history.

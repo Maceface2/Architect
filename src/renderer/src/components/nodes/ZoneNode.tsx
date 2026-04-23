@@ -44,7 +44,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const systemPrompt = (data.systemPrompt ?? '') as string
   const status = (data.status ?? 'idle') as NodeStatus
   const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
-  const configuredRuntime = (data.agentRuntime ?? projectSettings.defaultRuntime) as AgentRuntime
+  const configuredRuntime = (data.agentRuntime ?? projectSettings.dispatchRuntime) as AgentRuntime
   const providerModels = (data.providerModels ?? {}) as RuntimeModelMap
   const effectiveRuntime = getEffectiveRuntime(
     { agentRuntimeMode: runtimeMode, agentRuntime: configuredRuntime },

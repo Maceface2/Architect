@@ -48,10 +48,32 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Architecture assistant
   assistant: {
-    start: (projectDir: string, contextMd: string, runtime: unknown, mode: unknown) =>
-      ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime, mode),
+    // `opts` (new/resume, model, seed prompt) is optional. When absent the
+    // main process preserves legacy behavior (auto-resume latest reachable);
+    // when present it kills this mode's PTY and respawns with the choice.
+    start: (
+      projectDir: string,
+      contextMd: string,
+      runtime: unknown,
+      mode: unknown,
+      opts?: {
+        model?: string
+        session?: { mode: 'new' } | { mode: 'resume'; sessionId: string }
+        initialPrompt?: string
+        force?: boolean
+      },
+    ) =>
+      ipcRenderer.invoke('start-assistant', projectDir, contextMd, runtime, mode, opts),
     stop: () =>
       ipcRenderer.send('stop-assistant'),
+    stopMode: (mode: unknown) =>
+      ipcRenderer.send('stop-assistant-mode', mode),
+    listSessions: (projectDir: string, mode: unknown) =>
+      ipcRenderer.invoke('assistant:list-sessions', projectDir, mode),
+    deleteSession: (projectDir: string, mode: unknown, sessionId: string) =>
+      ipcRenderer.invoke('assistant:delete-session', projectDir, mode, sessionId),
+    updateSessionSummary: (projectDir: string, mode: unknown, sessionId: string, summary: string) =>
+      ipcRenderer.invoke('assistant:update-session-summary', projectDir, mode, sessionId, summary),
   },
 
   onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => {
@@ -171,9 +193,9 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke('terminal:run-zone', opts),
 
     onSessionCaptured: (
-      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; dispatchId?: string }) => void,
+      cb: (event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; model?: string; dispatchId?: string }) => void,
     ) => {
-      const handler = (_: unknown, event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; dispatchId?: string }) => cb(event)
+      const handler = (_: unknown, event: { zoneKey: string; zoneId: string; sessionId: string; runtime: string; summary: string; model?: string; dispatchId?: string }) => cb(event)
       ipcRenderer.on('zone:session-captured', handler)
       return () => ipcRenderer.removeListener('zone:session-captured', handler)
     },

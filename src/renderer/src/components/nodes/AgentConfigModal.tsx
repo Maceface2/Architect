@@ -231,12 +231,12 @@ export default function AgentConfigModal({
                   </Field>
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-slate-400">
                     {runtimeMode === 'inherit'
-                      ? `Using project default: ${getAgentRuntime(projectSettings.defaultRuntime).label}`
+                      ? `Using project default: ${getAgentRuntime(projectSettings.dispatchRuntime).label}`
                       : 'This zone uses its own CLI selection.'}
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     {AGENT_RUNTIMES.map(runtime => {
-                      const selected = (runtimeMode === 'inherit' ? projectSettings.defaultRuntime : configuredRuntime) === runtime.id
+                      const selected = (runtimeMode === 'inherit' ? projectSettings.dispatchRuntime : configuredRuntime) === runtime.id
                       return (
                         <button
                           key={runtime.id}

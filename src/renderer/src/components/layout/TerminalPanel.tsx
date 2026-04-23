@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
   emptyLayout,
@@ -89,6 +90,8 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
         cursorBlink: true,
         allowTransparency: false,
         scrollback: 5000,
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
       })
       const fit = new FitAddon()
       term.loadAddon(fit)

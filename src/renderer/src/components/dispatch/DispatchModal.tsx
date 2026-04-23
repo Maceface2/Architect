@@ -28,13 +28,15 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   const zoneCount = zones.length
   const projectDir = useProjectDir()
   const projectSettings = useProjectSettings()
-  const defaultRuntime: AgentRuntime = projectSettings.defaultRuntime
-  const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === defaultRuntime) ?? AGENT_RUNTIMES[0]
+  const dispatchRuntime: AgentRuntime = projectSettings.dispatchRuntime
+  const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === dispatchRuntime) ?? AGENT_RUNTIMES[0]
 
   const [tab, setTab] = useState<Tab>('new')
   const [prompt, setPrompt] = useState(prefillPrompt ?? '')
-  const [model, setModel] = useState<string>(DEFAULT_MODEL_BY_RUNTIME[defaultRuntime])
-  const [planMode, setPlanMode] = useState(false)
+  const [model, setModel] = useState<string>(
+    projectSettings.dispatchModels[dispatchRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
+  )
+  const [planMode, setPlanMode] = useState(projectSettings.dispatchPlanMode)
   const [selectedZoneIds, setSelectedZoneIds] = useState<Set<string>>(() => new Set(zones.map(z => z.id)))
   const [priorSessions, setPriorSessions] = useState<DispatchRecord[]>([])
   const [loading, setLoading] = useState(true)

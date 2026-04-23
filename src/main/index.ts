@@ -14,11 +14,16 @@ import {
   closeTerminal,
   getCaptureState,
   startAssistant,
-  stopAssistant,
+  stopAllAssistants,
+  stopAssistantMode,
+  listAssistantSessions,
+  deleteAssistantSession,
+  updateAssistantSessionSummary,
   spawnShellSession,
   listZoneSessionsForZone,
   deleteZoneSessionEntry,
   renameZoneSessionEntry,
+  type StartAssistantOpts,
   type StartDispatchOptions,
   type RunZoneOptions,
   type ResumeDispatchOptions,
@@ -233,13 +238,29 @@ ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
   return resumeDispatch(mainWindow, opts)
 })
 
-ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode) => {
+ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode, opts?: StartAssistantOpts) => {
   if (!mainWindow) return null
-  return startAssistant(mainWindow, projectDir, contextMd, runtime, mode)
+  return startAssistant(mainWindow, projectDir, contextMd, runtime, mode, opts)
 })
 
 ipcMain.on('stop-assistant', () => {
-  stopAssistant()
+  stopAllAssistants()
+})
+
+ipcMain.on('stop-assistant-mode', (_event, mode: AssistantMode) => {
+  stopAssistantMode(mode)
+})
+
+ipcMain.handle('assistant:list-sessions', (_event, projectDir: string, mode: AssistantMode) => {
+  return listAssistantSessions(projectDir, mode)
+})
+
+ipcMain.handle('assistant:delete-session', (_event, projectDir: string, mode: AssistantMode, sessionId: string) => {
+  return deleteAssistantSession(projectDir, mode, sessionId)
+})
+
+ipcMain.handle('assistant:update-session-summary', (_event, projectDir: string, mode: AssistantMode, sessionId: string, summary: string) => {
+  return updateAssistantSessionSummary(projectDir, mode, sessionId, summary)
 })
 
 ipcMain.handle('terminal:spawn-shell', (_event, cwd: string) => {

@@ -15,13 +15,15 @@ import {
 } from '@xyflow/react'
 
 import TopNav from './components/layout/TopNav'
-import AssistantPanel from './components/layout/AssistantPanel'
+import AssistantPanel, { type AssistantOrientation } from './components/layout/AssistantPanel'
+import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchModal'
 import Sidebar from './components/layout/Sidebar'
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
 import PreviewPanel from './components/layout/PreviewPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
+import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { palette, ZONE_PALETTE_ITEM } from './data/componentPalette'
@@ -43,7 +45,7 @@ import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import type { DispatchRequest } from './types'
-import type { AgentRuntime } from '../../shared/agentRuntimes'
+import { DEFAULT_AGENT_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
 
 interface TerminalInfo {
   id: string
@@ -58,13 +60,22 @@ interface CanvasUpdate {
   edges: unknown[]
 }
 
+// Must match the main-process ASSISTANT_ZONES keys (terminals.ts) — those
+// are sanitize('Architecture Assistant Design'|'General') with non-alnum
+// chars replaced by '-'. Used here to route zone:session-captured events
+// for the two assistant modes back into the per-mode last-session store.
+const ASSISTANT_ZONE_KEYS: Record<AssistantMode, string> = {
+  architecture: 'Architecture-Assistant-Design',
+  general:      'Architecture-Assistant-General',
+}
+
 const ZONE_DEFAULT_WIDTH = 420
 const ZONE_DEFAULT_HEIGHT = 280
 const COMPONENT_APPROX_W = 180
 const COMPONENT_APPROX_H = 78
 const FIT_VIEW_OPTIONS = { padding: 0.18, duration: 280 }
 
-function buildDemoGraph(defaultRuntime: AgentRuntime): { nodes: CanvasNode[]; edges: Edge[] } {
+function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges: Edge[] } {
   const zoneX = 120
   const zoneY = 120
   const zone: ZoneNodeType = {
@@ -80,7 +91,7 @@ function buildDemoGraph(defaultRuntime: AgentRuntime): { nodes: CanvasNode[]; ed
       color: '#58A6FF',
       status: 'idle',
       systemPrompt: 'You are a backend platform agent. Build a small Express API backed by Postgres with JWT auth. Keep it minimal and runnable.',
-      ...createDefaultZoneAgentConfig(defaultRuntime),
+      ...createDefaultZoneAgentConfig(settings),
     },
   }
   const comps: ComponentNodeType[] = [
@@ -296,6 +307,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchPrefill, setDispatchPrefill] = useState<string>('')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
+  const [assistantOrientation, setAssistantOrientation] = useState<AssistantOrientation>(() => {
+    const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('architect:assistant-orientation') : null
+    return raw === 'bottom' ? 'bottom' : 'right'
+  })
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -374,6 +389,43 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     await window.electron.saveCanvas(projectDir, raw)
     if (clearDirty) setIsDirty(false)
   }, [projectDir])
+
+  // Track the last (runtime, sessionId) actually used per assistant mode so
+  // the next app start auto-resumes it. Fresh-spawn captures fire this event;
+  // explicit resumes don't capture and are persisted in handleAssistantRelaunch.
+  useEffect(() => {
+    const unsub = window.electron.zone.onSessionCaptured(event => {
+      const mode: AssistantMode | null =
+        event.zoneKey === ASSISTANT_ZONE_KEYS.architecture ? 'architecture'
+        : event.zoneKey === ASSISTANT_ZONE_KEYS.general ? 'general'
+        : null
+      if (!mode) return
+      const runtime = event.runtime
+      if (runtime !== 'claude' && runtime !== 'codex' && runtime !== 'gemini' && runtime !== 'opencode') return
+      // Persist immediately. A setIsDirty-only path loses this pointer if the
+      // app closes before the next save, and the next startup would fall
+      // through to DEFAULT_AGENT_RUNTIME — exactly the bug this field exists to fix.
+      //
+      // Captured `model` travels alongside so a later resume can replay the
+      // exact config the user was running under (user-picked models can drift
+      // in the launcher between spawns).
+      const nextSettings: ProjectSettings = {
+        ...settingsRef.current,
+        assistantLastSessionByMode: {
+          ...(settingsRef.current.assistantLastSessionByMode ?? {}),
+          [mode]: {
+            runtime,
+            sessionId: event.sessionId,
+            ...(event.model ? { model: event.model } : {}),
+          },
+        },
+      }
+      setProjectSettings(nextSettings)
+      const raw = serializeCanvasData(nodesRef.current, edgesRef.current, nextSettings)
+      void persistCanvasRaw(raw, false)
+    })
+    return unsub
+  }, [persistCanvasRaw])
 
   const applyRawCanvas = useCallback((raw: string, clearDirty: boolean): boolean => {
     try {
@@ -511,7 +563,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
             color: '#58A6FF',
             status: 'idle',
             systemPrompt: '',
-            ...createDefaultZoneAgentConfig(projectSettings.defaultRuntime),
+            ...createDefaultZoneAgentConfig(projectSettings),
           },
         }
         setNodes(nds => [...nds, newZone])
@@ -537,7 +589,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setNodes(nds => [...nds, newComp])
       setIsDirty(true)
     },
-    [projectSettings.defaultRuntime, screenToFlowPosition, setNodes]
+    [projectSettings, screenToFlowPosition, setNodes]
   )
 
   const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
@@ -574,7 +626,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [setEdges, setNodes])
 
   const onLoadDemo = useCallback(() => {
-    const demo = buildDemoGraph(projectSettings.defaultRuntime)
+    const demo = buildDemoGraph(projectSettings)
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = null
@@ -584,7 +636,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setNodes(demo.nodes)
     setEdges(demo.edges)
     setIsDirty(true)
-  }, [projectSettings.defaultRuntime, setEdges, setNodes])
+  }, [projectSettings, setEdges, setNodes])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
 
@@ -735,7 +787,7 @@ ${paletteJson}
 ## JSON Example
 Write the canvas directly to \`architect-canvas.json\` using the modern Architect format:
 ~~~json
-{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"defaultRuntime":"codex"}}
+{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"dispatchRuntime":"codex"}}
 ~~~
 
 ## Your Role
@@ -805,7 +857,7 @@ Only discuss and advise without editing the file when the user is asking for cri
       return typeof v === 'number' && v > 0 ? v : fallback
     }
 
-    const defaultRuntime = settingsRef.current.defaultRuntime
+    const activeSettings = settingsRef.current
     const newZones: ZoneNodeType[] = rawZones.map((raw, i) => {
       const id = String(raw.id ?? `gen-zone-${Date.now()}-${i}`)
       const existing = existingZoneById.get(id)
@@ -828,7 +880,7 @@ Only discuss and advise without editing the file when the user is asking for cri
           color: String(raw.color ?? '#58A6FF'),
           status: 'idle',
           systemPrompt: String(raw.systemPrompt ?? raw.prompt ?? ''),
-          ...createDefaultZoneAgentConfig(defaultRuntime),
+          ...createDefaultZoneAgentConfig(activeSettings),
         },
       }
     })
@@ -906,43 +958,145 @@ Only discuss and advise without editing the file when the user is asking for cri
     void persistCanvasRaw(rawCanvas, true)
   }, [persistCanvasRaw, queueFitView, setEdges, setNodes])
 
+  // Per-mode effective CLI for the side-panel assistant. Architecture and
+  // General maintain independent runtime choices, fully decoupled from the
+  // dispatch/zone runtime: if a mode has no entry we fall back to the
+  // hardcoded DEFAULT_AGENT_RUNTIME — NEVER to projectSettings.dispatchRuntime.
+  // Changing Dispatch CLI in Settings must not retarget the assistant.
+  const effectiveAssistantRuntime = useCallback((mode: AssistantMode): AgentRuntime => (
+    projectSettings.assistantRuntimeByMode?.[mode] ?? DEFAULT_AGENT_RUNTIME
+  ), [projectSettings.assistantRuntimeByMode])
+
+  // When a prior run for this mode was recorded, resume exactly that session
+  // under its recorded runtime + model. Overrides both effectiveRuntime and
+  // main's latestReachable fallback, so explicit resumes the user made via
+  // the launcher aren't clobbered by later fresh captures or model picks.
+  const startOptsForImplicitOpen = useCallback((mode: AssistantMode): {
+    runtime: AgentRuntime
+    opts?: { model?: string; session: { mode: 'resume'; sessionId: string } }
+  } => {
+    const last = projectSettings.assistantLastSessionByMode?.[mode]
+    if (last) {
+      return {
+        runtime: last.runtime,
+        opts: {
+          session: { mode: 'resume', sessionId: last.sessionId },
+          ...(last.model ? { model: last.model } : {}),
+        },
+      }
+    }
+    return { runtime: effectiveAssistantRuntime(mode) }
+  }, [projectSettings.assistantLastSessionByMode, effectiveAssistantRuntime])
+
   const handleAssistantToggle = useCallback(async () => {
     if (assistantOpen) {
-      window.electron.assistant.stop()
+      // Close = hide only. Both mode PTYs keep running; their xterm buffers
+      // stay mounted so reopening resumes with full scrollback intact.
       setAssistantOpen(false)
-      setAssistantRuntime(null)
-    } else {
-      const mode = projectSettings.assistantMode
-      const contextMd = buildAssistantContext(mode, nodes, edges)
-      const session = await window.electron.assistant.start(
-        projectDir, contextMd, projectSettings.defaultRuntime, mode,
-      )
-      const sessionRuntime = session?.runtime
-      setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : projectSettings.defaultRuntime)
-      setAssistantOpen(true)
+      return
     }
-  }, [assistantOpen, nodes, edges, projectDir, projectSettings.defaultRuntime, projectSettings.assistantMode, buildAssistantContext])
+    const mode = projectSettings.assistantMode
+    const { runtime, opts } = startOptsForImplicitOpen(mode)
+    const contextMd = buildAssistantContext(mode, nodes, edges)
+    const session = await window.electron.assistant.start(
+      projectDir, contextMd, runtime, mode, opts,
+    )
+    const sessionRuntime = session?.runtime
+    setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
+    setAssistantOpen(true)
+  }, [assistantOpen, nodes, edges, projectDir, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
 
   const handleAssistantClose = useCallback(() => {
-    window.electron.assistant.stop()
+    // Hide only — do not tear down PTYs. See handleAssistantToggle.
     setAssistantOpen(false)
-    setAssistantRuntime(null)
   }, [])
 
   const handleAssistantModeChange = useCallback(async (next: AssistantMode) => {
     if (next === projectSettings.assistantMode) return
-    window.electron.assistant.stop()
     setProjectSettings(s => ({ ...s, assistantMode: next }))
     setIsDirty(true)
     if (assistantOpen) {
+      // Spawn the other mode's PTY on first use under ITS last-session or,
+      // failing that, its effective runtime. Idempotent thereafter (main
+      // returns the existing session instead of respawning).
+      const { runtime, opts } = startOptsForImplicitOpen(next)
       const contextMd = buildAssistantContext(next, nodes, edges)
       const session = await window.electron.assistant.start(
-        projectDir, contextMd, projectSettings.defaultRuntime, next,
+        projectDir, contextMd, runtime, next, opts,
       )
       const sessionRuntime = session?.runtime
-      setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : projectSettings.defaultRuntime)
+      setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
     }
-  }, [assistantOpen, nodes, edges, projectDir, projectSettings.defaultRuntime, projectSettings.assistantMode, buildAssistantContext])
+  }, [assistantOpen, nodes, edges, projectDir, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
+
+  const handleAssistantOrientationChange = useCallback((next: AssistantOrientation) => {
+    setAssistantOrientation(next)
+    try { localStorage.setItem('architect:assistant-orientation', next) } catch {}
+  }, [])
+
+  const handleAssistantRelaunch = useCallback(async (targetMode: AssistantMode, opts: AssistantRelaunchOpts) => {
+    const runtime = opts.runtime
+    const contextMd = buildAssistantContext(targetMode, nodes, edges)
+    const ipcOpts = {
+      model: opts.model,
+      session: opts.session.mode === 'resume'
+        ? { mode: 'resume' as const, sessionId: opts.session.sessionId }
+        : { mode: 'new' as const },
+      // Launcher submissions always mean "replace the live session with
+      // this config" — force a respawn even if the PTY is alive.
+      force: true as const,
+    }
+    const session = await window.electron.assistant.start(
+      projectDir, contextMd, runtime, targetMode, ipcOpts,
+    )
+    const sessionRuntime = session?.runtime
+    setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
+    // Persist the per-mode CLI choice + picked model so the launcher pre-fills
+    // them next time.
+    //
+    // NOTE: we store the runtime verbatim. Previously we deleted the entry
+    // when it matched the old `defaultRuntime`, but the assistant is now
+    // Previously we deleted the per-mode entry to avoid redundancy, but that
+    // coupled the assistant to Settings-page changes: user picks claude for
+    // the assistant while Dispatch=claude → no override → later Dispatch
+    // flips to codex → assistant silently retargets to codex. Once the user
+    // explicitly picks an assistant CLI via the modal, it's sticky.
+    //
+    // For an explicit resume, stamp assistantLastSessionByMode now — resumes
+    // don't trigger a capture event so the zone:session-captured listener
+    // won't fire. For "new", the capture listener stamps the new sessionId
+    // once it lands; we clear the stale entry here so a crash between respawn
+    // and capture doesn't auto-resume the defunct session.
+    const resumedSessionId = opts.session.mode === 'resume' ? opts.session.sessionId : null
+    const current = settingsRef.current
+    const nextByMode = {
+      ...(current.assistantRuntimeByMode ?? {}),
+      [targetMode]: runtime,
+    }
+    const nextLastSession = { ...(current.assistantLastSessionByMode ?? {}) }
+    if (resumedSessionId) {
+      nextLastSession[targetMode] = { runtime, sessionId: resumedSessionId, model: opts.model }
+    } else {
+      delete nextLastSession[targetMode]
+    }
+    const cleanedLastSession = Object.keys(nextLastSession).length > 0 ? nextLastSession : undefined
+    const nextSettings: ProjectSettings = {
+      ...current,
+      assistantRuntimeByMode: nextByMode,
+      assistantLastSessionByMode: cleanedLastSession,
+      assistantModels: { ...(current.assistantModels ?? {}), [runtime]: opts.model },
+    }
+    setProjectSettings(nextSettings)
+    const rawCanvas = serializeCanvasData(nodesRef.current, edgesRef.current, nextSettings)
+    void persistCanvasRaw(rawCanvas, false)
+  }, [buildAssistantContext, edges, nodes, projectDir, persistCanvasRaw])
+
+  // Project-dir change = real teardown: old PTYs are pinned to old cwd.
+  useEffect(() => {
+    return () => {
+      window.electron.assistant.stop()
+    }
+  }, [projectDir])
 
   const handleLoadIncomingCanvas = useCallback(() => {
     if (!pendingExternalCanvasRaw) return
@@ -959,6 +1113,13 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
   const isPreview = activeTab === 'Preview'
+  const isSettings = activeTab === 'Settings'
+
+  const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
+    setProjectSettings(current => ({ ...current, ...partial }))
+    setIsDirty(true)
+    if ('dispatchRuntime' in partial) setDispatchedGraph(null)
+  }, [])
 
   return (
     <ProjectSettingsProvider value={projectSettings}>
@@ -980,17 +1141,17 @@ Only discuss and advise without editing the file when the user is asking for cri
           assistantOpen={assistantOpen}
           isRedispatch={dispatchedGraph !== null}
           changedCount={changedZoneLabels.length}
-          projectSettings={projectSettings}
-          onDefaultRuntimeChange={(defaultRuntime) => {
-            setProjectSettings(current => ({ ...current, defaultRuntime }))
-            setIsDirty(true)
-            setDispatchedGraph(null)
-          }}
         />
         <div className="flex flex-1 overflow-hidden">
-          <ResizablePanel side="left" defaultWidth={180}>
+          <ResizablePanel side="left" defaultSize={180}>
             <Sidebar />
           </ResizablePanel>
+
+          <div
+            className="flex-1 flex overflow-hidden"
+            style={{ flexDirection: assistantOrientation === 'bottom' ? 'column' : 'row' }}
+          >
+            <div className="flex-1 flex overflow-hidden">
 
           <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
             <ReactFlow
@@ -1061,17 +1222,43 @@ Only discuss and advise without editing the file when the user is asking for cri
             </div>
           )}
 
-          {assistantOpen && (
-            <ResizablePanel side="right" defaultWidth={420}>
-              <AssistantPanel
-                onClose={handleAssistantClose}
-                onCanvasUpdate={applyCanvasUpdate}
-                runtime={assistantRuntime ?? projectSettings.defaultRuntime}
-                mode={projectSettings.assistantMode}
-                onModeChange={handleAssistantModeChange}
+          {isSettings && (
+            <div className="flex-1 overflow-hidden">
+              <SettingsPanel
+                settings={projectSettings}
+                onChange={handleSettingsChange}
+                assistantOrientation={assistantOrientation}
+                onAssistantOrientationChange={handleAssistantOrientationChange}
               />
-            </ResizablePanel>
+            </div>
           )}
+
+            </div>
+
+            {/* Assistant panel — always mounted once opened, then kept in
+                the tree so both mode PTYs + xterm scrollback survive close
+                and mode/orientation changes. `visible` toggles display. */}
+            <div style={{ display: assistantOpen ? 'contents' : 'none' }}>
+              <ResizablePanel
+                key={assistantOrientation}
+                side={assistantOrientation === 'bottom' ? 'bottom' : 'right'}
+                defaultSize={assistantOrientation === 'bottom' ? 320 : 420}
+                minSize={160}
+                maxSize={900}
+              >
+                <AssistantPanel
+                  visible={assistantOpen}
+                  orientation={assistantOrientation}
+                  onClose={handleAssistantClose}
+                  onCanvasUpdate={applyCanvasUpdate}
+                  runtime={assistantRuntime ?? effectiveAssistantRuntime(projectSettings.assistantMode)}
+                  mode={projectSettings.assistantMode}
+                  onModeChange={handleAssistantModeChange}
+                  onRelaunch={handleAssistantRelaunch}
+                />
+              </ResizablePanel>
+            </div>
+          </div>
         </div>
       </div>
       </ProjectDirProvider>

@@ -55,8 +55,18 @@ interface ElectronAPI {
       contextMd: string,
       runtime: AgentRuntime,
       mode: AssistantMode,
+      opts?: {
+        model?: string
+        session?: { mode: 'new' } | { mode: 'resume'; sessionId: string }
+        initialPrompt?: string
+        force?: boolean
+      },
     ) => Promise<TerminalInfo | null>
     stop: () => void
+    stopMode: (mode: AssistantMode) => void
+    listSessions: (projectDir: string, mode: AssistantMode) => Promise<ZoneSessionRecord[]>
+    deleteSession: (projectDir: string, mode: AssistantMode, sessionId: string) => Promise<boolean>
+    updateSessionSummary: (projectDir: string, mode: AssistantMode, sessionId: string, summary: string) => Promise<boolean>
   }
   terminal: {
     spawnShell: (cwd: string) => Promise<TerminalInfo | null>
@@ -128,6 +138,7 @@ interface ElectronAPI {
         sessionId: string
         runtime: AgentRuntime
         summary: string
+        model?: string
         dispatchId?: string
       }) => void,
     ) => () => void
