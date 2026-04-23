@@ -1,21 +1,38 @@
-import { useEffect, useRef, useState } from "react";
-import { Terminal } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
+import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
+import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
+import { AlertTriangle, ExternalLink, Lock, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
+import { Terminal } from '@xterm/xterm'
+import { FitAddon } from '@xterm/addon-fit'
+import '@xterm/xterm/css/xterm.css'
+import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
+import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
-  getAgentRuntime,
-  type AgentRuntime,
-} from "../../../../shared/agentRuntimes";
+  emptyLayout,
+  migrateLayout,
+  moveTabToPane,
+  reorderTabs,
+  setActiveTab,
+  setPoppedOut,
+  setSplitSizes,
+  splitPaneWithTab,
+} from './terminalLayoutOps'
 
 interface TerminalInfo {
-  id: string;
-  label: string;
-  runtime: AgentRuntime;
+  id: string
+  label: string
+  runtime: AgentRuntime | 'shell'
+  mailboxMode?: boolean
 }
 
 interface Props {
-  sessions: TerminalInfo[];
-  isVisible: boolean;
+  sessions: TerminalInfo[]
+  isVisible: boolean
+  projectDir: string
+  layout: TerminalLayout | null
+  onLayoutChange: (next: TerminalLayout) => void
+  onRemoveSession: (id: string) => void
+  getCanvasSnapshot: () => { nodes: unknown[]; edges: unknown[]; settings: unknown }
 }
 
 const TERM_THEME = {
@@ -35,25 +52,35 @@ const TERM_THEME = {
   brightWhite: "#ffffff",
 };
 
-// One xterm instance per terminal id, persisted across tab switches
-const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>();
+const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
-function TermTab({
-  info,
-  active,
-  exited,
-}: {
-  info: TerminalInfo;
-  active: boolean;
-  exited: boolean;
-}) {
-  const containerRef = useRef<HTMLDivElement>(null);
+const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
+
+// One xterm instance per terminal id, persisted across pane moves & tab switches.
+const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
+
+// Lock state shared with the stable `term.onData` closure (attached once per
+// terminal, below). TermTab writes into this on every render; the closure
+// reads it synchronously to decide whether to forward keystrokes to the PTY.
+// When `true`, user input (typing, paste, control bytes) is swallowed.
+const termLockState = new Map<string, boolean>()
+
+function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
+  const containerRef = useRef<HTMLDivElement>(null)
+  const [manualOverride, setManualOverride] = useState(false)
+  const isMailbox = !!info.mailboxMode
+  const locked = isMailbox && !manualOverride
+
+  // Sync the lock bit into the module-level map so the stable `term.onData`
+  // closure (attached once, below) can early-return without re-subscribing.
+  useEffect(() => {
+    termLockState.set(info.id, locked)
+  }, [info.id, locked])
 
   useEffect(() => {
     if (!containerRef.current) return;
 
-    // Reuse existing instance or create new one
-    let instance = termInstances.get(info.id);
+    let instance = termInstances.get(info.id)
     if (!instance) {
       const term = new Terminal({
         theme: TERM_THEME,
@@ -64,22 +91,30 @@ function TermTab({
         cursorBlink: true,
         allowTransparency: false,
         scrollback: 5000,
-      });
-      const fit = new FitAddon();
-      term.loadAddon(fit);
-      instance = { term, fit };
-      termInstances.set(info.id, instance);
+        cols: DEFAULT_COLS,
+        rows: DEFAULT_ROWS,
+      })
+      const fit = new FitAddon()
+      term.loadAddon(fit)
+      instance = { term, fit }
+      termInstances.set(info.id, instance)
 
-      term.onData((data) => {
-        window.electron.terminal.input(info.id, data);
-      });
+      term.onData(data => {
+        // Mailbox-mode zones are agent-driven; swallow keystrokes/paste/
+        // control bytes unless the user has taken manual control.
+        if (termLockState.get(info.id) === true) return
+        window.electron.terminal.input(info.id, data)
+      })
     }
 
     const { term, fit } = instance;
 
-    // Attach to DOM if not already attached
-    if (containerRef.current.children.length === 0) {
-      term.open(containerRef.current);
+    // First mount: open the terminal here. Subsequent mounts (different pane):
+    // physically move the existing element so we don't double-init xterm.
+    if (!term.element) {
+      try { term.open(containerRef.current) } catch {}
+    } else if (term.element.parentElement !== containerRef.current) {
+      containerRef.current.appendChild(term.element)
     }
 
     const doFit = () => {
@@ -97,17 +132,14 @@ function TermTab({
     }
   }, [info.id, active]);
 
-  // Write incoming data to the correct terminal instance
+  // Stream data → term (subscribed once per id, regardless of mount).
   useEffect(() => {
     const unsub = window.electron.terminal.onData(({ id, data }) => {
-      if (id === info.id) {
-        termInstances.get(info.id)?.term.write(data);
-      }
-    });
-    return unsub;
-  }, [info.id]);
+      if (id === info.id) termInstances.get(info.id)?.term.write(data)
+    })
+    return unsub
+  }, [info.id])
 
-  // Mark exited terminals
   useEffect(() => {
     const unsub = window.electron.terminal.onExit(({ id }) => {
       if (id === info.id) {
@@ -121,116 +153,660 @@ function TermTab({
 
   return (
     <div
-      ref={containerRef}
-      className="w-full h-full"
-      style={{ display: active ? "block" : "none" }}
-    />
-  );
+      className="w-full h-full flex flex-col"
+      style={{ visibility: active ? 'visible' : 'hidden' }}
+    >
+      {isMailbox && (locked ? (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
+          <span className="text-[11px] text-slate-400 flex items-center gap-2">
+            <Lock size={11} /> Mailbox-controlled — user input disabled
+          </span>
+          <button
+            onClick={() => setManualOverride(true)}
+            className="px-2 py-0.5 text-[10px] font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40 transition-colors"
+          >
+            Take manual control
+          </button>
+        </div>
+      ) : (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/15 border-b border-red-500/40 flex-shrink-0">
+          <span className="text-[11px] text-red-300 flex items-center gap-2">
+            <AlertTriangle size={11} /> Manual override active — typing here may break the zone's listen loop
+          </span>
+          <button
+            onClick={() => setManualOverride(false)}
+            className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-700/60 text-slate-200 hover:bg-slate-700/80 border border-white/20 transition-colors"
+          >
+            Re-lock
+          </button>
+        </div>
+      ))}
+      <div className="flex-1 min-h-0 relative">
+        <div ref={containerRef} className="w-full h-full" />
+        {locked && (
+          <div className="absolute inset-0 bg-[#58A6FF]/10 flex items-center justify-center pointer-events-none">
+            <Lock size={112} strokeWidth={1.25} className="text-[#58A6FF]/40" />
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
-export default function TerminalPanel({ sessions, isVisible }: Props) {
-  const [activeId, setActiveId] = useState<string | null>(null);
+function detectDropEdge(rect: DOMRect, x: number, y: number): DropEdge {
+  const px = (x - rect.left) / rect.width
+  const py = (y - rect.top) / rect.height
+  // Center 50% → tab move; outer ring → directional split.
+  if (px >= 0.25 && px <= 0.75 && py >= 0.25 && py <= 0.75) return 'center'
+  // Pick the edge with the largest distance from center.
+  const left = px
+  const right = 1 - px
+  const top = py
+  const bottom = 1 - py
+  const min = Math.min(left, right, top, bottom)
+  if (min === left) return 'left'
+  if (min === right) return 'right'
+  if (min === top) return 'top'
+  return 'bottom'
+}
 
-  // When sessions change, default to first (overseer)
-  useEffect(() => {
-    if (sessions.length > 0 && !sessions.find((s) => s.id === activeId)) {
-      setActiveId(sessions[0].id);
+function PaneView({
+  pane,
+  sessionsById,
+  exitedIds,
+  resumableIds,
+  resumingIds,
+  capturePendingIds,
+  closingIds,
+  onActivate,
+  onMoveTab,
+  onReorder,
+  onSplitDrop,
+  onPopout,
+  onClose,
+  onResume,
+  paneCount,
+}: {
+  pane: PaneNode
+  sessionsById: Map<string, TerminalInfo>
+  exitedIds: Set<string>
+  resumableIds: Map<string, string>
+  resumingIds: Set<string>
+  capturePendingIds: Set<string>
+  closingIds: Set<string>
+  onActivate: (paneId: string, tabId: string) => void
+  onMoveTab: (tabId: string, targetPaneId: string, idx?: number) => void
+  onReorder: (paneId: string, fromIdx: number, toIdx: number) => void
+  onSplitDrop: (paneId: string, tabId: string, edge: DropEdge) => void
+  onPopout: (info: TerminalInfo) => void
+  onClose: (tabId: string) => void
+  onResume: (info: TerminalInfo) => void
+  paneCount: number
+}) {
+  const [dropHint, setDropHint] = useState<DropEdge | null>(null)
+  const [tabDropIdx, setTabDropIdx] = useState<number | null>(null)
+  const bodyRef = useRef<HTMLDivElement>(null)
+
+  const handleStripDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    const strip = e.currentTarget as HTMLElement
+    const tabs = Array.from(strip.querySelectorAll('[data-tab-id]')) as HTMLElement[]
+    let idx = tabs.length
+    for (let i = 0; i < tabs.length; i++) {
+      const r = tabs[i].getBoundingClientRect()
+      if (e.clientX < r.left + r.width / 2) { idx = i; break }
     }
-  }, [sessions]);
+    setTabDropIdx(idx)
+  }
 
-  // Re-fit the active terminal whenever this panel becomes visible.
-  // The outer container uses display:none while on another tab, so xterm's
-  // ResizeObserver sees 0×0. We must refit after the next paint.
-  useEffect(() => {
-    if (!isVisible || !activeId) return;
-    const instance = termInstances.get(activeId);
-    if (!instance) return;
-    const raf = requestAnimationFrame(() => {
-      try {
-        instance.fit.fit();
-        window.electron.terminal.resize(
-          activeId,
-          instance.term.cols,
-          instance.term.rows,
-        );
-      } catch {}
-    });
-    return () => cancelAnimationFrame(raf);
-  }, [isVisible, activeId]);
+  const handleStripDrop = (e: React.DragEvent) => {
+    const tabId = e.dataTransfer.getData(TAB_DRAG_MIME)
+    if (!tabId) return
+    e.preventDefault()
+    const idx = tabDropIdx ?? pane.tabs.length
+    setTabDropIdx(null)
+    if (pane.tabs.includes(tabId)) {
+      const from = pane.tabs.indexOf(tabId)
+      const insertIdx = from < idx ? idx - 1 : idx
+      onReorder(pane.id, from, insertIdx)
+    } else {
+      onMoveTab(tabId, pane.id, idx)
+    }
+  }
 
-  // Clean up terminal instances that are no longer in sessions
-  useEffect(() => {
-    return () => {
-      termInstances.forEach((instance, id) => {
-        if (!sessions.find((s) => s.id === id)) {
-          instance.term.dispose();
-          termInstances.delete(id);
-        }
-      });
-    };
-  }, [sessions]);
+  const handleBodyDragOver = (e: React.DragEvent) => {
+    if (!e.dataTransfer.types.includes(TAB_DRAG_MIME)) return
+    e.preventDefault()
+    e.dataTransfer.dropEffect = 'move'
+    if (!bodyRef.current) return
+    const rect = bodyRef.current.getBoundingClientRect()
+    setDropHint(detectDropEdge(rect, e.clientX, e.clientY))
+  }
 
-  if (sessions.length === 0) {
-    return (
-      <div className="flex-1 flex flex-col items-center justify-center gap-3 bg-[#0d0d0d]">
-        <p className="text-xs text-slate-600">No agents running.</p>
-        <p className="text-xs text-slate-700">
-          Build a graph and click Dispatch agents.
-        </p>
-      </div>
-    );
+  const handleBodyDrop = (e: React.DragEvent) => {
+    const tabId = e.dataTransfer.getData(TAB_DRAG_MIME)
+    if (!tabId) return
+    e.preventDefault()
+    const edge = dropHint ?? 'center'
+    setDropHint(null)
+    onSplitDrop(pane.id, tabId, edge)
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0d0d]">
-      {/* Tab strip */}
-      <div className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto">
-        {sessions.map((s) => {
-          const isArchitect = s.id === "architect-agent";
-          const isActive = s.id === activeId;
-          const runtime = getAgentRuntime(s.runtime);
+    <div className="flex flex-col h-full bg-[#0d0d0d] min-w-0 min-h-0">
+      <div
+        className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto relative"
+        onDragOver={handleStripDragOver}
+        onDragLeave={() => setTabDropIdx(null)}
+        onDrop={handleStripDrop}
+      >
+        {pane.tabs.map((tabId, i) => {
+          const s = sessionsById.get(tabId)
+          if (!s) return null
+          const isShell = s.runtime === 'shell'
+          const isArchitect = s.id === 'architect-agent'
+          const isActive = tabId === pane.activeTab
+          const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
+          const canResume = !isShell && RESUMABLE_RUNTIMES.has(s.runtime as AgentRuntime) && exitedIds.has(s.id) && resumableIds.has(s.id)
+          const isResuming = resumingIds.has(s.id)
+          const resumeLabel = canResume && runtime ? `Resume saved ${runtime.label} session` : 'Resume saved session'
           return (
-            <button
-              key={s.id}
-              onClick={() => setActiveId(s.id)}
-              className={`flex items-center gap-2 px-4 py-2 text-xs whitespace-nowrap border-b-2 transition-colors flex-shrink-0 ${
-                isActive
-                  ? "border-[#58A6FF] text-white bg-white/[0.04]"
-                  : "border-transparent text-slate-500 hover:text-slate-300 hover:bg-white/[0.02]"
-              }`}
-            >
-              <span
-                className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                  isArchitect ? "bg-[#c084fc]" : "bg-[#58A6FF]"
-                }`}
-              />
-              <span>{isArchitect ? "⬡ Architect" : s.label}</span>
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                style={{
-                  color: runtime.accentColor,
-                  backgroundColor: `${runtime.accentColor}20`,
+            <Fragment key={tabId}>
+              {tabDropIdx === i && (
+                <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+              )}
+              <div
+                data-tab-id={tabId}
+                draggable
+                onDragStart={(e) => {
+                  e.dataTransfer.setData(TAB_DRAG_MIME, tabId)
+                  e.dataTransfer.effectAllowed = 'move'
                 }}
+                className={`flex items-center border-b-2 transition-colors flex-shrink-0 ${
+                  isActive
+                    ? 'border-[#58A6FF] bg-white/[0.04]'
+                    : 'border-transparent hover:bg-white/[0.02]'
+                }`}
               >
-                {runtime.shortLabel}
-              </span>
-            </button>
-          );
+                <button
+                  onClick={() => onActivate(pane.id, tabId)}
+                  className={`flex items-center gap-2 pl-3 pr-2 py-2 text-xs whitespace-nowrap ${
+                    isActive ? 'text-white' : 'text-slate-500 hover:text-slate-300'
+                  }`}
+                >
+                  {isShell ? (
+                    <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
+                  ) : (
+                    <span
+                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                        isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                      } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
+                    />
+                  )}
+                  {s.mailboxMode && !isShell && !isArchitect && (
+                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Mailbox-controlled" />
+                  )}
+                  <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
+                    {isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}
+                  </span>
+                  {runtime && (
+                    <span
+                      className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                      style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
+                    >
+                      {runtime.shortLabel}
+                    </span>
+                  )}
+                </button>
+                {canResume && (
+                  <button
+                    onClick={() => onResume(s)}
+                    disabled={isResuming}
+                    className={`flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors ${
+                      isResuming
+                        ? 'text-slate-600 cursor-wait'
+                        : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
+                    }`}
+                    title={isResuming ? 'Resuming…' : resumeLabel}
+                    aria-label={resumeLabel}
+                  >
+                    <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
+                  </button>
+                )}
+                <button
+                  onClick={() => onPopout(s)}
+                  className="flex items-center justify-center w-6 h-6 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+                  title="Pop out terminal to new window"
+                  aria-label="Pop out terminal"
+                >
+                  <ExternalLink size={11} />
+                </button>
+                {(() => {
+                  const isClosing = closingIds.has(s.id)
+                  const disabled = isClosing
+                  const title = isClosing ? 'Closing…' : 'Close terminal'
+                  return (
+                    <button
+                      onClick={() => !disabled && onClose(tabId)}
+                      disabled={disabled}
+                      className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
+                        disabled
+                          ? 'text-slate-700 cursor-not-allowed'
+                          : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.06]'
+                      }`}
+                      title={title}
+                      aria-label="Close terminal"
+                    >
+                      <X size={11} />
+                    </button>
+                  )
+                })()}
+              </div>
+            </Fragment>
+          )
         })}
+        {tabDropIdx === pane.tabs.length && (
+          <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+        )}
       </div>
 
-      {/* Terminal views — all mounted, only active one visible */}
-      <div className="flex-1 relative overflow-hidden p-1">
-        {sessions.map((s) => (
-          <div
-            key={s.id}
-            className="absolute inset-1"
-            style={{ display: s.id === activeId ? "block" : "none" }}
-          >
-            <TermTab info={s} active={s.id === activeId} exited={false} />
-          </div>
-        ))}
+      <div
+        ref={bodyRef}
+        className="flex-1 relative overflow-hidden p-1"
+        onDragOver={handleBodyDragOver}
+        onDragLeave={() => setDropHint(null)}
+        onDrop={handleBodyDrop}
+      >
+        {pane.tabs.map(tabId => {
+          const s = sessionsById.get(tabId)
+          if (!s) return null
+          const active = tabId === pane.activeTab
+          return (
+            <div
+              key={tabId}
+              className="absolute inset-1"
+              style={{ visibility: active ? 'visible' : 'hidden' }}
+            >
+              <TermTab info={s} active={active} />
+            </div>
+          )
+        })}
+        {dropHint && <DropHintOverlay edge={dropHint} />}
       </div>
+    </div>
+  )
+}
+
+function DropHintOverlay({ edge }: { edge: DropEdge }) {
+  const style: React.CSSProperties = {
+    position: 'absolute',
+    pointerEvents: 'none',
+    background: 'rgba(88, 166, 255, 0.15)',
+    border: '1px solid rgba(88, 166, 255, 0.5)',
+  }
+  switch (edge) {
+    case 'left':   Object.assign(style, { top: 0, bottom: 0, left: 0, width: '50%' }); break
+    case 'right':  Object.assign(style, { top: 0, bottom: 0, right: 0, width: '50%' }); break
+    case 'top':    Object.assign(style, { top: 0, left: 0, right: 0, height: '50%' }); break
+    case 'bottom': Object.assign(style, { bottom: 0, left: 0, right: 0, height: '50%' }); break
+    case 'center': Object.assign(style, { inset: 0 }); break
+  }
+  return <div style={style} />
+}
+
+function LayoutRenderer({
+  node,
+  paneProps,
+  paneCount,
+  onResize,
+}: {
+  node: LayoutNode
+  paneProps: Omit<React.ComponentProps<typeof PaneView>, 'pane' | 'paneCount'>
+  paneCount: number
+  onResize: (splitId: string, sizes: number[]) => void
+}) {
+  if (node.kind === 'pane') {
+    return <PaneView pane={node} paneCount={paneCount} {...paneProps} />
+  }
+  return (
+    <PanelGroup
+      direction={node.direction === 'row' ? 'horizontal' : 'vertical'}
+      onLayout={(sizes) => onResize(node.id, sizes)}
+      autoSaveId={undefined}
+    >
+      {node.children.map((child, i) => (
+        <Fragment key={child.id}>
+          {i > 0 && (
+            <PanelResizeHandle
+              className={
+                node.direction === 'row'
+                  ? 'w-1 bg-white/[0.04] hover:bg-[#58A6FF]/40 transition-colors'
+                  : 'h-1 bg-white/[0.04] hover:bg-[#58A6FF]/40 transition-colors'
+              }
+            />
+          )}
+          <Panel defaultSize={node.sizes[i] ?? 100 / node.children.length} minSize={10}>
+            <LayoutRenderer
+              node={child}
+              paneProps={paneProps}
+              paneCount={paneCount}
+              onResize={onResize}
+            />
+          </Panel>
+        </Fragment>
+      ))}
+    </PanelGroup>
+  )
+}
+
+export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot }: Props) {
+  const [shellSession, setShellSession] = useState<TerminalInfo | null>(null)
+  const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
+  const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
+  const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
+  const [capturePendingIds, setCapturePendingIds] = useState<Set<string>>(new Set())
+  const [closingIds, setClosingIds] = useState<Set<string>>(new Set())
+
+  // Track exits.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onExit(({ id }) => {
+      setExitedIds(prev => {
+        if (prev.has(id)) return prev
+        const next = new Set(prev)
+        next.add(id)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  useEffect(() => {
+    const unsub = window.electron.zone.onSessionCaptured(({ zoneId, sessionId }) => {
+      setResumableIds(prev => {
+        if (prev.get(zoneId) === sessionId) return prev
+        const next = new Map(prev)
+        next.set(zoneId, sessionId)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  // Track fresh-spawn capture progress so the close button can disable itself
+  // until the CLI's session id has been persisted.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onCaptureState(({ id, state }) => {
+      setCapturePendingIds(prev => {
+        const next = new Set(prev)
+        if (state === 'pending') next.add(id)
+        else next.delete(id)
+        return next
+      })
+    })
+    return unsub
+  }, [])
+
+  // Backfill capture state for tabs we joined mid-flight (e.g. project reopen
+  // while a prior spawn is still polling).
+  useEffect(() => {
+    let cancelled = false
+    Promise.all(
+      sessions.map(s =>
+        window.electron.terminal.getCaptureState(s.id).then(state => ({ id: s.id, state })),
+      ),
+    ).then(results => {
+      if (cancelled) return
+      setCapturePendingIds(prev => {
+        const next = new Set(prev)
+        for (const { id, state } of results) {
+          if (state === 'pending') next.add(id)
+          else next.delete(id)
+        }
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [sessions.map(s => s.id).join('|')])
+
+  // Spawn shell once per project.
+  useEffect(() => {
+    if (!projectDir) return
+    let cancelled = false
+    window.electron.terminal.spawnShell(projectDir).then(info => {
+      if (cancelled || !info) return
+      setShellSession(info)
+    })
+    return () => { cancelled = true }
+  }, [projectDir])
+
+  const allSessions: TerminalInfo[] = useMemo(
+    () => (shellSession ? [shellSession, ...sessions] : sessions),
+    [shellSession, sessions],
+  )
+
+  const sessionsById = useMemo(() => {
+    const map = new Map<string, TerminalInfo>()
+    for (const s of allSessions) map.set(s.id, s)
+    return map
+  }, [allSessions])
+
+  // Backfill saved sessions for tabs whenever the session list changes.
+  useEffect(() => {
+    if (!projectDir) return
+    let cancelled = false
+    Promise.all(
+      sessions
+        .filter(s => s.runtime !== 'shell')
+        .map(s =>
+          window.electron.zone.listSessions(projectDir, s.id, s.label).then(records => ({
+            id: s.id,
+            sessionId: records?.[0]?.sessionId ?? null,
+          })),
+        ),
+    ).then(results => {
+      if (cancelled) return
+      setResumableIds(prev => {
+        const next = new Map(prev)
+        for (const { id, sessionId } of results) {
+          if (sessionId) next.set(id, sessionId)
+        }
+        return next
+      })
+    })
+    return () => { cancelled = true }
+  }, [projectDir, sessions.map(s => s.id).join('|')])
+
+  // Sync layout with the live session list.
+  useEffect(() => {
+    const ids = allSessions.map(s => s.id)
+    const base = layout ?? emptyLayout()
+    const migrated = migrateLayout(base, ids)
+    if (JSON.stringify(migrated) !== JSON.stringify(base)) {
+      onLayoutChange(migrated)
+    }
+  }, [allSessions.map(s => s.id).join('|'), layout, onLayoutChange])
+
+  // Listen for popout-window-closed → put the terminal back into a pane.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onPopoutClosed(({ id }) => {
+      if (!layout) return
+      let next = setPoppedOut(layout, id, false)
+      // migrateLayout will append it to first pane on next session-sync tick;
+      // do it now too in case sessions haven't changed.
+      next = migrateLayout(next, allSessions.map(s => s.id))
+      onLayoutChange(next)
+    })
+    return unsub
+  }, [layout, allSessions, onLayoutChange])
+
+  // Re-fit terminals when this panel becomes visible.
+  useEffect(() => {
+    if (!isVisible) return
+    const raf = requestAnimationFrame(() => {
+      termInstances.forEach((instance, id) => {
+        try {
+          instance.fit.fit()
+          window.electron.terminal.resize(id, instance.term.cols, instance.term.rows)
+        } catch {}
+      })
+    })
+    return () => cancelAnimationFrame(raf)
+  }, [isVisible, layout])
+
+  // Dispose xterm instances whose sessions no longer exist.
+  useEffect(() => {
+    return () => {
+      termInstances.forEach((instance, id) => {
+        if (!sessionsById.has(id)) {
+          instance.term.dispose()
+          termInstances.delete(id)
+        }
+      })
+    }
+  }, [allSessions.map(s => s.id).join('|')])
+
+  const handleResume = async (info: TerminalInfo) => {
+    if (info.runtime === 'shell' || resumingIds.has(info.id)) return
+    const sessionId = resumableIds.get(info.id)
+    if (!sessionId) return
+    setResumingIds(prev => {
+      const next = new Set(prev)
+      next.add(info.id)
+      return next
+    })
+    try {
+      const snap = getCanvasSnapshot()
+      const result = await window.electron.zone.launch({
+        projectDir,
+        zoneId: info.id,
+        nodes: snap.nodes,
+        edges: snap.edges,
+        mode: 'resume',
+        sessionId,
+        settings: snap.settings as import('../../types').ProjectSettings,
+      })
+      if (result?.ok) {
+        termInstances.get(info.id)?.term.clear()
+        setExitedIds(prev => {
+          if (!prev.has(info.id)) return prev
+          const next = new Set(prev)
+          next.delete(info.id)
+          return next
+        })
+      }
+    } finally {
+      setResumingIds(prev => {
+        const next = new Set(prev)
+        next.delete(info.id)
+        return next
+      })
+    }
+  }
+
+  const handlePopout = async (info: TerminalInfo) => {
+    if (!layout) return
+    onLayoutChange(setPoppedOut(layout, info.id, true))
+    // Dispose the in-window xterm so the popout can mount its own; PTY keeps running.
+    const inst = termInstances.get(info.id)
+    if (inst) {
+      try { inst.term.dispose() } catch {}
+      termInstances.delete(info.id)
+    }
+    await window.electron.terminal.popout({ id: info.id, label: info.label, runtime: info.runtime })
+  }
+
+  const handleCloseTab = async (tabId: string) => {
+    if (closingIds.has(tabId)) return
+
+    setClosingIds(prev => {
+      const next = new Set(prev)
+      next.add(tabId)
+      return next
+    })
+
+    try {
+      const result = await window.electron.terminal.close(tabId)
+      if (!result?.ok) return
+    } finally {
+      setClosingIds(prev => {
+        if (!prev.has(tabId)) return prev
+        const next = new Set(prev)
+        next.delete(tabId)
+        return next
+      })
+    }
+
+    // Clean up renderer-side state; the session-sync effect will rebuild
+    // the layout once terminalSessions drops this id.
+    const inst = termInstances.get(tabId)
+    if (inst) {
+      try { inst.term.dispose() } catch {}
+      termInstances.delete(tabId)
+    }
+    setExitedIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Set(prev)
+      next.delete(tabId)
+      return next
+    })
+    setResumableIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Map(prev)
+      next.delete(tabId)
+      return next
+    })
+    setCapturePendingIds(prev => {
+      if (!prev.has(tabId)) return prev
+      const next = new Set(prev)
+      next.delete(tabId)
+      return next
+    })
+
+    if (shellSession && shellSession.id === tabId) {
+      setShellSession(null)
+    } else {
+      onRemoveSession(tabId)
+    }
+  }
+
+  if (!layout) {
+    return <div className="h-full bg-[#0d0d0d]" />
+  }
+
+  const paneCount = (function count(n: LayoutNode): number {
+    if (n.kind === 'pane') return 1
+    return n.children.reduce((s, c) => s + count(c), 0)
+  })(layout.root)
+
+  const paneProps = {
+    sessionsById,
+    exitedIds,
+    resumableIds,
+    resumingIds,
+    capturePendingIds,
+    closingIds,
+    onActivate: (paneId: string, tabId: string) => onLayoutChange(setActiveTab(layout, paneId, tabId)),
+    onMoveTab: (tabId: string, targetPaneId: string, idx?: number) =>
+      onLayoutChange(moveTabToPane(layout, tabId, targetPaneId, idx)),
+    onReorder: (paneId: string, fromIdx: number, toIdx: number) =>
+      onLayoutChange(reorderTabs(layout, paneId, fromIdx, toIdx)),
+    onSplitDrop: (paneId: string, tabId: string, edge: DropEdge) =>
+      onLayoutChange(splitPaneWithTab(layout, paneId, tabId, edge)),
+    onPopout: handlePopout,
+    onClose: handleCloseTab,
+    onResume: handleResume,
+  }
+
+  return (
+    <div className="h-full bg-[#0d0d0d]">
+      <LayoutRenderer
+        node={layout.root}
+        paneProps={paneProps}
+        paneCount={paneCount}
+        onResize={(splitId, sizes) => onLayoutChange(setSplitSizes(layout, splitId, sizes))}
+      />
     </div>
   );
 }

@@ -1,33 +1,90 @@
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
+import { join } from 'path'
+import fs from 'fs'
+import path from 'path'
 import {
-  app,
-  shell,
-  BrowserWindow,
-  ipcMain,
-  dialog,
-  nativeImage,
-} from "electron";
-import { join } from "path";
-import fs from "fs";
-import path from "path";
-import {
-  runGraph,
+  initShellEnv,
+  startDispatch,
+  runZone,
+  resumeDispatch,
+  resetZoneSession,
   writeToTerminal,
   resizeTerminal,
   killAll,
+  closeTerminal,
+  getCaptureState,
   startAssistant,
-  stopAssistant,
-} from "./terminals";
-import { bootstrapProjectCanvas } from "./projectAnalyzer";
-import type { AgentRuntime } from "../shared/agentRuntimes";
-import type { RunGraphOptions } from "../shared/graphDispatch";
+  stopAllAssistants,
+  stopAssistantMode,
+  listAssistantSessions,
+  deleteAssistantSession,
+  updateAssistantSessionSummary,
+  spawnShellSession,
+  listZoneSessionsForZone,
+  deleteZoneSessionEntry,
+  renameZoneSessionEntry,
+  type StartAssistantOpts,
+  type StartDispatchOptions,
+  type RunZoneOptions,
+  type ResumeDispatchOptions,
+} from './terminals'
+import {
+  listDispatches,
+  deleteDispatch,
+  updateDispatchSummary,
+} from './dispatchCapture'
+import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = "Architect";
 app.setName("Architect");
 process.title = "Architect";
 
-const iconPath = join(__dirname, "../../resources/icon.png");
+const iconPath = join(__dirname, '../../resources/icon.png')
+const CANVAS_FILENAME = 'architect-canvas.json'
 
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: BrowserWindow | null = null
+let canvasWatcher: fs.FSWatcher | null = null
+let canvasWatchTimer: ReturnType<typeof setTimeout> | null = null
+let watchedProjectDir: string | null = null
+const popouts = new Map<string, BrowserWindow>()
+
+function emitCanvasChanged(projectDir: string) {
+  if (!mainWindow || mainWindow.isDestroyed()) return
+  try {
+    const raw = fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8')
+    mainWindow.webContents.send('canvas:changed', { projectDir, raw })
+  } catch {}
+}
+
+function stopCanvasWatcher() {
+  if (canvasWatchTimer) {
+    clearTimeout(canvasWatchTimer)
+    canvasWatchTimer = null
+  }
+  canvasWatcher?.close()
+  canvasWatcher = null
+  watchedProjectDir = null
+}
+
+function startCanvasWatcher(projectDir: string) {
+  stopCanvasWatcher()
+  watchedProjectDir = projectDir
+
+  try {
+    canvasWatcher = fs.watch(projectDir, (_eventType, filename) => {
+      if (filename && filename !== CANVAS_FILENAME) return
+      if (canvasWatchTimer) clearTimeout(canvasWatchTimer)
+      canvasWatchTimer = setTimeout(() => {
+        canvasWatchTimer = null
+        if (watchedProjectDir !== projectDir) return
+        emitCanvasChanged(projectDir)
+      }, 120)
+    })
+  } catch {
+    canvasWatcher = null
+    watchedProjectDir = null
+  }
+}
 
 function createWindow(): void {
   const icon = nativeImage.createFromPath(iconPath);
@@ -51,11 +108,8 @@ function createWindow(): void {
     app.dock.setIcon(icon);
   }
 
-  mainWindow.on("ready-to-show", () => mainWindow!.show());
-  mainWindow.on("closed", () => {
-    killAll();
-    mainWindow = null;
-  });
+  mainWindow.on('ready-to-show', () => mainWindow!.show())
+  mainWindow.on('closed', () => { stopCanvasWatcher(); killAll(); mainWindow = null })
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url);
@@ -73,41 +127,11 @@ function createWindow(): void {
 
 ipcMain.handle("get-home-dir", () => app.getPath("home"));
 
-ipcMain.handle("read-file", (_event, filePath: string) => {
-  try {
-    return fs.readFileSync(filePath, "utf-8");
-  } catch {
-    return null;
-  }
-});
+ipcMain.handle('read-file', (_event, filePath: string) => {
+  try { return fs.readFileSync(filePath, 'utf-8') } catch { return null }
+})
 
-ipcMain.handle("read-outputs", (_event, outputsDir: string) => {
-  try {
-    const files = fs
-      .readdirSync(outputsDir)
-      .filter((f) => f.endsWith(".md"))
-      .map((f) => {
-        const full = path.join(outputsDir, f);
-        const stat = fs.statSync(full);
-        return {
-          name: f.replace(".md", ""),
-          content: fs.readFileSync(full, "utf-8"),
-          mtime: stat.mtimeMs,
-        };
-      })
-      .sort((a, b) => {
-        // Overseer always first, rest by name
-        if (a.name === "Architect") return -1;
-        if (b.name === "Architect") return 1;
-        return a.name.localeCompare(b.name);
-      });
-    return files;
-  } catch {
-    return [];
-  }
-});
-
-ipcMain.handle("read-dir", (_event, dirPath: string) => {
+ipcMain.handle('read-dir', (_event, dirPath: string) => {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true });
     return entries
@@ -136,34 +160,25 @@ ipcMain.handle("open-directory", async () => {
   return result.filePaths[0] ?? null;
 });
 
-ipcMain.handle("save-canvas", (_event, projectDir: string, data: string) => {
-  fs.writeFileSync(
-    path.join(projectDir, "architect-canvas.json"),
-    data,
-    "utf-8",
-  );
-});
+ipcMain.handle('save-canvas', (_event, projectDir: string, data: string) => {
+  fs.writeFileSync(path.join(projectDir, CANVAS_FILENAME), data, 'utf-8')
+})
 
-ipcMain.handle("load-canvas", (_event, projectDir: string) => {
-  try {
-    return fs.readFileSync(
-      path.join(projectDir, "architect-canvas.json"),
-      "utf-8",
-    );
-  } catch {
-    return null;
-  }
-});
+ipcMain.handle('load-canvas', (_event, projectDir: string) => {
+  try { return fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8') }
+  catch { return null }
+})
 
-ipcMain.handle(
-  "bootstrap-project",
-  (_event, projectDir: string, runtime: AgentRuntime | undefined) => {
-    return bootstrapProjectCanvas(projectDir, runtime);
-  },
-);
+ipcMain.handle('watch-canvas', (_event, projectDir: string) => {
+  startCanvasWatcher(projectDir)
+})
 
-ipcMain.handle("scan-components", (_event, dirPath: string) => {
-  const results: unknown[] = [];
+ipcMain.handle('unwatch-canvas', () => {
+  stopCanvasWatcher()
+})
+
+ipcMain.handle('scan-components', (_event, dirPath: string) => {
+  const results: unknown[] = []
   const walk = (d: string) => {
     let entries: import("fs").Dirent[];
     try {
@@ -188,53 +203,78 @@ ipcMain.handle("scan-components", (_event, dirPath: string) => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle(
-  "run-graph",
-  (
-    _event,
-    nodes,
-    edges,
-    cwd,
-    settings,
-    options: RunGraphOptions | undefined,
-  ) => {
-    if (!mainWindow)
-      return {
-        sessions: [],
-        preflight: {
-          generatedAt: new Date().toISOString(),
-          counts: {
-            missing: 0,
-            adopted: 0,
-            needs_delta: 0,
-            blocked_by_upstream: 0,
-            unchanged: 0,
-          },
-          nodes: [],
-        },
-      };
-    return runGraph(
-      mainWindow,
-      nodes,
-      edges,
-      cwd ?? app.getPath("home"),
-      settings,
-      options,
-    );
-  },
-);
+ipcMain.handle('dispatch:start', (_event, nodes, edges, cwd, settings, dispatch: StartDispatchOptions, dispatchContext) => {
+  if (!mainWindow) return []
+  return startDispatch(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' }, dispatchContext)
+})
 
-ipcMain.handle(
-  "start-assistant",
-  (_event, projectDir: string, contextMd: string, runtime: AgentRuntime) => {
-    if (!mainWindow) return null;
-    return startAssistant(mainWindow, projectDir, contextMd, runtime);
-  },
-);
+ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
+  if (!mainWindow) return { ok: false, reason: 'no-window' }
+  return runZone(mainWindow, opts)
+})
 
-ipcMain.on("stop-assistant", () => {
-  stopAssistant();
-});
+ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string) => {
+  return listZoneSessionsForZone(projectDir, zoneId, label)
+})
+
+ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string) => {
+  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label)
+})
+
+ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) => {
+  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label)
+})
+
+ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string) => {
+  return resetZoneSession(projectDir, zoneId, label)
+})
+
+ipcMain.handle('dispatches:list', (_event, projectDir: string) => {
+  return listDispatches(projectDir)
+})
+
+ipcMain.handle('dispatches:delete', (_event, projectDir: string, dispatchId: string) => {
+  return deleteDispatch(projectDir, dispatchId)
+})
+
+ipcMain.handle('dispatches:update-summary', (_event, projectDir: string, dispatchId: string, summary: string) => {
+  return updateDispatchSummary(projectDir, dispatchId, summary)
+})
+
+ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
+  if (!mainWindow) return { ok: false, error: 'not-found' as const }
+  return resumeDispatch(mainWindow, opts)
+})
+
+ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode, opts?: StartAssistantOpts) => {
+  if (!mainWindow) return null
+  return startAssistant(mainWindow, projectDir, contextMd, runtime, mode, opts)
+})
+
+ipcMain.on('stop-assistant', () => {
+  stopAllAssistants()
+})
+
+ipcMain.on('stop-assistant-mode', (_event, mode: AssistantMode) => {
+  stopAssistantMode(mode)
+})
+
+ipcMain.handle('assistant:list-sessions', (_event, projectDir: string, mode: AssistantMode) => {
+  return listAssistantSessions(projectDir, mode)
+})
+
+ipcMain.handle('assistant:delete-session', (_event, projectDir: string, mode: AssistantMode, sessionId: string) => {
+  return deleteAssistantSession(projectDir, mode, sessionId)
+})
+
+ipcMain.handle('assistant:update-session-summary', (_event, projectDir: string, mode: AssistantMode, sessionId: string, summary: string) => {
+  return updateAssistantSessionSummary(projectDir, mode, sessionId, summary)
+})
+
+ipcMain.handle('terminal:spawn-shell', (_event, cwd: string) => {
+  if (!mainWindow) return null
+  return spawnShellSession(mainWindow, cwd ?? app.getPath('home'))
+})
 
 ipcMain.on("terminal:input", (_event, id: string, data: string) => {
   writeToTerminal(id, data);
@@ -251,15 +291,92 @@ ipcMain.on("terminal:kill-all", () => {
   killAll();
 });
 
+ipcMain.handle('terminal:close', (_event, id: string) => {
+  return closeTerminal(id)
+})
+
+ipcMain.handle('terminal:capture-state', (_event, id: string) => {
+  return getCaptureState(id)
+})
+
+// ── Terminal popout windows ────────────────────────────────────────────────
+
+ipcMain.handle('terminal:popout', (_event, opts: { id: string; label: string; runtime: string }) => {
+  const existing = popouts.get(opts.id)
+  if (existing && !existing.isDestroyed()) {
+    existing.focus()
+    return { ok: true }
+  }
+
+  const win = new BrowserWindow({
+    width: 800,
+    height: 600,
+    backgroundColor: '#0d0d0d',
+    title: opts.label,
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  popouts.set(opts.id, win)
+  win.on('closed', () => {
+    popouts.delete(opts.id)
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal:popout-closed', { id: opts.id })
+    }
+  })
+
+  const params = `popout=${encodeURIComponent(opts.id)}&label=${encodeURIComponent(opts.label)}&runtime=${encodeURIComponent(opts.runtime)}`
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${params}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search: params })
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('terminal:dock', (_event, id: string) => {
+  const win = popouts.get(id)
+  if (win && !win.isDestroyed()) win.close()
+  return { ok: true }
+})
+
+// ── Terminal layout persistence ────────────────────────────────────────────
+
+ipcMain.handle('terminal-layout:load', (_event, projectDir: string) => {
+  try {
+    const raw = fs.readFileSync(path.join(projectDir, 'ARCHITECT', 'terminal-layout.json'), 'utf-8')
+    return JSON.parse(raw)
+  } catch {
+    return null
+  }
+})
+
+ipcMain.handle('terminal-layout:save', (_event, projectDir: string, json: unknown) => {
+  try {
+    const dir = path.join(projectDir, 'ARCHITECT')
+    fs.mkdirSync(dir, { recursive: true })
+    fs.writeFileSync(path.join(dir, 'terminal-layout.json'), JSON.stringify(json, null, 2), 'utf-8')
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, error: String(err) }
+  }
+})
+
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
-app.whenReady().then(() => {
-  createWindow();
-  app.on("activate", () => {
-    if (BrowserWindow.getAllWindows().length === 0) createWindow();
-  });
-});
+app.whenReady().then(async () => {
+  await initShellEnv()
+  createWindow()
+  app.on('activate', () => {
+    if (BrowserWindow.getAllWindows().length === 0) createWindow()
+  })
+})
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+app.on('window-all-closed', () => {
+  stopCanvasWatcher()
+  if (process.platform !== 'darwin') app.quit()
+})

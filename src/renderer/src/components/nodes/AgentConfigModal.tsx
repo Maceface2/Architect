@@ -1,27 +1,16 @@
-import { memo, useState, useRef, useEffect } from "react";
-import { createPortal } from "react-dom";
-import {
-  Handle,
-  Position,
-  useReactFlow,
-  type NodeProps,
-  type Node,
-} from "@xyflow/react";
-import { Plus, X, FileText, Zap } from "lucide-react";
+import { useEffect, useRef, useState } from 'react'
+import { Plus, X, FileText, RotateCcw } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
   type AgentRuntime,
   type AgentRuntimeMode,
-} from "../../../../shared/agentRuntimes";
-import { useProjectSettings } from "../../context/ProjectSettingsContext";
-import { useProjectDirectory } from "../../context/ProjectDirectoryContext";
-import { useDispatchActions } from "../../context/DispatchActionsContext";
-import { getEffectiveModel, getEffectiveRuntime } from "../../lib/canvas";
+} from '../../../../shared/agentRuntimes'
+import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useProjectDir } from '../../context/ProjectDirContext'
 import type {
-  ArchitectNodeData,
-  NodeStatus,
+  ZoneNodeData,
   NodeSkillFile,
   NodeTools,
   NodeBehavior,
@@ -32,313 +21,39 @@ import type {
   RuntimeModelMap,
 } from "../../types";
 
-type ArchitectNodeProps = NodeProps<Node<ArchitectNodeData>>;
+const BUILTIN_SKILLS: Omit<NodeSkillFile, 'id'>[] = [
+  { name: 'researcher.md', path: 'builtin:researcher', builtin: true },
+  { name: 'planner.md', path: 'builtin:planner', builtin: true },
+  { name: 'code-reviewer.md', path: 'builtin:code-reviewer', builtin: true },
+  { name: 'debugger.md', path: 'builtin:debugger', builtin: true },
+  { name: 'writer.md', path: 'builtin:writer', builtin: true },
+  { name: 'analyst.md', path: 'builtin:analyst', builtin: true },
+]
 
-const BUILTIN_SKILLS: Omit<NodeSkillFile, "id">[] = [
-  { name: "researcher.md", path: "builtin:researcher", builtin: true },
-  { name: "planner.md", path: "builtin:planner", builtin: true },
-  { name: "code-reviewer.md", path: "builtin:code-reviewer", builtin: true },
-  { name: "debugger.md", path: "builtin:debugger", builtin: true },
-  { name: "writer.md", path: "builtin:writer", builtin: true },
-  { name: "analyst.md", path: "builtin:analyst", builtin: true },
-];
-
-function ArchitectNode({ id, data, selected }: ArchitectNodeProps) {
-  const { setNodes, getNodes } = useReactFlow();
-  const [modalOpen, setModalOpen] = useState(false);
-  const [taskPreview, setTaskPreview] = useState<string | null>(null);
-  const projectSettings = useProjectSettings();
-  const projectDir = useProjectDirectory();
-  const { launchRevision } = useDispatchActions();
-
-  const nodeColor = data.color as string;
-  const tag = data.tag as string;
-  const label = data.label as string;
-  const prompt = (data.prompt ?? "") as string;
-  const additionalChanges = (data.additionalChanges ?? "") as string;
-  const claudeSessionId = (data.claudeSessionId ?? "") as string;
-  const ownedPaths = (data.ownedPaths ?? []) as string[];
-  const expectedFiles = (data.expectedFiles ?? []) as string[];
-  const contracts = (data.contracts ?? "") as string;
-  const reviewHints = (data.reviewHints ?? "") as string;
-  const status = data.status as NodeStatus;
-  const runtimeMode = (data.agentRuntimeMode ?? "inherit") as AgentRuntimeMode;
-  const configuredRuntime = (data.agentRuntime ??
-    projectSettings.defaultRuntime) as AgentRuntime;
-  const providerModels = (data.providerModels ?? {}) as RuntimeModelMap;
-  const effectiveRuntime = getEffectiveRuntime(
-    {
-      agentRuntimeMode: runtimeMode,
-      agentRuntime: configuredRuntime,
-    },
-    projectSettings,
-  );
-  const effectiveModel = getEffectiveModel(
-    {
-      providerModels,
-      agentRuntimeMode: runtimeMode,
-      agentRuntime: configuredRuntime,
-    },
-    projectSettings,
-  );
-  const skills = (data.skills ?? []) as NodeSkillFile[];
-  const tools = (data.tools ?? {
-    webSearch: false,
-    codeExec: false,
-    fileRead: false,
-    fileWrite: false,
-    apiCalls: false,
-    shell: false,
-  }) as NodeTools;
-  const behavior = (data.behavior ?? {
-    mode: "sequential",
-    retries: 0,
-    onFailure: "stop",
-    timeoutMs: 30000,
-  }) as NodeBehavior;
-  const permissions = (data.permissions ?? {
-    readFiles: false,
-    writeFiles: false,
-    network: false,
-    shell: false,
-  }) as NodePermissions;
-  const envVars = (data.envVars ?? []) as NodeEnvVar[];
-  const runtimeMeta = getAgentRuntime(effectiveRuntime);
-
-  const patch = (partial: Partial<ArchitectNodeData>) =>
-    setNodes((nodes) =>
-      nodes.map((node) =>
-        node.id === id
-          ? {
-              ...node,
-              data: { ...(node.data as ArchitectNodeData), ...partial },
-            }
-          : node,
-      ),
-    );
-
-  const toggleSelected = () => {
-    setNodes((nodes) =>
-      nodes.map((node) =>
-        node.id === id ? { ...node, selected: !node.selected } : node,
-      ),
-    );
-  };
-
-  useEffect(() => {
-    let cancelled = false;
-    let timer: ReturnType<typeof setTimeout> | null = null;
-    let attempts = 0;
-    const maxAttempts = launchRevision > 0 ? 20 : 1;
-
-    const readPreview = async () => {
-      let content = await window.electron.readFile(
-        getTaskFilePath(projectDir, id),
-      );
-      if (!content && hasUniqueLabel(label, getNodes())) {
-        content = await window.electron.readFile(
-          getLegacyTaskFilePath(projectDir, label),
-        );
-      }
-      if (cancelled) return;
-
-      const normalized = normalizeTaskPreview(content);
-      setTaskPreview(normalized);
-
-      attempts += 1;
-      if (!normalized && attempts < maxAttempts) {
-        timer = setTimeout(() => {
-          void readPreview();
-        }, 1500);
-      }
-    };
-
-    void readPreview();
-
-    return () => {
-      cancelled = true;
-      if (timer) clearTimeout(timer);
-    };
-  }, [projectDir, id, label, launchRevision, getNodes]);
-
-  return (
-    <div className="relative">
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{
-          width: 11,
-          height: 11,
-          background: "#1e1e1e",
-          border: `2px solid ${nodeColor}`,
-          left: -6,
-          zIndex: 10,
-        }}
-      />
-
-      <div
-        className={`relative bg-[#1e1e1e] rounded-xl overflow-hidden min-w-[200px] max-w-[240px] border shadow-2xl cursor-pointer transition-colors select-none ${
-          selected
-            ? "border-[#58A6FF]/70 ring-1 ring-[#58A6FF]/40"
-            : "border-white/[0.06] hover:border-white/20"
-        }`}
-        onClick={() => setModalOpen(true)}
-      >
-        <div
-          className="absolute left-0 top-0 bottom-0 w-[5px]"
-          style={{ backgroundColor: nodeColor }}
-        />
-        <div className="pl-[18px] pr-3.5 pt-3 pb-3">
-          <div className="flex items-center justify-between mb-1.5">
-            <span
-              className="text-[11px] font-bold tracking-widest"
-              style={{ color: nodeColor }}
-            >
-              {tag}
-            </span>
-            <div className="flex items-center gap-1.5">
-              <button
-                onMouseDown={(event) => event.stopPropagation()}
-                onClick={(event) => {
-                  event.stopPropagation();
-                  toggleSelected();
-                }}
-                title={
-                  selected
-                    ? `Remove ${label} from launch selection`
-                    : `Select ${label} for launch`
-                }
-                className={`nodrag nopan inline-flex items-center justify-center w-6 h-6 rounded-md border bg-black/20 transition-colors ${
-                  selected
-                    ? "border-[#58A6FF]/50 text-[#58A6FF]"
-                    : "border-white/[0.08] text-slate-400 hover:text-white hover:border-white/20"
-                }`}
-              >
-                <Zap size={12} />
-              </button>
-              <span
-                className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                style={{
-                  color: runtimeMeta.accentColor,
-                  backgroundColor: `${runtimeMeta.accentColor}20`,
-                }}
-              >
-                {runtimeMode === "inherit"
-                  ? `default:${runtimeMeta.shortLabel}`
-                  : runtimeMeta.shortLabel}
-              </span>
-              <div
-                className="w-2.5 h-2.5 rounded-full flex-shrink-0"
-                style={{ backgroundColor: statusColor(status, nodeColor) }}
-              />
-            </div>
-          </div>
-          <p className="text-[15px] font-semibold text-white leading-snug">
-            {label}
-          </p>
-          <p className="text-[10px] text-slate-600 mt-1 font-mono truncate">
-            {shortModelLabel(effectiveModel)}
-          </p>
-          {(taskPreview || prompt) && (
-            <p
-              className={`text-[10px] mt-1.5 leading-relaxed line-clamp-3 ${taskPreview ? "text-slate-400" : "text-slate-500"}`}
-            >
-              {taskPreview ? previewSnippet(taskPreview) : prompt}
-            </p>
-          )}
-        </div>
-      </div>
-
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{
-          width: 11,
-          height: 11,
-          background: "#1e1e1e",
-          border: `2px solid ${nodeColor}`,
-          right: -6,
-          zIndex: 10,
-        }}
-      />
-
-      {modalOpen &&
-        createPortal(
-          <NodeConfigModal
-            nodeId={id}
-            selected={selected}
-            taskPreview={taskPreview}
-            nodeColor={nodeColor}
-            tag={tag}
-            label={label}
-            prompt={prompt}
-            additionalChanges={additionalChanges}
-            claudeSessionId={claudeSessionId}
-            ownedPaths={ownedPaths}
-            expectedFiles={expectedFiles}
-            contracts={contracts}
-            reviewHints={reviewHints}
-            runtimeMode={runtimeMode}
-            configuredRuntime={configuredRuntime}
-            effectiveRuntime={effectiveRuntime}
-            effectiveModel={effectiveModel}
-            providerModels={providerModels}
-            skills={skills}
-            tools={tools}
-            behavior={behavior}
-            permissions={permissions}
-            envVars={envVars}
-            patch={patch}
-            onClose={() => setModalOpen(false)}
-          />,
-          document.body,
-        )}
-    </div>
-  );
+interface Props {
+  zoneColor: string
+  zoneId: string
+  label: string
+  systemPrompt: string
+  runtimeMode: AgentRuntimeMode
+  configuredRuntime: AgentRuntime
+  effectiveRuntime: AgentRuntime
+  effectiveModel: string
+  providerModels: RuntimeModelMap
+  skills: NodeSkillFile[]
+  tools: NodeTools
+  behavior: NodeBehavior
+  permissions: NodePermissions
+  envVars: NodeEnvVar[]
+  patch: (partial: Partial<ZoneNodeData>) => void
+  onClose: () => void
 }
 
-interface ModalProps {
-  nodeId: string;
-  selected: boolean;
-  taskPreview: string | null;
-  nodeColor: string;
-  tag: string;
-  label: string;
-  prompt: string;
-  additionalChanges: string;
-  claudeSessionId: string;
-  ownedPaths: string[];
-  expectedFiles: string[];
-  contracts: string;
-  reviewHints: string;
-  runtimeMode: AgentRuntimeMode;
-  configuredRuntime: AgentRuntime;
-  effectiveRuntime: AgentRuntime;
-  effectiveModel: string;
-  providerModels: RuntimeModelMap;
-  skills: NodeSkillFile[];
-  tools: NodeTools;
-  behavior: NodeBehavior;
-  permissions: NodePermissions;
-  envVars: NodeEnvVar[];
-  patch: (partial: Partial<ArchitectNodeData>) => void;
-  onClose: () => void;
-}
-
-function NodeConfigModal({
-  nodeId,
-  selected,
-  taskPreview,
-  nodeColor,
-  tag,
+export default function AgentConfigModal({
+  zoneColor,
+  zoneId,
   label,
-  prompt,
-  additionalChanges,
-  claudeSessionId,
-  ownedPaths,
-  expectedFiles,
-  contracts,
-  reviewHints,
+  systemPrompt,
   runtimeMode,
   configuredRuntime,
   effectiveRuntime,
@@ -351,13 +66,25 @@ function NodeConfigModal({
   envVars,
   patch,
   onClose,
-}: ModalProps) {
-  const [labelDraft, setLabelDraft] = useState(label);
-  const [customSkillInput, setCustomSkillInput] = useState("");
-  const labelInputRef = useRef<HTMLInputElement>(null);
-  const { setNodes } = useReactFlow();
-  const projectSettings = useProjectSettings();
-  const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime);
+}: Props) {
+  const [labelDraft, setLabelDraft] = useState(label)
+  const [customSkillInput, setCustomSkillInput] = useState('')
+  const [resetState, setResetState] = useState<'idle' | 'confirm' | 'pending' | 'done' | 'error'>('idle')
+  const labelInputRef = useRef<HTMLInputElement>(null)
+  const projectSettings = useProjectSettings()
+  const projectDir = useProjectDir()
+  const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime)
+
+  const handleReset = async () => {
+    if (!projectDir) return
+    setResetState('pending')
+    try {
+      await window.electron.zone.resetSession({ projectDir, zoneId })
+      setResetState('done')
+    } catch {
+      setResetState('error')
+    }
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -453,16 +180,8 @@ function NodeConfigModal({
         className="bg-[#161616] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden"
         style={{ width: "90vw", height: "85vh", maxWidth: 1100 }}
       >
-        <div
-          className="flex items-center gap-4 px-6 py-4 border-b border-white/[0.07] flex-shrink-0"
-          style={{ borderLeftColor: nodeColor, borderLeftWidth: 4 }}
-        >
-          <span
-            className="text-[11px] font-bold tracking-widest flex-shrink-0"
-            style={{ color: nodeColor }}
-          >
-            {tag}
-          </span>
+        <div className="flex items-center gap-4 px-6 py-4 border-b border-white/[0.07] flex-shrink-0" style={{ borderLeftColor: zoneColor, borderLeftWidth: 4 }}>
+          <span className="text-[11px] font-bold tracking-widest flex-shrink-0 uppercase" style={{ color: zoneColor }}>Zone</span>
           <input
             ref={labelInputRef}
             value={labelDraft}
@@ -487,67 +206,54 @@ function NodeConfigModal({
 
         <div className="flex flex-1 min-h-0 divide-x divide-white/[0.06]">
           <div className="flex flex-col flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-slate-600 px-6 pt-5 pb-2 flex-shrink-0">
-              {taskPreview ? "Task Preview" : "Initial Prompt"}
-            </p>
-            {taskPreview ? (
-              <div className="flex-1 min-h-0 overflow-y-auto px-6 pb-6">
-                <div className="rounded-xl border border-white/[0.06] bg-black/20 p-4 text-slate-300 text-sm leading-relaxed whitespace-pre-wrap font-mono min-h-[260px]">
-                  {taskPreview}
-                </div>
-                <div className="mt-4">
-                  <p className="text-[10px] uppercase tracking-widest text-slate-600 mb-2">
-                    Additional Changes
-                  </p>
-                  <textarea
-                    value={additionalChanges}
-                    onChange={(event) =>
-                      patch({ additionalChanges: event.target.value })
-                    }
-                    placeholder="Optional follow-up changes to apply when relaunching this component..."
-                    className="w-full min-h-28 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono resize-y"
-                  />
-                </div>
-                <div className="mt-4">
-                  <div className="flex items-center justify-between mb-2">
-                    <p className="text-[10px] uppercase tracking-widest text-slate-600">
-                      Resume Session
-                    </p>
-                    {claudeSessionId && (
-                      <button
-                        onClick={() => patch({ claudeSessionId: "" })}
-                        className="text-[10px] text-slate-600 hover:text-red-400 transition-colors"
-                      >
-                        Clear
-                      </button>
-                    )}
-                  </div>
-                  <input
-                    type="text"
-                    value={claudeSessionId}
-                    onChange={(event) =>
-                      patch({ claudeSessionId: event.target.value })
-                    }
-                    placeholder="Session ID auto-saved after completion..."
-                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[11px] text-slate-400 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
-                  />
-                  {claudeSessionId && (
-                    <p className="text-[10px] text-slate-600 mt-1">
-                      Relaunch will resume this session instead of re-injecting
-                      the full prompt.
-                    </p>
-                  )}
-                </div>
+            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-2 flex-shrink-0">
+              <div>
+                <p className="text-[10px] uppercase tracking-widest text-slate-600">System prompt</p>
+                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed max-w-md">
+                  Customizes this zone agent&apos;s behavior. Passed as <span className="font-mono text-slate-500">--append-system-prompt</span> on the first spawn. Edits take effect only after <span className="text-slate-400">Reset conversation</span>.
+                </p>
               </div>
-            ) : (
-              <textarea
-                value={prompt}
-                onChange={(event) => patch({ prompt: event.target.value })}
-                placeholder="Describe what this agent should do — its role, goals, constraints, and any specific instructions..."
-                autoFocus
-                className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
-              />
-            )}
+              {resetState === 'confirm' ? (
+                <div className="flex items-center gap-2 flex-shrink-0">
+                  <span className="text-[11px] text-amber-400">Erase conversation?</span>
+                  <button
+                    onClick={handleReset}
+                    className="px-2 py-1 text-[11px] text-white bg-red-600/80 hover:bg-red-600 rounded transition-colors"
+                  >
+                    Reset
+                  </button>
+                  <button
+                    onClick={() => setResetState('idle')}
+                    className="px-2 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:bg-white/[0.05] transition-colors"
+                  >
+                    Cancel
+                  </button>
+                </div>
+              ) : (
+                <button
+                  onClick={() => setResetState('confirm')}
+                  disabled={resetState === 'pending'}
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:text-slate-200 hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
+                  title="Delete the saved session so the next dispatch starts fresh"
+                >
+                  <RotateCcw size={11} />
+                  {resetState === 'pending'
+                    ? 'Resetting…'
+                    : resetState === 'done'
+                      ? 'Conversation reset'
+                      : resetState === 'error'
+                        ? 'Reset failed — retry'
+                        : 'Reset conversation'}
+                </button>
+              )}
+            </div>
+            <textarea
+              value={systemPrompt}
+              onChange={event => patch({ systemPrompt: event.target.value })}
+              placeholder="Define this zone agent's role, expertise, tone, and constraints. E.g. 'You are a senior backend engineer. Write idiomatic, well-tested code. Prefer pure functions. Never introduce new frameworks without justification.'"
+              autoFocus
+              className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
+            />
           </div>
 
           <div className="w-[340px] flex-shrink-0 overflow-y-auto">
@@ -620,16 +326,13 @@ function NodeConfigModal({
                     />
                   </Field>
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-slate-400">
-                    {runtimeMode === "inherit"
-                      ? `Using project default: ${getAgentRuntime(projectSettings.defaultRuntime).label}`
-                      : "This node uses its own CLI selection."}
+                    {runtimeMode === 'inherit'
+                      ? `Using project default: ${getAgentRuntime(projectSettings.dispatchRuntime).label}`
+                      : 'This zone uses its own CLI selection.'}
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
-                    {AGENT_RUNTIMES.map((runtime) => {
-                      const selected =
-                        (runtimeMode === "inherit"
-                          ? projectSettings.defaultRuntime
-                          : configuredRuntime) === runtime.id;
+                    {AGENT_RUNTIMES.map(runtime => {
+                      const selected = (runtimeMode === 'inherit' ? projectSettings.dispatchRuntime : configuredRuntime) === runtime.id
                       return (
                         <button
                           key={runtime.id}
@@ -768,22 +471,15 @@ function NodeConfigModal({
 
               <Section title="Tools">
                 <div className="space-y-2">
-                  {(
-                    [
-                      ["webSearch", "Web Search"],
-                      ["codeExec", "Code Exec"],
-                      ["fileRead", "File Read"],
-                      ["fileWrite", "File Write"],
-                      ["apiCalls", "API Calls"],
-                      ["shell", "Shell"],
-                    ] as [keyof NodeTools, string][]
-                  ).map(([key, label]) => (
-                    <Toggle
-                      key={key}
-                      label={label}
-                      value={tools[key]}
-                      onChange={() => toggleTool(key)}
-                    />
+                  {([
+                    ['webSearch', 'Web Search'],
+                    ['codeExec', 'Code Exec'],
+                    ['fileRead', 'File Read'],
+                    ['fileWrite', 'File Write'],
+                    ['apiCalls', 'API Calls'],
+                    ['shell', 'Shell'],
+                  ] as [keyof NodeTools, string][]).map(([key, tLabel]) => (
+                    <Toggle key={key} label={tLabel} value={tools[key]} onChange={() => toggleTool(key)} />
                   ))}
                 </div>
               </Section>
@@ -833,20 +529,13 @@ function NodeConfigModal({
 
               <Section title="Permissions">
                 <div className="space-y-2">
-                  {(
-                    [
-                      ["readFiles", "Read files"],
-                      ["writeFiles", "Write files"],
-                      ["network", "Network"],
-                      ["shell", "Shell"],
-                    ] as [keyof NodePermissions, string][]
-                  ).map(([key, label]) => (
-                    <Toggle
-                      key={key}
-                      label={label}
-                      value={permissions[key]}
-                      onChange={() => togglePerm(key)}
-                    />
+                  {([
+                    ['readFiles', 'Read files'],
+                    ['writeFiles', 'Write files'],
+                    ['network', 'Network'],
+                    ['shell', 'Shell'],
+                  ] as [keyof NodePermissions, string][]).map(([key, pLabel]) => (
+                    <Toggle key={key} label={pLabel} value={permissions[key]} onChange={() => togglePerm(key)} />
                   ))}
                 </div>
               </Section>
@@ -1041,46 +730,3 @@ function parseMultiLineList(value: string): string[] {
     ),
   ];
 }
-
-function statusColor(status: NodeStatus, defaultColor: string): string {
-  switch (status) {
-    case "running":
-      return "#fbbf24";
-    case "done":
-      return "#4ade80";
-    case "error":
-      return "#f87171";
-    default:
-      return defaultColor;
-  }
-}
-
-function sanitizeLabel(label: string): string {
-  return label.replace(/[^a-zA-Z0-9-_]/g, "-");
-}
-
-function getTaskFilePath(projectDir: string, nodeId: string): string {
-  return `${projectDir}/ARCHITECT/tasks/${sanitizeLabel(nodeId)}.md`;
-}
-
-function getLegacyTaskFilePath(projectDir: string, label: string): string {
-  return `${projectDir}/ARCHITECT/tasks/${sanitizeLabel(label)}.md`;
-}
-
-function hasUniqueLabel(
-  label: string,
-  nodes: Array<{ data?: { label?: string } }>,
-): boolean {
-  return nodes.filter((node) => node.data?.label === label).length === 1;
-}
-
-function normalizeTaskPreview(content: string | null): string | null {
-  const trimmed = content?.trim();
-  return trimmed ? trimmed : null;
-}
-
-function previewSnippet(content: string): string {
-  return content.replace(/\s+/g, " ").trim().slice(0, 180);
-}
-
-export default memo(ArchitectNode);

@@ -1,5 +1,15 @@
-export type AgentRuntime = "claude" | "codex" | "gemini" | "opencode";
-export type AgentRuntimeMode = "inherit" | "override";
+export type AgentRuntime = 'claude' | 'codex' | 'gemini' | 'opencode'
+export type AgentRuntimeMode = 'inherit' | 'override'
+export type AssistantMode = 'architecture' | 'general'
+export type EffortLevel = 'low' | 'medium' | 'high'
+
+export function isAssistantMode(value: unknown): value is AssistantMode {
+  return value === 'architecture' || value === 'general'
+}
+
+export function isEffortLevel(value: unknown): value is EffortLevel {
+  return value === 'low' || value === 'medium' || value === 'high'
+}
 
 export interface AgentRuntimeDefinition {
   id: AgentRuntime;
@@ -28,13 +38,13 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     ],
   },
   {
-    id: "codex",
-    label: "Codex CLI",
-    shortLabel: "codex",
-    binary: "codex",
-    accentColor: "#10b981",
-    defaultModel: "gpt-5-codex",
-    suggestedModels: ["gpt-5-codex", "gpt-5", "o4-mini"],
+    id: 'codex',
+    label: 'Codex CLI',
+    shortLabel: 'codex',
+    binary: 'codex',
+    accentColor: '#10b981',
+    defaultModel: 'gpt-5.4-mini',
+    suggestedModels: ['gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.4'],
   },
   {
     id: "gemini",
@@ -46,16 +56,23 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     suggestedModels: ["gemini-2.5-flash", "gemini-2.5-pro"],
   },
   {
-    id: "opencode",
-    label: "OpenCode",
-    shortLabel: "open",
-    binary: "opencode",
-    accentColor: "#f472b6",
-    defaultModel: "openai/gpt-5",
+    id: 'opencode',
+    label: 'OpenCode',
+    shortLabel: 'open',
+    binary: 'opencode',
+    accentColor: '#f472b6',
+    // Models that `opencode models` returns with zero credentials
+    // configured — i.e. the user does NOT need to plug in any provider API
+    // key to use them. (Billing may still happen via OpenCode's own
+    // credits/subscription, but nothing on the user's machine needs to be
+    // authenticated.) Keep this list aligned with that CLI output.
+    defaultModel: 'opencode/big-pickle',
     suggestedModels: [
-      "openai/gpt-5",
-      "anthropic/claude-sonnet-4-6",
-      "google/gemini-2.5-pro",
+      'opencode/big-pickle',
+      'opencode/gpt-5-nano',
+      'opencode/ling-2.6-flash-free',
+      'opencode/minimax-m2.5-free',
+      'opencode/nemotron-3-super-free',
     ],
   },
 ];
@@ -78,4 +95,33 @@ export function isAgentRuntimeMode(value: unknown): value is AgentRuntimeMode {
 
 export function getAgentRuntime(runtime: AgentRuntime): AgentRuntimeDefinition {
   return AGENT_RUNTIME_MAP[runtime];
+}
+
+// Map the unified effort enum into the flag shape each CLI expects. Claude
+// and Codex accept an effort flag on their root/interactive invocation;
+// Gemini and OpenCode currently don't surface one on the tui we spawn.
+//
+//   claude:   --effort <low|medium|high|xhigh|max>        (documented on root)
+//   codex:    -c model_reasoning_effort="<low|medium|high>"   (also works on `codex resume`)
+//   gemini:   no root flag — requires config.json preset + interactive /model
+//   opencode: --variant only works on `opencode run`; the interactive tui
+//             (what Architect spawns) rejects it. Ctrl+T cycles variants
+//             in-session. No spawn-time flag available.
+export function effortArgsFor(runtime: AgentRuntime, effort: EffortLevel): string[] {
+  switch (runtime) {
+    case 'claude':
+      return ['--effort', effort]
+    case 'codex':
+      return ['-c', `model_reasoning_effort="${effort}"`]
+    case 'gemini':
+      return []
+    case 'opencode':
+      return []
+  }
+}
+
+// Whether a runtime honors `effortArgsFor` at spawn time. Used by the
+// Settings page to dim / annotate runtimes that can't pick up the setting.
+export function runtimeSupportsEffortFlag(runtime: AgentRuntime): boolean {
+  return runtime === 'claude' || runtime === 'codex'
 }

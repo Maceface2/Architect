@@ -1,13 +1,27 @@
 import type { ComponentCategory } from "../types";
 
+export type PaletteItemKind = 'zone' | 'component'
+
 export interface PaletteItemConfig {
-  id: string;
-  label: string;
-  description: string;
-  category: ComponentCategory;
-  iconName: string;
-  color: string;
-  tag: string;
+  id: string
+  label: string
+  description: string
+  category: ComponentCategory
+  iconName: string
+  color: string
+  tag: string
+  kind?: PaletteItemKind
+}
+
+export const ZONE_PALETTE_ITEM: PaletteItemConfig = {
+  id: 'zone',
+  label: 'Empty Zone',
+  description: 'An agent zone — drop components inside',
+  category: 'custom',
+  iconName: 'Layers',
+  color: '#58A6FF',
+  tag: 'ZONE',
+  kind: 'zone',
 }
 
 export const palette: PaletteItemConfig[] = [
@@ -258,16 +272,8 @@ export const palette: PaletteItemConfig[] = [
     tag: "TSDB",
   },
   // Custom
-  {
-    id: "custom",
-    label: "Custom",
-    description: "Custom agent",
-    category: "custom",
-    iconName: "Wrench",
-    color: "#94a3b8",
-    tag: "CUSTOM",
-  },
-];
+  { id: 'custom',         label: 'Custom',         description: 'User-defined component',   category: 'custom',         iconName: 'Wrench',       color: '#94a3b8', tag: 'CUSTOM'  },
+]
 
 export const categoryOrder: ComponentCategory[] = [
   "infrastructure",

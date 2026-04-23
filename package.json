@@ -1,23 +1,68 @@
 {
   "name": "architect",
   "productName": "Architect",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Visual architecture builder for agentic coding CLIs",
   "main": "./out/main/index.js",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "preview": "electron-vite preview",
+    "package": "electron-vite build && electron-builder",
+    "dmg": "electron-vite build && electron-builder --mac dmg",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null; chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null; true"
+  },
+  "build": {
+    "appId": "com.architect.app",
+    "productName": "Architect",
+    "files": [
+      "out/**/*",
+      "resources/**/*"
+    ],
+    "extraResources": [
+      {
+        "from": "node_modules/node-pty/prebuilds",
+        "to": "node-pty/prebuilds",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "icon": "resources/icon.icns",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": false
+    },
+    "dmg": {
+      "title": "Architect",
+      "background": null,
+      "window": {
+        "width": 540,
+        "height": 380
+      }
+    },
+    "npmRebuild": true,
+    "nodeGypRebuild": false
   },
   "dependencies": {
     "@xterm/addon-fit": "^0.11.0",
+    "@xterm/headless": "^6.0.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.3.6",
     "lucide-react": "^0.468.0",
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
-    "react-dom": "^18.3.1"
+    "react-dom": "^18.3.1",
+    "react-resizable-panels": "^2.1.9"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

@@ -1,80 +1,99 @@
 import type { Edge } from "@xyflow/react";
 import {
+  AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
   isAgentRuntime,
   isAgentRuntimeMode,
+  isEffortLevel,
   type AgentRuntime,
 } from "../../../shared/agentRuntimes";
 import type {
   ArchitectCanvasData,
-  ArchitectNodeData,
-  ArchitectNodeType,
+  CanvasNode,
+  ComponentNodeData,
+  ComponentNodeType,
+  HarnessTimeouts,
+  NodeTools,
   ProjectSettings,
   RuntimeModelMap,
-} from "../types";
+  ZoneNodeData,
+  ZoneNodeType,
+} from '../types'
+
+export const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
+  deliveryWarningMs: 45_000,
+  idleThresholdMs: 2 * 60_000,
+  taskTimeoutMs: 30 * 60_000,
+}
+
+export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
+
+export const DEFAULT_TOOLS: NodeTools = {
+  webSearch: false,
+  codeExec: false,
+  fileRead: false,
+  fileWrite: false,
+  apiCalls: false,
+  shell: false,
+}
+
+function buildDispatchModels(): RuntimeModelMap {
+  const map: RuntimeModelMap = {}
+  for (const runtime of AGENT_RUNTIMES) map[runtime.id] = runtime.defaultModel
+  return map
+}
 
 export function createDefaultProjectSettings(): ProjectSettings {
   return {
-    defaultRuntime: DEFAULT_AGENT_RUNTIME,
-  };
+    dispatchRuntime: DEFAULT_AGENT_RUNTIME,
+    assistantMode: 'architecture',
+    dispatchModels: buildDispatchModels(),
+    dispatchEffort: 'medium',
+    dispatchPlanMode: false,
+    dispatchTools: { ...DEFAULT_TOOLS },
+    dispatchTimeoutMs: DEFAULT_ZONE_TIMEOUT_MS,
+    harnessTimeouts: { ...DEFAULT_HARNESS_TIMEOUTS },
+  }
 }
 
-export function createDefaultNodeConfig(
-  defaultRuntime: AgentRuntime = DEFAULT_AGENT_RUNTIME,
-) {
+export function createDefaultZoneAgentConfig(settings: ProjectSettings = createDefaultProjectSettings()) {
+  const runtime = settings.dispatchRuntime
+  const seedModel = settings.dispatchModels[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
   return {
-    agentRuntimeMode: "inherit" as const,
-    agentRuntime: defaultRuntime,
-    providerModels: {
-      [defaultRuntime]: DEFAULT_MODEL_BY_RUNTIME[defaultRuntime],
-    } as RuntimeModelMap,
+    agentRuntimeMode: 'inherit' as const,
+    agentRuntime: runtime,
+    providerModels: { [runtime]: seedModel } as RuntimeModelMap,
     openSections: [],
     skills: [],
-    additionalChanges: "",
-    ownedPaths: [],
-    expectedFiles: [],
-    contracts: "",
-    reviewHints: "",
-    tools: {
-      webSearch: false,
-      codeExec: false,
-      fileRead: false,
-      fileWrite: false,
-      apiCalls: false,
-      shell: false,
-    },
-    behavior: {
-      mode: "sequential" as const,
-      retries: 0,
-      onFailure: "stop" as const,
-      timeoutMs: 30000,
-    },
-    permissions: {
-      readFiles: false,
-      writeFiles: false,
-      network: false,
-      shell: false,
-    },
+    tools: { ...settings.dispatchTools },
+    behavior: { mode: 'sequential' as const, retries: 0, onFailure: 'stop' as const, timeoutMs: settings.dispatchTimeoutMs },
+    permissions: { readFiles: false, writeFiles: false, network: false, shell: false },
     envVars: [],
   };
 }
 
+export function createDefaultZoneData(settings: ProjectSettings = createDefaultProjectSettings()): ZoneNodeData {
+  return {
+    label: 'Zone',
+    description: '',
+    color: '#58A6FF',
+    status: 'idle',
+    systemPrompt: '',
+    ...createDefaultZoneAgentConfig(settings),
+  }
+}
+
 export function getEffectiveRuntime(
-  data: Pick<ArchitectNodeData, "agentRuntimeMode" | "agentRuntime">,
-  settings: ProjectSettings,
+  data: Pick<ZoneNodeData, 'agentRuntimeMode' | 'agentRuntime'>,
+  settings: ProjectSettings
 ): AgentRuntime {
-  return data.agentRuntimeMode === "override"
-    ? data.agentRuntime
-    : settings.defaultRuntime;
+  return data.agentRuntimeMode === 'override' ? data.agentRuntime : settings.dispatchRuntime
 }
 
 export function getEffectiveModel(
-  data: Pick<
-    ArchitectNodeData,
-    "providerModels" | "agentRuntimeMode" | "agentRuntime"
-  >,
-  settings: ProjectSettings,
+  data: Pick<ZoneNodeData, 'providerModels' | 'agentRuntimeMode' | 'agentRuntime'>,
+  settings: ProjectSettings
 ): string {
   const runtime = getEffectiveRuntime(data, settings);
   return data.providerModels?.[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime];
@@ -82,7 +101,7 @@ export function getEffectiveModel(
 
 function normalizeProviderModels(
   rawData: Record<string, unknown>,
-  defaultRuntime: AgentRuntime,
+  dispatchRuntime: AgentRuntime
 ): RuntimeModelMap {
   const rawProviderModels = rawData.providerModels;
   const providerModels: RuntimeModelMap = {};
@@ -103,98 +122,179 @@ function normalizeProviderModels(
     providerModels.claude = rawData.model;
   }
 
-  if (!providerModels[defaultRuntime]) {
-    providerModels[defaultRuntime] = DEFAULT_MODEL_BY_RUNTIME[defaultRuntime];
+  if (!providerModels[dispatchRuntime]) {
+    providerModels[dispatchRuntime] = DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
   }
 
   return providerModels;
 }
 
-export function normalizeProjectSettings(raw: unknown): ProjectSettings {
-  const rawSettings =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const defaultRuntime = isAgentRuntime(rawSettings.defaultRuntime)
-    ? rawSettings.defaultRuntime
-    : DEFAULT_AGENT_RUNTIME;
-
-  return { defaultRuntime };
+function normalizeDispatchModels(raw: unknown): RuntimeModelMap {
+  const map = buildDispatchModels()
+  if (!raw || typeof raw !== 'object') return map
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (isAgentRuntime(runtime) && typeof value === 'string' && value.trim()) {
+      map[runtime] = value
+    }
+  }
+  return map
 }
 
-export function normalizeNodeData(
-  raw: unknown,
-  settings: ProjectSettings,
-): ArchitectNodeData {
-  const rawData =
-    raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
-  const defaultConfig = createDefaultNodeConfig(settings.defaultRuntime);
-  const agentRuntime = isAgentRuntime(rawData.agentRuntime)
-    ? rawData.agentRuntime
-    : DEFAULT_AGENT_RUNTIME;
+function normalizeDispatchTools(raw: unknown): NodeTools {
+  const base = { ...DEFAULT_TOOLS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  for (const key of Object.keys(base) as (keyof NodeTools)[]) {
+    if (typeof rec[key] === 'boolean') base[key] = rec[key] as boolean
+  }
+  return base
+}
+
+function normalizeHarnessTimeouts(raw: unknown): HarnessTimeouts {
+  const base = { ...DEFAULT_HARNESS_TIMEOUTS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  for (const key of Object.keys(base) as (keyof HarnessTimeouts)[]) {
+    const v = rec[key]
+    if (typeof v === 'number' && Number.isFinite(v) && v >= 0) base[key] = v
+  }
+  return base
+}
+
+export function normalizeProjectSettings(raw: unknown): ProjectSettings {
+  const rawSettings = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  // Backwards compat: older canvas files used `default*` names for what are
+  // now `dispatch*` fields. Accept both on read so existing projects keep
+  // working; writes always use the new names.
+  const dispatchRuntime = isAgentRuntime(rawSettings.dispatchRuntime)
+    ? rawSettings.dispatchRuntime
+    : isAgentRuntime(rawSettings.defaultRuntime)
+      ? rawSettings.defaultRuntime
+      : DEFAULT_AGENT_RUNTIME
+  const assistantMode =
+    rawSettings.assistantMode === 'general' ? 'general' : 'architecture'
+  const rawDispatchEffort = rawSettings.dispatchEffort ?? rawSettings.defaultEffort
+  const dispatchEffort = isEffortLevel(rawDispatchEffort) ? rawDispatchEffort : 'medium'
+  const dispatchPlanMode = rawSettings.dispatchPlanMode === true || rawSettings.defaultPlanMode === true
+  const rawDispatchTimeoutMs = rawSettings.dispatchTimeoutMs ?? rawSettings.defaultTimeoutMs
+  const dispatchTimeoutMs =
+    typeof rawDispatchTimeoutMs === 'number' && rawDispatchTimeoutMs >= 0
+      ? rawDispatchTimeoutMs
+      : DEFAULT_ZONE_TIMEOUT_MS
+
+  const assistantModels = normalizeAssistantModels(rawSettings.assistantModels)
+  const assistantRuntimeByMode = normalizeAssistantRuntimeByMode(rawSettings.assistantRuntimeByMode, rawSettings.assistantRuntime)
+  const assistantLastSessionByMode = normalizeAssistantLastSessionByMode(rawSettings.assistantLastSessionByMode)
+
+  const rawDispatchModels = rawSettings.dispatchModels ?? rawSettings.defaultModels
+  const rawDispatchTools = rawSettings.dispatchTools ?? rawSettings.defaultTools
 
   return {
-    label: typeof rawData.label === "string" ? rawData.label : "Node",
-    description:
-      typeof rawData.description === "string" ? rawData.description : "",
-    category: (rawData.category as ArchitectNodeData["category"]) ?? "services",
-    iconName:
-      typeof rawData.iconName === "string" ? rawData.iconName : "Settings2",
-    color: typeof rawData.color === "string" ? rawData.color : "#60a5fa",
-    tag: typeof rawData.tag === "string" ? rawData.tag : "NODE",
-    status: (rawData.status as ArchitectNodeData["status"]) ?? "idle",
-    prompt: typeof rawData.prompt === "string" ? rawData.prompt : "",
-    additionalChanges:
-      typeof rawData.additionalChanges === "string"
-        ? rawData.additionalChanges
-        : defaultConfig.additionalChanges,
-    ownedPaths: Array.isArray(rawData.ownedPaths)
-      ? rawData.ownedPaths.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : defaultConfig.ownedPaths,
-    expectedFiles: Array.isArray(rawData.expectedFiles)
-      ? rawData.expectedFiles.filter(
-          (value): value is string => typeof value === "string",
-        )
-      : defaultConfig.expectedFiles,
-    contracts:
-      typeof rawData.contracts === "string"
-        ? rawData.contracts
-        : defaultConfig.contracts,
-    reviewHints:
-      typeof rawData.reviewHints === "string"
-        ? rawData.reviewHints
-        : defaultConfig.reviewHints,
-    agentRuntimeMode: isAgentRuntimeMode(rawData.agentRuntimeMode)
-      ? rawData.agentRuntimeMode
-      : defaultConfig.agentRuntimeMode,
+    dispatchRuntime,
+    assistantMode,
+    dispatchModels: normalizeDispatchModels(rawDispatchModels),
+    ...(assistantModels ? { assistantModels } : {}),
+    ...(assistantRuntimeByMode ? { assistantRuntimeByMode } : {}),
+    ...(assistantLastSessionByMode ? { assistantLastSessionByMode } : {}),
+    dispatchEffort,
+    dispatchPlanMode,
+    dispatchTools: normalizeDispatchTools(rawDispatchTools),
+    dispatchTimeoutMs,
+    harnessTimeouts: normalizeHarnessTimeouts(rawSettings.harnessTimeouts),
+  }
+}
+
+function normalizeAssistantModels(raw: unknown): RuntimeModelMap | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: RuntimeModelMap = {}
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (isAgentRuntime(runtime) && typeof value === 'string' && value.trim()) {
+      map[runtime] = value
+    }
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeAssistantRuntimeByMode(
+  raw: unknown,
+  legacyAssistantRuntime: unknown,
+): Partial<Record<'architecture' | 'general', import('../../../shared/agentRuntimes').AgentRuntime>> | undefined {
+  const map: Partial<Record<'architecture' | 'general', import('../../../shared/agentRuntimes').AgentRuntime>> = {}
+  if (raw && typeof raw === 'object') {
+    for (const [mode, value] of Object.entries(raw as Record<string, unknown>)) {
+      if ((mode === 'architecture' || mode === 'general') && isAgentRuntime(value)) {
+        map[mode] = value
+      }
+    }
+  }
+  // Legacy migration: the prior single `assistantRuntime` field applied to
+  // both modes. Seed both entries so existing projects keep their override.
+  if (Object.keys(map).length === 0 && isAgentRuntime(legacyAssistantRuntime)) {
+    map.architecture = legacyAssistantRuntime
+    map.general = legacyAssistantRuntime
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeAssistantLastSessionByMode(
+  raw: unknown,
+): Partial<Record<'architecture' | 'general', { runtime: import('../../../shared/agentRuntimes').AgentRuntime; sessionId: string; model?: string }>> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: Partial<Record<'architecture' | 'general', { runtime: import('../../../shared/agentRuntimes').AgentRuntime; sessionId: string; model?: string }>> = {}
+  for (const [mode, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (mode !== 'architecture' && mode !== 'general') continue
+    if (!value || typeof value !== 'object') continue
+    const entry = value as Record<string, unknown>
+    if (!isAgentRuntime(entry.runtime)) continue
+    if (typeof entry.sessionId !== 'string' || !entry.sessionId.trim()) continue
+    const model = typeof entry.model === 'string' && entry.model.trim() ? entry.model : undefined
+    map[mode] = { runtime: entry.runtime, sessionId: entry.sessionId, ...(model ? { model } : {}) }
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettings): ZoneNodeData {
+  const defaults = createDefaultZoneAgentConfig(settings)
+  const agentRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : DEFAULT_AGENT_RUNTIME
+
+  // Legacy migration: pre-refactor zones stored their behavior customization under `prompt`.
+  // The field has been renamed to `systemPrompt`; fall back to the old key when present.
+  const systemPrompt = typeof raw.systemPrompt === 'string'
+    ? raw.systemPrompt
+    : typeof raw.prompt === 'string'
+      ? raw.prompt
+      : ''
+
+  return {
+    label: typeof raw.label === 'string' ? raw.label : 'Zone',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    color: typeof raw.color === 'string' ? raw.color : '#58A6FF',
+    status: (raw.status as ZoneNodeData['status']) ?? 'idle',
+    systemPrompt,
+    agentRuntimeMode: isAgentRuntimeMode(raw.agentRuntimeMode) ? raw.agentRuntimeMode : defaults.agentRuntimeMode,
     agentRuntime,
-    providerModels: normalizeProviderModels(rawData, settings.defaultRuntime),
-    openSections: Array.isArray(rawData.openSections)
-      ? (rawData.openSections as string[])
-      : defaultConfig.openSections,
-    skills: Array.isArray(rawData.skills)
-      ? (rawData.skills as ArchitectNodeData["skills"])
-      : defaultConfig.skills,
-    tools:
-      rawData.tools && typeof rawData.tools === "object"
-        ? (rawData.tools as ArchitectNodeData["tools"])
-        : defaultConfig.tools,
-    behavior:
-      rawData.behavior && typeof rawData.behavior === "object"
-        ? (rawData.behavior as ArchitectNodeData["behavior"])
-        : defaultConfig.behavior,
-    permissions:
-      rawData.permissions && typeof rawData.permissions === "object"
-        ? (rawData.permissions as ArchitectNodeData["permissions"])
-        : defaultConfig.permissions,
-    envVars: Array.isArray(rawData.envVars)
-      ? (rawData.envVars as ArchitectNodeData["envVars"])
-      : defaultConfig.envVars,
-    claudeSessionId:
-      typeof rawData.claudeSessionId === "string" && rawData.claudeSessionId
-        ? rawData.claudeSessionId
-        : undefined,
-  };
+    providerModels: normalizeProviderModels(raw, settings.dispatchRuntime),
+    openSections: Array.isArray(raw.openSections) ? (raw.openSections as string[]) : defaults.openSections,
+    skills: Array.isArray(raw.skills) ? (raw.skills as ZoneNodeData['skills']) : defaults.skills,
+    tools: raw.tools && typeof raw.tools === 'object' ? (raw.tools as ZoneNodeData['tools']) : defaults.tools,
+    behavior: raw.behavior && typeof raw.behavior === 'object' ? (raw.behavior as ZoneNodeData['behavior']) : defaults.behavior,
+    permissions: raw.permissions && typeof raw.permissions === 'object'
+      ? (raw.permissions as ZoneNodeData['permissions'])
+      : defaults.permissions,
+    envVars: Array.isArray(raw.envVars) ? (raw.envVars as ZoneNodeData['envVars']) : defaults.envVars,
+  }
+}
+
+function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData {
+  return {
+    label: typeof raw.label === 'string' ? raw.label : 'Component',
+    description: typeof raw.description === 'string' ? raw.description : '',
+    specs: typeof raw.specs === 'string' ? raw.specs : '',
+    category: (raw.category as ComponentNodeData['category']) ?? 'services',
+    iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Settings2',
+    color: typeof raw.color === 'string' ? raw.color : '#60a5fa',
+    tag: typeof raw.tag === 'string' ? raw.tag : 'NODE',
+  }
 }
 
 export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
@@ -208,15 +308,75 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     ? (root.edges as Array<Record<string, unknown>>)
     : [];
 
-  const nodes: ArchitectNodeType[] = rawNodes.map((node, index) => ({
-    id: typeof node.id === "string" ? node.id : `node-${index}`,
-    type: "architectNode",
-    position: (node.position as ArchitectNodeType["position"]) ?? {
-      x: 80 + index * 280,
-      y: 80,
-    },
-    data: normalizeNodeData(node.data, settings),
-  }));
+  const nodes: CanvasNode[] = []
+
+  // Path A — legacy "architectNode" save: one zone overlaying a single component, both at absolute positions
+  const isLegacy = rawNodes.length > 0 && rawNodes.every(node => node.type === 'architectNode' || !node.type)
+
+  if (isLegacy) {
+    rawNodes.forEach((node, index) => {
+      const id = typeof node.id === 'string' ? node.id : `node-${index}`
+      const position = (node.position as { x: number; y: number }) ?? { x: 80 + index * 360, y: 80 }
+      const rawData = node.data && typeof node.data === 'object' ? (node.data as Record<string, unknown>) : {}
+      const zonePos = { x: position.x - 20, y: position.y - 40 }
+      nodes.push({
+        id: `zone-${id}`,
+        type: 'zone',
+        position: zonePos,
+        data: normalizeZoneData(rawData, settings),
+        width: 280,
+        height: 200,
+        zIndex: 0,
+      })
+      nodes.push({
+        id,
+        type: 'component',
+        position: { x: zonePos.x + 20, y: zonePos.y + 48 },
+        data: normalizeComponentData(rawData),
+        zIndex: 1,
+      })
+    })
+  } else {
+    // Path B — new format: zones + components. Resolve any legacy parentId/extent to absolute positions.
+    const zonePositionById = new Map<string, { x: number; y: number }>()
+    for (const node of rawNodes) {
+      if (node.type === 'zone' && typeof node.id === 'string') {
+        const pos = (node.position as { x: number; y: number }) ?? { x: 0, y: 0 }
+        zonePositionById.set(node.id, pos)
+      }
+    }
+
+    rawNodes.forEach((node, index) => {
+      const id = typeof node.id === 'string' ? node.id : `node-${index}`
+      const position = (node.position as { x: number; y: number }) ?? { x: 80 + index * 280, y: 80 }
+      const rawData = node.data && typeof node.data === 'object' ? (node.data as Record<string, unknown>) : {}
+
+      if (node.type === 'zone') {
+        nodes.push({
+          id,
+          type: 'zone',
+          position,
+          data: normalizeZoneData(rawData, settings),
+          width: typeof node.width === 'number' ? node.width : 320,
+          height: typeof node.height === 'number' ? node.height : 220,
+          zIndex: 0,
+        })
+      } else {
+        const parentId = typeof node.parentId === 'string' ? node.parentId : undefined
+        const parentPos = parentId ? zonePositionById.get(parentId) : undefined
+        const absolutePosition = parentPos
+          ? { x: parentPos.x + position.x, y: parentPos.y + position.y }
+          : position
+        nodes.push({
+          id,
+          type: 'component',
+          position: absolutePosition,
+          data: normalizeComponentData(rawData),
+          zIndex: 1,
+        })
+      }
+    })
+  }
 
   const edges: Edge[] = rawEdges.map((edge, index) => ({
     id: typeof edge.id === "string" ? edge.id : `edge-${index}`,
