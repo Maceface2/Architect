@@ -11,7 +11,6 @@ import {
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
   isAgentRuntime,
-  isAgentRuntimeMode,
   isAssistantMode,
   isEffortLevel,
   type AgentRuntime,
@@ -21,6 +20,7 @@ import {
 import {
   appendZoneSession,
   deleteZoneSession,
+  ensureClaudeProjectTrusted,
   getZoneSessionRecord,
   listZoneSessions,
   updateZoneSessionSummary,
@@ -249,6 +249,7 @@ export interface ZoneGraphNode {
   width?: number
   height?: number
   data: {
+    participantId?: string
     label: string
     description: string
     color?: string
@@ -625,6 +626,11 @@ export function spawnAgentSession({
     : null
 
   const spawnArgs = buildRuntimeArgs(runtime, initialPrompt, model, resumeSessionId, skipPermissions, planMode, appendSystemPrompt, effort)
+  // Skip the "trust this folder?" TUI prompt on first launch in a new cwd.
+  // That dialog blocks claude from writing its session jsonl, which in turn
+  // makes captureNewClaudeSession poll to timeout and freezes fresh spawns
+  // (e.g. first assistant load in a brand-new project dir).
+  if (runtime === 'claude') ensureClaudeProjectTrusted(cwd)
   console.log(`[spawn] ${runtime} (zone=${id}) cwd=${cwd} cmd=${bin} args=${JSON.stringify(spawnArgs)}${resumeSessionId ? ' [RESUME]' : ''}`)
   const ptyProcess = pty.spawn(bin, spawnArgs, {
     name: 'xterm-256color',
@@ -708,13 +714,21 @@ export function spawnAgentSession({
   return { id, label, runtime, ...(coordinatedMode ? { coordinatedMode: true } : {}) }
 }
 
-export function spawnShellSession(win: BrowserWindow, cwd: string): TerminalInfo {
-  const existing = Array.from(sessions.keys()).find(k => k.startsWith(SHELL_ID_PREFIX) && k.endsWith(`-${hashCwd(cwd)}`))
-  if (existing) {
-    return { id: existing, label: 'Shell', runtime: 'shell' }
+export function spawnShellSession(
+  win: BrowserWindow,
+  cwd: string,
+  opts?: { force?: boolean },
+): TerminalInfo {
+  const cwdSuffix = `-${hashCwd(cwd)}`
+  const existingForCwd = Array.from(sessions.keys()).filter(
+    k => k.startsWith(SHELL_ID_PREFIX) && k.endsWith(cwdSuffix),
+  )
+  if (!opts?.force && existingForCwd.length > 0) {
+    const id = existingForCwd[0]
+    return { id, label: 'Shell', runtime: 'shell' }
   }
 
-  const id = `${SHELL_ID_PREFIX}${Date.now()}-${hashCwd(cwd)}`
+  const id = `${SHELL_ID_PREFIX}${Date.now()}-${Math.random().toString(36).slice(2, 6)}${cwdSuffix}`
   const shell = process.env.SHELL || '/bin/zsh'
   const ptyProcess = pty.spawn(shell, ['-l'], {
     name: 'xterm-256color',
@@ -725,7 +739,8 @@ export function spawnShellSession(win: BrowserWindow, cwd: string): TerminalInfo
   })
 
   createSession(win, id, ptyProcess, undefined, { kind: 'shell', runtime: 'shell' })
-  return { id, label: 'Shell', runtime: 'shell' }
+  const label = existingForCwd.length > 0 ? `Shell ${existingForCwd.length + 1}` : 'Shell'
+  return { id, label, runtime: 'shell' }
 }
 
 function hashCwd(cwd: string): string {
@@ -850,11 +865,11 @@ export function topoSort(nodes: ZoneGraphNode[], edges: GraphEdge[]): ZoneGraphN
 }
 
 export function getZoneRuntime(zone: ZoneGraphNode, settings: ProjectSettings): AgentRuntime {
-  return isAgentRuntimeMode(zone.data.agentRuntimeMode)
-    && zone.data.agentRuntimeMode === 'override'
-    && isAgentRuntime(zone.data.agentRuntime)
-    ? zone.data.agentRuntime
-    : settings.dispatchRuntime
+  // Flat runtime: the zone's stored agentRuntime is the single source of truth.
+  // (Legacy `agentRuntimeMode` is normalized away in the renderer's
+  // normalizeZoneData, so it never reaches here on a modern load. Falling back
+  // to dispatchRuntime covers zones that somehow arrive without a runtime.)
+  return isAgentRuntime(zone.data.agentRuntime) ? zone.data.agentRuntime : settings.dispatchRuntime
 }
 
 export function getZoneModel(zone: ZoneGraphNode, runtime: AgentRuntime): string {
@@ -1016,6 +1031,35 @@ export function serializeAgentSpawn<T>(task: () => Promise<T>): Promise<T> {
   return p
 }
 
+// Same queue semantics as serializeAgentSpawn, but resolves the returned
+// promise as soon as the PTY is up ({info}) rather than waiting for capture
+// to settle. The queue itself still waits on captureSettled before releasing
+// the next spawn — that's what prevents two concurrent capture polls from
+// racing on the shared ~/.claude/projects/<cwd> directory.
+//
+// Use this for user-facing entry points (startAssistant, runZone) so the
+// renderer unfreezes the instant the terminal exists. Capture continues in
+// the background and upserts the session record when the file lands.
+export function serializeAgentSpawnEarlyRelease<T>(
+  task: () => Promise<{ info: T; captureSettled: Promise<unknown> }>,
+): Promise<T> {
+  return new Promise<T>((resolveOuter, rejectOuter) => {
+    const run = globalAgentSpawnQueue.then(async () => {
+      let handed = false
+      try {
+        const { info, captureSettled } = await task()
+        resolveOuter(info)
+        handed = true
+        await captureSettled.catch(() => undefined)
+      } catch (err) {
+        if (!handed) rejectOuter(err)
+        // swallow — keep queue chain alive
+      }
+    })
+    globalAgentSpawnQueue = run.then(() => undefined, () => undefined)
+  })
+}
+
 export function startAssistant(
   win: BrowserWindow,
   projectDir: string,
@@ -1024,7 +1068,7 @@ export function startAssistant(
   mode: AssistantMode,
   opts?: StartAssistantOpts,
 ): Promise<TerminalInfo> {
-  return serializeAgentSpawn(
+  return serializeAgentSpawnEarlyRelease(
     () => doStartAssistant(win, projectDir, contextMd, runtime, mode, opts),
   )
 }
@@ -1036,7 +1080,7 @@ async function doStartAssistant(
   runtime: AgentRuntime,
   mode: AssistantMode,
   opts?: StartAssistantOpts,
-): Promise<TerminalInfo> {
+): Promise<{ info: TerminalInfo; captureSettled: Promise<unknown> }> {
   const safeMode: AssistantMode = isAssistantMode(mode) ? mode : 'architecture'
   const sessionId = ASSISTANT_SESSION_IDS[safeMode]
   const zoneKey = ASSISTANT_ZONES[safeMode]
@@ -1060,9 +1104,12 @@ async function doStartAssistant(
   const existing = sessions.get(sessionId)
   if (existing && !opts?.force) {
     return {
-      id: sessionId,
-      label: ASSISTANT_LABELS[safeMode],
-      runtime: existing.runtime,
+      info: {
+        id: sessionId,
+        label: ASSISTANT_LABELS[safeMode],
+        runtime: existing.runtime,
+      },
+      captureSettled: Promise.resolve(),
     }
   }
   if (existing) {
@@ -1094,12 +1141,9 @@ async function doStartAssistant(
     `${opts ? ' (explicit)' : ''}`,
   )
 
-  // Fresh spawns arm session capture and need to settle before we return —
-  // otherwise the next queued startAssistant's snapshot may not yet include
-  // this spawn's new session file. Resumes have no capture armed, so they
-  // return as soon as spawnAgentSession synchronously hands back info.
+  // Resumes don't arm capture — return info immediately, no settle to wait on.
   if (resumeSessionId) {
-    return spawnAgentSession({
+    const info = spawnAgentSession({
       win,
       id: sessionId,
       label: ASSISTANT_LABELS[safeMode],
@@ -1112,45 +1156,38 @@ async function doStartAssistant(
       capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
       skipPermissions: false,
     })
+    return { info, captureSettled: Promise.resolve() }
   }
 
-  return await new Promise<TerminalInfo>((resolve, reject) => {
-    let returned: TerminalInfo | null = null
-    let settled = false
-    const done = (): void => {
-      if (settled || !returned) return
-      settled = true
-      resolve(returned)
-    }
-    const timer = setTimeout(() => {
-      console.warn(
-        `[assistant] capture for mode=${safeMode} did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`,
-      )
-      done()
-    }, CAPTURE_SERIAL_TIMEOUT_MS)
+  // Fresh spawn: hand `info` back as soon as the PTY is up; the queue still
+  // holds for captureSettled so concurrent starts don't race on the shared
+  // ~/.claude/projects/<cwd> dir. Renderer unblocks immediately.
+  let settleResolve!: () => void
+  const captureSettled = new Promise<void>(r => { settleResolve = r })
+  const timer = setTimeout(() => {
+    console.warn(
+      `[assistant] capture for mode=${safeMode} did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`,
+    )
+    settleResolve()
+  }, CAPTURE_SERIAL_TIMEOUT_MS)
 
-    try {
-      returned = spawnAgentSession({
-        win,
-        id: sessionId,
-        label: ASSISTANT_LABELS[safeMode],
-        runtime: safeRuntime,
-        env: {},
-        cwd: projectDir,
-        initialPrompt,
-        model,
-        capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
-        skipPermissions: false,
-        onCaptureSettled: () => {
-          clearTimeout(timer)
-          done()
-        },
-      })
-    } catch (err) {
+  const info = spawnAgentSession({
+    win,
+    id: sessionId,
+    label: ASSISTANT_LABELS[safeMode],
+    runtime: safeRuntime,
+    env: {},
+    cwd: projectDir,
+    initialPrompt,
+    model,
+    capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
+    skipPermissions: false,
+    onCaptureSettled: () => {
       clearTimeout(timer)
-      reject(err)
-    }
+      settleResolve()
+    },
   })
+  return { info, captureSettled }
 }
 
 // Tears down a single assistant mode's PTY. Used by the launcher modal when
@@ -1242,7 +1279,12 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const zone = zones.find(z => z.id === opts.zoneId)
   if (!zone) return { ok: false, reason: 'zone-not-found' }
 
-  const safe = sanitize(zone.data.label)
+  // Prefer the canvas-minted stable id; fall back to a label-derived key
+  // when the caller hasn't been upgraded yet (e.g. hand-crafted graph in a
+  // test). The fallback is not dedup-aware because solo runZone only
+  // touches one zone.
+  const safe = (zone.data.participantId && zone.data.participantId.trim())
+    || sanitize(zone.data.label)
   const base = join(opts.projectDir, 'ARCHITECT')
   for (const dir of ['outputs', 'prompts', 'sessions', 'dispatches'].map(n => join(base, n))) {
     fs.mkdirSync(dir, { recursive: true })
@@ -1329,49 +1371,40 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const initialPrompt = composed.firstUserPrompt
   const appendForRuntime = composed.appendSystemPromptFlag
 
-  const info = await serializeAgentSpawn(() => new Promise<TerminalInfo>((resolve, reject) => {
-    let returned: TerminalInfo | null = null
-    let settled = false
-    const done = (): void => {
-      if (settled || !returned) return
-      settled = true
-      resolve(returned)
-    }
+  const info = await serializeAgentSpawnEarlyRelease(async () => {
+    let settleResolve!: () => void
+    const captureSettled = new Promise<void>(r => { settleResolve = r })
     const timer = setTimeout(() => {
       console.warn(`[runZone] "${zone.data.label}" capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms — moving on; late capture will still upsert if it arrives`)
-      done()
+      settleResolve()
     }, CAPTURE_SERIAL_TIMEOUT_MS)
 
-    try {
-      returned = spawnAgentSession({
-        win,
-        id: zone.id,
-        label: zone.data.label,
-        runtime,
-        env,
-        cwd: opts.projectDir,
-        initialPrompt,
-        appendSystemPrompt: appendForRuntime,
-        model,
-        planMode: opts.planMode === true,
-        effort: settings.dispatchEffort,
-        skipPermissions: false,
-        capture: {
-          projectDir: opts.projectDir,
-          zoneKey: zone.id,
-          legacyKey: safe,
-          summary,
-        },
-        onCaptureSettled: () => {
-          clearTimeout(timer)
-          done()
-        },
-      })
-    } catch (err) {
-      clearTimeout(timer)
-      reject(err)
-    }
-  }))
+    const returned = spawnAgentSession({
+      win,
+      id: zone.id,
+      label: zone.data.label,
+      runtime,
+      env,
+      cwd: opts.projectDir,
+      initialPrompt,
+      appendSystemPrompt: appendForRuntime,
+      model,
+      planMode: opts.planMode === true,
+      effort: settings.dispatchEffort,
+      skipPermissions: false,
+      capture: {
+        projectDir: opts.projectDir,
+        zoneKey: zone.id,
+        legacyKey: safe,
+        summary,
+      },
+      onCaptureSettled: () => {
+        clearTimeout(timer)
+        settleResolve()
+      },
+    })
+    return { info: returned, captureSettled }
+  })
   broadcast('terminal:spawned', info)
   return { ok: true, info }
 }

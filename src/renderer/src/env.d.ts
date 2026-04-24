@@ -31,7 +31,7 @@ interface ElectronAPI {
     edges: unknown[],
     cwd: string,
     settings: ProjectSettings,
-    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: AgentRuntime },
     dispatchContext?: unknown
   ) => Promise<TerminalInfo[]>
   dispatches: {
@@ -69,7 +69,7 @@ interface ElectronAPI {
     updateSessionSummary: (projectDir: string, mode: AssistantMode, sessionId: string, summary: string) => Promise<boolean>
   }
   terminal: {
-    spawnShell: (cwd: string) => Promise<TerminalInfo | null>
+    spawnShell: (cwd: string, opts?: { force?: boolean }) => Promise<TerminalInfo | null>
     input: (id: string, data: string) => void
     resize: (id: string, cols: number, rows: number) => void
     killAll: () => void

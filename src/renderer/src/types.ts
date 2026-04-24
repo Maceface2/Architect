@@ -1,5 +1,5 @@
 import type { Node } from '@xyflow/react'
-import type { AgentRuntime, AgentRuntimeMode, AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
+import type { AgentRuntime, AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 export type { AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 
 export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'custom'
@@ -57,8 +57,14 @@ export interface HarnessTimeouts {
 // If you need a new knob for zones/dispatch, add it here; for the assistant,
 // add a matching `assistant*` field in AssistantSettings.
 export interface DispatchSettings {
-  // The CLI used by zones and multi-zone dispatches.
+  // Canvas-default CLI for zones. Picking this in the Settings page bulk-
+  // applies it to every zone on the canvas; zones can still override via
+  // AgentConfigModal. Also seeds newly dragged zones.
   dispatchRuntime: AgentRuntime
+  // Last-used Orchestrator CLI for multi-zone dispatch. Chosen per dispatch
+  // in the DispatchModal dropdown; persisted here so the next dispatch pre-
+  // selects it. Absence falls back to `dispatchRuntime`.
+  conductorRuntime?: AgentRuntime
   // Per-CLI default model for zones/dispatch. Seeds new zones + pre-fills
   // the Dispatch model picker.
   dispatchModels: RuntimeModelMap
@@ -105,12 +111,22 @@ export type RuntimeModelMap = Partial<Record<AgentRuntime, string>>
 
 // A zone is the agent. It owns a bounded canvas area and drives a single PTY.
 export interface ZoneNodeData {
+  // Immutable identifier used by the orchestrator for activity-log filenames,
+  // state-file keys, prompt filenames, and in conductor/zone decision JSON.
+  // Minted from the initial label at zone creation, made unique across the
+  // canvas, and never changes afterwards — renames update `label` only so
+  // on-disk artifacts and live dispatch coordination stay addressable.
+  participantId: string
   label: string
   description: string
   color: string
   status: NodeStatus
   systemPrompt: string
-  agentRuntimeMode: AgentRuntimeMode
+  // Effective CLI this zone runs under. Seeded from settings.dispatchRuntime
+  // at zone creation; user overrides via AgentConfigModal write here directly.
+  // Legacy canvases also carried `agentRuntimeMode: 'inherit' | 'override'` —
+  // that field is no longer read; the flat `agentRuntime` is the single
+  // source of truth. (normalizeZoneData strips the legacy field on load.)
   agentRuntime: AgentRuntime
   providerModels: RuntimeModelMap
   openSections: string[]
@@ -161,6 +177,7 @@ export type DispatchRequest =
       model: string
       planMode: boolean
       onlyZoneIds: string[]
+      conductorRuntime: AgentRuntime
     }
   | {
       mode: 'resume'

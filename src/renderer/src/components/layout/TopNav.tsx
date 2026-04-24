@@ -1,4 +1,4 @@
-import { Zap, Loader2, FolderOpen, Save, Bot } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2 } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -16,9 +16,13 @@ interface TopNavProps {
   assistantOpen: boolean
   isRedispatch: boolean
   changedCount: number
+  onUndo: () => void
+  onRedo: () => void
+  canUndo: boolean
+  canRedo: boolean
 }
 
-const TABS = ['Canvas', 'Files', 'Terminal', 'Preview', 'Settings']
+const TABS = ['Canvas', 'Files', 'Terminal', 'Settings']
 
 function ArchitectLogo() {
   return (
@@ -38,6 +42,7 @@ export default function TopNav({
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir, onSave, isDirty,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
+  onUndo, onRedo, canUndo, canRedo,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -81,6 +86,26 @@ export default function TopNav({
 
       <div className="flex items-center gap-2">
         <span className="text-xs text-slate-600 mr-1">v0.1.0</span>
+        <div className="flex items-center">
+          <button
+            onClick={onUndo}
+            disabled={!canUndo}
+            className="flex items-center justify-center w-8 h-7 text-slate-300 border border-node-border rounded-l hover:bg-node transition-colors disabled:opacity-30 disabled:pointer-events-none"
+            title="Undo (⌘Z)"
+            aria-label="Undo"
+          >
+            <Undo2 size={13} />
+          </button>
+          <button
+            onClick={onRedo}
+            disabled={!canRedo}
+            className="flex items-center justify-center w-8 h-7 text-slate-300 border border-l-0 border-node-border rounded-r hover:bg-node transition-colors disabled:opacity-30 disabled:pointer-events-none"
+            title="Redo (⇧⌘Z)"
+            aria-label="Redo"
+          >
+            <Redo2 size={13} />
+          </button>
+        </div>
         <button
           onClick={onSave}
           className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"

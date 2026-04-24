@@ -28,13 +28,18 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   const zoneCount = zones.length
   const projectDir = useProjectDir()
   const projectSettings = useProjectSettings()
-  const dispatchRuntime: AgentRuntime = projectSettings.dispatchRuntime
-  const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === dispatchRuntime) ?? AGENT_RUNTIMES[0]
 
   const [tab, setTab] = useState<Tab>('new')
   const [prompt, setPrompt] = useState(prefillPrompt ?? '')
+  // Orchestrator (Conductor) CLI: defaults to last-used (persisted) or the
+  // canvas default on first run. Local state so the user can re-pick per
+  // dispatch without mutating settings until submit.
+  const [conductorRuntime, setConductorRuntime] = useState<AgentRuntime>(
+    projectSettings.conductorRuntime ?? projectSettings.dispatchRuntime
+  )
+  const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === conductorRuntime) ?? AGENT_RUNTIMES[0]
   const [model, setModel] = useState<string>(
-    projectSettings.dispatchModels[dispatchRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
+    projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
   )
   const [planMode, setPlanMode] = useState(projectSettings.dispatchPlanMode)
   const [selectedZoneIds, setSelectedZoneIds] = useState<Set<string>>(() => new Set(zones.map(z => z.id)))
@@ -52,6 +57,13 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   useEffect(() => {
     if (tab === 'new') promptRef.current?.focus()
   }, [tab])
+
+  // Keep the model picker coherent with the Orchestrator CLI: when the user
+  // swaps runtimes, reset `model` to that runtime's configured default so
+  // stale Codex-model strings don't leak into a Claude dispatch.
+  useEffect(() => {
+    setModel(projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime])
+  }, [conductorRuntime, projectSettings.dispatchModels])
 
   const reload = useCallback(async () => {
     if (!projectDir) return
@@ -89,6 +101,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
       model,
       planMode,
       onlyZoneIds: Array.from(selectedZoneIds),
+      conductorRuntime,
     })
   }
 
@@ -205,6 +218,25 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white resize-y focus:outline-none focus:border-accent"
               />
               <p className="text-[11px] text-slate-500 mt-1">Cmd/Ctrl+Enter to dispatch.</p>
+            </div>
+
+            <div>
+              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+                Orchestrator CLI
+                <span className="ml-1 text-[10px] text-slate-500 uppercase tracking-wider">Conductor</span>
+              </label>
+              <select
+                value={conductorRuntime}
+                onChange={e => setConductorRuntime(e.target.value as AgentRuntime)}
+                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-accent"
+              >
+                {AGENT_RUNTIMES.map(r => (
+                  <option key={r.id} value={r.id}>{r.label}</option>
+                ))}
+              </select>
+              <p className="text-[11px] text-slate-500 mt-1">
+                Runs the multi-zone Conductor. Zones keep their individually configured CLIs.
+              </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">

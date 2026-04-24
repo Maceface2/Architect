@@ -24,8 +24,53 @@ export interface ZoneSessionRecord {
 export type ZoneSession = ZoneSessionRecord
 
 const CLAUDE_PROJECTS_ROOT = join(os.homedir(), '.claude', 'projects')
+const CLAUDE_CONFIG_PATH = join(os.homedir(), '.claude.json')
 const SESSIONS_SUBDIR = 'sessions'
 const MAX_ZONE_SESSIONS = 20
+
+// On a directory Claude Code has never seen, the TUI opens with a "Do you
+// trust the files in this folder?" prompt and blocks session-file creation
+// until dismissed — which makes our capture poll time out and freezes the
+// UI for the full CAPTURE_SERIAL_TIMEOUT_MS window. Pre-seeding the trust
+// flag for the project in ~/.claude.json sidesteps the dialog entirely for
+// Architect-managed cwds, without weakening per-edit permission prompts.
+// Best-effort: any read/parse/write failure is swallowed — worst case is
+// the pre-fix behavior.
+export function ensureClaudeProjectTrusted(cwd: string): void {
+  let config: Record<string, unknown> = {}
+  try {
+    const raw = fs.readFileSync(CLAUDE_CONFIG_PATH, 'utf-8')
+    config = JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    // File missing or unreadable — start from empty; claude will fill in
+    // the rest on first launch.
+  }
+  const projects = (config.projects as Record<string, Record<string, unknown>> | undefined) ?? {}
+  const existing = projects[cwd]
+  if (existing && existing.hasTrustDialogAccepted === true) return
+  projects[cwd] = {
+    allowedTools: [],
+    mcpContextUris: [],
+    mcpServers: {},
+    enabledMcpjsonServers: [],
+    disabledMcpjsonServers: [],
+    hasTrustDialogAccepted: true,
+    projectOnboardingSeenCount: 1,
+    hasClaudeMdExternalIncludesApproved: false,
+    hasClaudeMdExternalIncludesWarningShown: false,
+    ...(existing ?? {}),
+    hasTrustDialogAccepted: true,
+  }
+  config.projects = projects
+  try {
+    const tmp = `${CLAUDE_CONFIG_PATH}.architect.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2))
+    fs.renameSync(tmp, CLAUDE_CONFIG_PATH)
+  } catch {
+    // Another claude instance may have rewritten the file concurrently.
+    // Dropping the update is safe — the dialog just shows once.
+  }
+}
 
 // Claude Code stores per-project sessions at ~/.claude/projects/<sanitized-cwd>/<uuid>.jsonl.
 // Claude replaces any character outside [A-Za-z0-9_-] (slashes, spaces, dots, etc.) with a dash.

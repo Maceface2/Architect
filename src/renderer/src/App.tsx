@@ -40,6 +40,7 @@ import {
   createDefaultZoneAgentConfig,
   createDefaultProjectSettings,
   migrateCanvasData,
+  mintParticipantId,
 } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
@@ -86,6 +87,7 @@ function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges
     height: 360,
     zIndex: 0,
     data: {
+      participantId: mintParticipantId('Backend Platform', new Set()),
       label: 'Backend Platform',
       description: 'API + auth + storage',
       color: '#58A6FF',
@@ -613,23 +615,30 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       snapshotHistory()
 
       if (item.kind === 'zone') {
-        const newZone: ZoneNodeType = {
-          id: `zone-${Date.now()}`,
-          type: 'zone',
-          position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
-          width: ZONE_DEFAULT_WIDTH,
-          height: ZONE_DEFAULT_HEIGHT,
-          zIndex: 0,
-          data: {
-            label: 'New Zone',
-            description: '',
-            color: '#58A6FF',
-            status: 'idle',
-            systemPrompt: '',
-            ...createDefaultZoneAgentConfig(projectSettings),
-          },
-        }
-        setNodes(nds => [...nds, newZone])
+        setNodes(nds => {
+          const usedParticipantIds = new Set<string>()
+          for (const n of nds) {
+            if (n.type === 'zone') usedParticipantIds.add((n.data as ZoneNodeData).participantId)
+          }
+          const newZone: ZoneNodeType = {
+            id: `zone-${Date.now()}`,
+            type: 'zone',
+            position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
+            width: ZONE_DEFAULT_WIDTH,
+            height: ZONE_DEFAULT_HEIGHT,
+            zIndex: 0,
+            data: {
+              participantId: mintParticipantId('New Zone', usedParticipantIds),
+              label: 'New Zone',
+              description: '',
+              color: '#58A6FF',
+              status: 'idle',
+              systemPrompt: '',
+              ...createDefaultZoneAgentConfig(projectSettings),
+            },
+          }
+          return [...nds, newZone]
+        })
         setIsDirty(true)
         return
       }
@@ -961,6 +970,13 @@ Only discuss and advise without editing the file when the user is asking for cri
     }
 
     const activeSettings = settingsRef.current
+    // Seed dedup set with the participantIds of zones that survive this
+    // patch (same id in rawZones). Zones being removed don't reserve theirs.
+    const survivingIds = new Set(rawZones.map(r => String(r.id ?? '')).filter(Boolean))
+    const participantIdsInUse = new Set<string>()
+    for (const z of existingZones) {
+      if (survivingIds.has(z.id)) participantIdsInUse.add((z.data as ZoneNodeData).participantId)
+    }
     const newZones: ZoneNodeType[] = rawZones.map((raw, i) => {
       const id = String(raw.id ?? `gen-zone-${Date.now()}-${i}`)
       const existing = existingZoneById.get(id)
@@ -970,6 +986,15 @@ Only discuss and advise without editing the file when the user is asking for cri
       }
       const width = readDim(raw, 'width', existing?.width ?? ZONE_DEFAULT_WIDTH)
       const height = readDim(raw, 'height', existing?.height ?? ZONE_DEFAULT_HEIGHT)
+      const label = String(raw.label ?? 'Zone')
+      // Preserve the existing zone's participantId across assistant patches
+      // so live dispatches / on-disk activity logs stay addressable; mint a
+      // fresh one for brand-new zones the assistant is introducing.
+      let participantId = existing?.data.participantId ?? ''
+      if (!participantId) {
+        participantId = mintParticipantId(label, participantIdsInUse)
+        participantIdsInUse.add(participantId)
+      }
       return {
         id,
         type: 'zone',
@@ -978,7 +1003,8 @@ Only discuss and advise without editing the file when the user is asking for cri
         height,
         zIndex: 0,
         data: {
-          label: String(raw.label ?? 'Zone'),
+          participantId,
+          label,
           description: String(raw.description ?? ''),
           color: String(raw.color ?? '#58A6FF'),
           status: 'idle',

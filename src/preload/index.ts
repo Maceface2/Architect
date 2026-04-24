@@ -25,7 +25,7 @@ contextBridge.exposeInMainWorld('electron', {
     edges: unknown[],
     cwd: string,
     settings: unknown,
-    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[] },
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: string },
     dispatchContext?: unknown,
   ) =>
     ipcRenderer.invoke('dispatch:start', nodes, edges, cwd, settings, dispatch, dispatchContext),
@@ -84,8 +84,8 @@ contextBridge.exposeInMainWorld('electron', {
 
   // Terminal I/O
   terminal: {
-    spawnShell: (cwd: string) =>
-      ipcRenderer.invoke('terminal:spawn-shell', cwd),
+    spawnShell: (cwd: string, opts?: { force?: boolean }) =>
+      ipcRenderer.invoke('terminal:spawn-shell', cwd, opts),
 
     input: (id: string, data: string) =>
       ipcRenderer.send('terminal:input', id, data),

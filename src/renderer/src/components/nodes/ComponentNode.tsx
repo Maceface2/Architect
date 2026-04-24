@@ -1,7 +1,7 @@
 import { memo, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
-import { FileText } from 'lucide-react'
+import { FileText, Trash2 } from 'lucide-react'
 import { getIcon } from '../../lib/icons'
 import ComponentConfigModal from './ComponentConfigModal'
 import type { ComponentNodeData } from '../../types'
@@ -9,7 +9,7 @@ import type { ComponentNodeData } from '../../types'
 type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 
 function ComponentNode({ id, data }: ComponentNodeProps) {
-  const { setNodes } = useReactFlow()
+  const { setNodes, deleteElements } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
 
   const color = data.color
@@ -56,16 +56,27 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           )}
         </div>
 
-        {/* Edit button — absolute, pointer-events: auto */}
-        <button
-          onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
-          onMouseDown={(e) => e.stopPropagation()}
-          className="absolute top-1 right-1 w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-white hover:bg-white/10 transition-colors nodrag"
-          title="Edit component"
-          aria-label="Edit component"
-        >
-          <FileText size={11} />
-        </button>
+        {/* Edit + delete buttons — absolute, pointer-events: auto */}
+        <div className="absolute top-1 right-1 flex items-center gap-0.5">
+          <button
+            onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-white hover:bg-white/10 transition-colors nodrag"
+            title="Edit component"
+            aria-label="Edit component"
+          >
+            <FileText size={11} />
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }) }}
+            onMouseDown={(e) => e.stopPropagation()}
+            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
+            title="Delete component"
+            aria-label="Delete component"
+          >
+            <Trash2 size={11} />
+          </button>
+        </div>
       </div>
 
       <Handle

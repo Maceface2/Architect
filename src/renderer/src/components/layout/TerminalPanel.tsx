@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { AlertTriangle, ExternalLink, Lock, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Lock, Plus, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -222,6 +222,7 @@ function PaneView({
   onPopout,
   onClose,
   onResume,
+  onNewShell,
   paneCount,
 }: {
   pane: PaneNode
@@ -238,6 +239,7 @@ function PaneView({
   onPopout: (info: TerminalInfo) => void
   onClose: (tabId: string) => void
   onResume: (info: TerminalInfo) => void
+  onNewShell: () => void
   paneCount: number
 }) {
   const [dropHint, setDropHint] = useState<DropEdge | null>(null)
@@ -346,7 +348,7 @@ function PaneView({
                     <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Conductor-controlled" />
                   )}
                   <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
-                    {isShell ? 'Shell' : isConductor ? '⬡ Conductor' : s.label}
+                    {isShell ? (s.label || 'Shell') : isConductor ? '⬡ Conductor' : s.label}
                   </span>
                   {runtime && (
                     <span
@@ -407,6 +409,14 @@ function PaneView({
         {tabDropIdx === pane.tabs.length && (
           <div className="w-0.5 self-stretch bg-[#58A6FF]" />
         )}
+        <button
+          onClick={onNewShell}
+          className="flex items-center justify-center w-7 h-7 ml-1 rounded text-slate-500 hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
+          title="New shell"
+          aria-label="New shell"
+        >
+          <Plus size={13} />
+        </button>
       </div>
 
       <div
@@ -499,7 +509,7 @@ function LayoutRenderer({
 }
 
 export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot }: Props) {
-  const [shellSession, setShellSession] = useState<TerminalInfo | null>(null)
+  const [shellSessions, setShellSessions] = useState<TerminalInfo[]>([])
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
   const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
   const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
@@ -567,20 +577,33 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     return () => { cancelled = true }
   }, [sessions.map(s => s.id).join('|')])
 
-  // Spawn shell once per project.
+  // Spawn a default shell once per project. Dedup on the main side keeps this
+  // idempotent across re-renders; user-initiated "+" presses use force:true.
   useEffect(() => {
     if (!projectDir) return
     let cancelled = false
     window.electron.terminal.spawnShell(projectDir).then(info => {
       if (cancelled || !info) return
-      setShellSession(info)
+      setShellSessions(prev => (prev.some(s => s.id === info.id) ? prev : [...prev, info]))
     })
     return () => { cancelled = true }
   }, [projectDir])
 
+  // Reset shell list when switching projects so stale ids don't linger.
+  useEffect(() => {
+    setShellSessions([])
+  }, [projectDir])
+
+  const handleNewShell = async () => {
+    if (!projectDir) return
+    const info = await window.electron.terminal.spawnShell(projectDir, { force: true })
+    if (!info) return
+    setShellSessions(prev => (prev.some(s => s.id === info.id) ? prev : [...prev, info]))
+  }
+
   const allSessions: TerminalInfo[] = useMemo(
-    () => (shellSession ? [shellSession, ...sessions] : sessions),
-    [shellSession, sessions],
+    () => [...shellSessions, ...sessions],
+    [shellSessions, sessions],
   )
 
   const sessionsById = useMemo(() => {
@@ -761,8 +784,8 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       return next
     })
 
-    if (shellSession && shellSession.id === tabId) {
-      setShellSession(null)
+    if (shellSessions.some(s => s.id === tabId)) {
+      setShellSessions(prev => prev.filter(s => s.id !== tabId))
     } else {
       onRemoveSession(tabId)
     }
@@ -794,6 +817,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     onPopout: handlePopout,
     onClose: handleCloseTab,
     onResume: handleResume,
+    onNewShell: handleNewShell,
   }
 
   return (

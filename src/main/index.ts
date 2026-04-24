@@ -263,9 +263,9 @@ ipcMain.handle('assistant:update-session-summary', (_event, projectDir: string, 
   return updateAssistantSessionSummary(projectDir, mode, sessionId, summary)
 })
 
-ipcMain.handle('terminal:spawn-shell', (_event, cwd: string) => {
+ipcMain.handle('terminal:spawn-shell', (_event, cwd: string, opts?: { force?: boolean }) => {
   if (!mainWindow) return null
-  return spawnShellSession(mainWindow, cwd ?? app.getPath('home'))
+  return spawnShellSession(mainWindow, cwd ?? app.getPath('home'), opts)
 })
 
 ipcMain.on('terminal:input', (_event, id: string, data: string) => {

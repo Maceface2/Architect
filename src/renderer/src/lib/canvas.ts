@@ -4,7 +4,6 @@ import {
   DEFAULT_AGENT_RUNTIME,
   DEFAULT_MODEL_BY_RUNTIME,
   isAgentRuntime,
-  isAgentRuntimeMode,
   isEffortLevel,
   type AgentRuntime,
 } from '../../../shared/agentRuntimes'
@@ -60,7 +59,6 @@ export function createDefaultZoneAgentConfig(settings: ProjectSettings = createD
   const runtime = settings.dispatchRuntime
   const seedModel = settings.dispatchModels[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
   return {
-    agentRuntimeMode: 'inherit' as const,
     agentRuntime: runtime,
     providerModels: { [runtime]: seedModel } as RuntimeModelMap,
     openSections: [],
@@ -72,8 +70,35 @@ export function createDefaultZoneAgentConfig(settings: ProjectSettings = createD
   }
 }
 
-export function createDefaultZoneData(settings: ProjectSettings = createDefaultProjectSettings()): ZoneNodeData {
+// Sanitize a label into a filesystem/JSON-safe token. Duplicated from
+// src/main/terminals.ts — kept in sync; the renderer mints participantIds
+// the same way the main process used to derive them from labels.
+export function sanitizeLabelForParticipantId(label: string): string {
+  return label.replace(/[^a-zA-Z0-9-_]/g, '-')
+}
+
+// Mint a unique participantId for a zone given its label and the set of
+// participantIds already used by sibling zones on the canvas. Preferred
+// shape is the sanitized label; on collision, append `-2`, `-3`, etc.
+// Callers own the `used` set; pass the new id back in before minting the
+// next one so dedup stays correct.
+export function mintParticipantId(label: string, used: Set<string>): string {
+  const base = sanitizeLabelForParticipantId((label ?? '').trim()) || 'zone'
+  if (!used.has(base)) return base
+  for (let n = 2; n < 1_000_000; n += 1) {
+    const candidate = `${base}-${n}`
+    if (!used.has(candidate)) return candidate
+  }
+  // Astronomically unreachable, but give the type checker a concrete return.
+  return `${base}-${Date.now()}`
+}
+
+export function createDefaultZoneData(
+  settings: ProjectSettings = createDefaultProjectSettings(),
+  participantId = 'zone',
+): ZoneNodeData {
   return {
+    participantId,
     label: 'Zone',
     description: '',
     color: '#58A6FF',
@@ -84,14 +109,14 @@ export function createDefaultZoneData(settings: ProjectSettings = createDefaultP
 }
 
 export function getEffectiveRuntime(
-  data: Pick<ZoneNodeData, 'agentRuntimeMode' | 'agentRuntime'>,
+  data: Pick<ZoneNodeData, 'agentRuntime'>,
   settings: ProjectSettings
 ): AgentRuntime {
-  return data.agentRuntimeMode === 'override' ? data.agentRuntime : settings.dispatchRuntime
+  return data.agentRuntime ?? settings.dispatchRuntime
 }
 
 export function getEffectiveModel(
-  data: Pick<ZoneNodeData, 'providerModels' | 'agentRuntimeMode' | 'agentRuntime'>,
+  data: Pick<ZoneNodeData, 'providerModels' | 'agentRuntime'>,
   settings: ProjectSettings
 ): string {
   const runtime = getEffectiveRuntime(data, settings)
@@ -166,6 +191,9 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
     : isAgentRuntime(rawSettings.defaultRuntime)
       ? rawSettings.defaultRuntime
       : DEFAULT_AGENT_RUNTIME
+  const conductorRuntime = isAgentRuntime(rawSettings.conductorRuntime)
+    ? rawSettings.conductorRuntime
+    : undefined
   const assistantMode =
     rawSettings.assistantMode === 'general' ? 'general' : 'architecture'
   const rawDispatchEffort = rawSettings.dispatchEffort ?? rawSettings.defaultEffort
@@ -186,6 +214,7 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
 
   return {
     dispatchRuntime,
+    ...(conductorRuntime ? { conductorRuntime } : {}),
     assistantMode,
     dispatchModels: normalizeDispatchModels(rawDispatchModels),
     ...(assistantModels ? { assistantModels } : {}),
@@ -250,7 +279,18 @@ function normalizeAssistantLastSessionByMode(
 
 function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettings): ZoneNodeData {
   const defaults = createDefaultZoneAgentConfig(settings)
-  const agentRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : DEFAULT_AGENT_RUNTIME
+  // Legacy migration: older canvases had a two-field split
+  // (`agentRuntimeMode: 'inherit' | 'override'` + `agentRuntime`). 'inherit'
+  // zones ignored their stored runtime and followed settings.dispatchRuntime.
+  // We collapse that here so `agentRuntime` is the single source of truth.
+  // IMPORTANT: do NOT force 'inherit' legacy zones back to the canvas default
+  // on every load — we only migrate once. If a user later overrides a zone,
+  // re-snapping to default would wipe that choice on the next save/reload.
+  // The one-shot migration is: if the saved data has legacyMode without a
+  // valid agentRuntime, seed it from the default; otherwise trust the stored
+  // agentRuntime (which is what the user last picked).
+  const storedRuntime = isAgentRuntime(raw.agentRuntime) ? raw.agentRuntime : null
+  const agentRuntime = storedRuntime ?? settings.dispatchRuntime ?? DEFAULT_AGENT_RUNTIME
 
   // Legacy migration: pre-refactor zones stored their behavior customization under `prompt`.
   // The field has been renamed to `systemPrompt`; fall back to the old key when present.
@@ -260,13 +300,20 @@ function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettin
       ? raw.prompt
       : ''
 
+  // Per-zone participantId: preserve what was saved. An empty placeholder
+  // here is backfilled by migrateCanvasData's post-pass (it needs the full
+  // zone set to dedup collisions), so we don't mint one in isolation.
+  const participantId = typeof raw.participantId === 'string' && raw.participantId.trim()
+    ? raw.participantId
+    : ''
+
   return {
+    participantId,
     label: typeof raw.label === 'string' ? raw.label : 'Zone',
     description: typeof raw.description === 'string' ? raw.description : '',
     color: typeof raw.color === 'string' ? raw.color : '#58A6FF',
     status: (raw.status as ZoneNodeData['status']) ?? 'idle',
     systemPrompt,
-    agentRuntimeMode: isAgentRuntimeMode(raw.agentRuntimeMode) ? raw.agentRuntimeMode : defaults.agentRuntimeMode,
     agentRuntime,
     providerModels: normalizeProviderModels(raw, settings.dispatchRuntime),
     openSections: Array.isArray(raw.openSections) ? (raw.openSections as string[]) : defaults.openSections,
@@ -368,6 +415,32 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     })
   }
 
+  // Canvas-wide participantId reconciliation: preserve stored ids when
+  // present and unique, rename collisions deterministically, mint a fresh
+  // one for zones that arrived without any id (legacy saves, palette drops
+  // that forgot, assistant-driven canvas patches).
+  const usedParticipantIds = new Set<string>()
+  for (const node of nodes) {
+    if (node.type !== 'zone') continue
+    const existing = (node.data as ZoneNodeData).participantId
+    if (existing && !usedParticipantIds.has(existing)) {
+      usedParticipantIds.add(existing)
+    }
+  }
+  for (const node of nodes) {
+    if (node.type !== 'zone') continue
+    const data = node.data as ZoneNodeData
+    if (data.participantId && usedParticipantIds.has(data.participantId) && !isCollisionOwner(nodes, node.id, data.participantId)) {
+      // Duplicate of another zone's stored id — rename to keep data.kv /
+      // activity-log files addressable per-zone.
+      data.participantId = mintParticipantId(data.label, usedParticipantIds)
+      usedParticipantIds.add(data.participantId)
+    } else if (!data.participantId) {
+      data.participantId = mintParticipantId(data.label, usedParticipantIds)
+      usedParticipantIds.add(data.participantId)
+    }
+  }
+
   const edges: Edge[] = rawEdges.map((edge, index) => ({
     id: typeof edge.id === 'string' ? edge.id : `edge-${index}`,
     source: String(edge.source ?? ''),
@@ -380,4 +453,15 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     settings,
     savedAt: typeof root.savedAt === 'string' ? root.savedAt : undefined,
   }
+}
+
+// First zone (by canvas order) to own a given participantId keeps it; any
+// later zone with the same id is treated as a collision and renamed.
+function isCollisionOwner(nodes: CanvasNode[], zoneId: string, participantId: string): boolean {
+  for (const node of nodes) {
+    if (node.type !== 'zone') continue
+    if ((node.data as ZoneNodeData).participantId !== participantId) continue
+    return node.id === zoneId
+  }
+  return false
 }

@@ -9,11 +9,16 @@ import type {
   HarnessTimeouts,
   NodeTools,
   ProjectSettings,
+  ZoneNodeType,
 } from '../../types'
 import type { AssistantOrientation } from '../layout/AssistantPanel'
 
 interface Props {
   settings: ProjectSettings
+  // Zones are read only to detect divergence from the canvas default, so we
+  // can surface a "Custom" pill. The bulk-apply of `dispatchRuntime` → every
+  // zone happens in App.tsx's onChange handler.
+  zones: ZoneNodeType[]
   onChange: (partial: Partial<ProjectSettings>) => void
   assistantOrientation: AssistantOrientation
   onAssistantOrientationChange: (next: AssistantOrientation) => void
@@ -32,10 +37,21 @@ const EFFORT_OPTIONS: EffortLevel[] = ['low', 'medium', 'high']
 
 export default function SettingsPanel({
   settings,
+  zones,
   onChange,
   assistantOrientation,
   onAssistantOrientationChange,
 }: Props) {
+  // When zones disagree on runtime, highlight a "Custom" pill instead of any
+  // concrete CLI — the canvas default still exists (seeds new zones) but no
+  // longer describes current canvas state.
+  const zoneRuntimes = zones.map(z => z.data.agentRuntime).filter((r): r is AgentRuntime => !!r)
+  const uniqueZoneRuntimes = new Set(zoneRuntimes)
+  const zonesAreCustom = uniqueZoneRuntimes.size > 1
+  const activeZoneRuntime: AgentRuntime | null = zonesAreCustom
+    ? null
+    : (zoneRuntimes[0] ?? settings.dispatchRuntime)
+
   const setModel = (runtime: AgentRuntime, model: string) => {
     onChange({ dispatchModels: { ...settings.dispatchModels, [runtime]: model } })
   }
@@ -58,10 +74,10 @@ export default function SettingsPanel({
           </p>
         </header>
 
-        <Section title="CLI (Dispatch / Zones)" hint="The CLI used for multi-zone dispatches and single-zone launches. The Architecture and General assistants each have their own CLI — pick them from the gear icon on the assistant panel.">
+        <Section title="Canvas Zone CLI" hint="Picking a CLI here bulk-applies it to every zone on the canvas and seeds newly dragged zones. Individual zones may still override via the zone config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
           <div className="grid grid-cols-2 gap-2">
             {AGENT_RUNTIMES.map(runtime => {
-              const selected = settings.dispatchRuntime === runtime.id
+              const selected = activeZoneRuntime === runtime.id
               return (
                 <button
                   key={runtime.id}
@@ -79,6 +95,23 @@ export default function SettingsPanel({
                 </button>
               )
             })}
+            <div
+              className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
+                zonesAreCustom
+                  ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
+                  : 'border-white/[0.04] text-slate-700'
+              }`}
+              title={
+                zonesAreCustom
+                  ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
+                  : 'Highlights when zones diverge from the canvas default.'
+              }
+            >
+              <span className="text-sm font-medium">Custom</span>
+              <span className="text-[10px] uppercase tracking-wider">
+                {zonesAreCustom ? `${uniqueZoneRuntimes.size} clis in use` : '—'}
+              </span>
+            </div>
           </div>
         </Section>
 

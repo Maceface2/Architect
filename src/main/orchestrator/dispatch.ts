@@ -106,30 +106,37 @@ interface ZoneIdentity {
   displayLabel: string
 }
 
-// Produce a unique participantId + displayLabel per zone, in input order.
-// When two zones share a label (e.g. the default "New Zone"), the second
-// occurrence becomes "<label>-2", the third "<label>-3", etc. participantId
-// is always sanitize(displayLabel) so filenames/state-keys stay in lockstep
-// with what the conductor sees in its prompt. Order is deterministic, so a
-// resume that re-runs this helper on the same zone set yields the same ids.
+// Read canvas-minted participantIds off each zone and pair with the current
+// display label. Uniqueness is enforced in the renderer (see mintParticipantId
+// + migrateCanvasData); this helper layers a defensive fallback in case a
+// zone arrives without a participantId (stale clients, hand-edited canvas
+// files) — it synthesizes one from the label with dedup against ids already
+// seen in this dispatch set.
 function assignZoneIdentities(zones: ZoneGraphNode[]): Map<string, ZoneIdentity> {
-  const labelCounts = new Map<string, number>()
-  const usedParticipantIds = new Set<string>()
+  const used = new Set<string>()
   const out = new Map<string, ZoneIdentity>()
+  const pending: ZoneGraphNode[] = []
 
   for (const zone of zones) {
-    const base = zone.data.label
-    let n = (labelCounts.get(base) ?? 0) + 1
-    let displayLabel = n === 1 ? base : `${base}-${n}`
-    let participantId = sanitize(displayLabel)
-    while (usedParticipantIds.has(participantId)) {
-      n += 1
-      displayLabel = `${base}-${n}`
-      participantId = sanitize(displayLabel)
+    const stored = typeof zone.data.participantId === 'string' ? zone.data.participantId.trim() : ''
+    if (stored && !used.has(stored)) {
+      used.add(stored)
+      out.set(zone.id, { participantId: stored, displayLabel: zone.data.label })
+    } else {
+      pending.push(zone)
     }
-    labelCounts.set(base, n)
-    usedParticipantIds.add(participantId)
-    out.set(zone.id, { participantId, displayLabel })
+  }
+  for (const zone of pending) {
+    const base = sanitize(zone.data.label) || 'zone'
+    let pid = base
+    let n = 2
+    while (used.has(pid)) {
+      pid = `${base}-${n}`
+      n += 1
+    }
+    used.add(pid)
+    out.set(zone.id, { participantId: pid, displayLabel: zone.data.label })
+    console.warn(`[dispatch-v5] zone ${zone.id} missing participantId; synthesized ${pid}`)
   }
   return out
 }
