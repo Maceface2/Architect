@@ -1,8 +1,8 @@
 import { memo, useState } from 'react'
 import { createPortal } from 'react-dom'
-import { Handle, Position, NodeResizer, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
-import { Play, Settings } from 'lucide-react'
-import { getAgentRuntime, type AgentRuntime, type AgentRuntimeMode } from '../../../../shared/agentRuntimes'
+import { NodeResizer, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
+import { Play, Settings, Trash2 } from 'lucide-react'
+import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
@@ -33,7 +33,7 @@ function hexToRgba(hex: string, alpha: number): string {
 }
 
 function ZoneNode({ id, data, selected }: ZoneNodeProps) {
-  const { setNodes, getNodes, getEdges } = useReactFlow()
+  const { setNodes, getNodes, getEdges, deleteElements } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
   const [launchOpen, setLaunchOpen] = useState(false)
   const projectSettings = useProjectSettings()
@@ -43,17 +43,14 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const label = (data.label as string) ?? 'Zone'
   const systemPrompt = (data.systemPrompt ?? '') as string
   const status = (data.status ?? 'idle') as NodeStatus
-  const runtimeMode = (data.agentRuntimeMode ?? 'inherit') as AgentRuntimeMode
   const configuredRuntime = (data.agentRuntime ?? projectSettings.dispatchRuntime) as AgentRuntime
   const providerModels = (data.providerModels ?? {}) as RuntimeModelMap
-  const effectiveRuntime = getEffectiveRuntime(
-    { agentRuntimeMode: runtimeMode, agentRuntime: configuredRuntime },
-    projectSettings
-  )
+  const effectiveRuntime = getEffectiveRuntime({ agentRuntime: configuredRuntime }, projectSettings)
   const effectiveModel = getEffectiveModel(
-    { providerModels, agentRuntimeMode: runtimeMode, agentRuntime: configuredRuntime },
+    { providerModels, agentRuntime: configuredRuntime },
     projectSettings
   )
+  const isOverride = configuredRuntime !== projectSettings.dispatchRuntime
   const skills = (data.skills ?? []) as NodeSkillFile[]
   const tools = (data.tools ?? { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false }) as NodeTools
   const behavior = (data.behavior ?? { mode: 'sequential', retries: 0, onFailure: 'stop', timeoutMs: 30000 }) as NodeBehavior
@@ -105,12 +102,11 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
               className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
               style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
             >
-              {runtimeMode === 'inherit' ? `default:${runtimeMeta.shortLabel}` : runtimeMeta.shortLabel}
+              {isOverride ? runtimeMeta.shortLabel : `default:${runtimeMeta.shortLabel}`}
             </span>
             <span className="text-[10px] text-slate-500 font-mono truncate">{shortModelLabel(effectiveModel)}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
-            {systemPrompt && <span className="text-[10px] text-slate-500 italic truncate max-w-[200px]">{systemPrompt}</span>}
             <button
               onClick={(e) => {
                 e.stopPropagation()
@@ -133,20 +129,23 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
             >
               <Settings size={12} />
             </button>
+            <button
+              onClick={(e) => {
+                e.stopPropagation()
+                if (window.confirm(`Delete zone "${label}"? This removes the node and its connections.`)) {
+                  deleteElements({ nodes: [{ id }] })
+                }
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
+              title="Delete zone"
+              aria-label="Delete zone"
+            >
+              <Trash2 size={12} />
+            </button>
           </div>
         </div>
       </div>
-
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ width: 12, height: 12, background: '#1e1e1e', border: `2px solid ${zoneColor}`, left: -7, zIndex: 20 }}
-      />
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ width: 12, height: 12, background: '#1e1e1e', border: `2px solid ${zoneColor}`, right: -7, zIndex: 20 }}
-      />
 
       {launchOpen && projectDir && createPortal(
         <ZoneLaunchModal
@@ -168,7 +167,6 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
           zoneId={id}
           label={label}
           systemPrompt={systemPrompt}
-          runtimeMode={runtimeMode}
           configuredRuntime={configuredRuntime}
           effectiveRuntime={effectiveRuntime}
           effectiveModel={effectiveModel}

@@ -21,7 +21,6 @@ import Sidebar from './components/layout/Sidebar'
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
-import PreviewPanel from './components/layout/PreviewPanel'
 import ResizablePanel from './components/layout/ResizablePanel'
 import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
@@ -33,6 +32,7 @@ import type {
   CanvasNode,
   ComponentNodeType,
   ProjectSettings,
+  ZoneNodeData,
   ZoneNodeType,
 } from './types'
 import type { PaletteItemConfig } from './data/componentPalette'
@@ -323,6 +323,65 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const dismissedExternalCanvasRef = useRef<string | null>(null)
   const { screenToFlowPosition, fitView } = useReactFlow()
 
+  // Canvas undo/redo: snapshot {nodes, edges} on structural changes (add,
+  // remove, connect) and at the start of a drag/resize. Data-only edits from
+  // node config modals go through setNodes directly and aren't captured — only
+  // graph-shape changes are undoable.
+  type CanvasSnapshot = { nodes: CanvasNode[]; edges: Edge[] }
+  const historyPastRef = useRef<CanvasSnapshot[]>([])
+  const historyFutureRef = useRef<CanvasSnapshot[]>([])
+  const dragOrResizeInFlightRef = useRef(false)
+  const [historyVersion, setHistoryVersion] = useState(0)
+  const MAX_HISTORY = 50
+
+  const snapshotHistory = useCallback(() => {
+    historyPastRef.current = [
+      ...historyPastRef.current,
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ].slice(-MAX_HISTORY)
+    historyFutureRef.current = []
+    setHistoryVersion(v => v + 1)
+  }, [])
+
+  const resetHistory = useCallback(() => {
+    historyPastRef.current = []
+    historyFutureRef.current = []
+    dragOrResizeInFlightRef.current = false
+    setHistoryVersion(v => v + 1)
+  }, [])
+
+  const undoCanvas = useCallback(() => {
+    const prev = historyPastRef.current[historyPastRef.current.length - 1]
+    if (!prev) return
+    historyPastRef.current = historyPastRef.current.slice(0, -1)
+    historyFutureRef.current = [
+      ...historyFutureRef.current,
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ]
+    setNodes(prev.nodes)
+    setEdges(prev.edges)
+    setIsDirty(true)
+    setHistoryVersion(v => v + 1)
+  }, [setNodes, setEdges])
+
+  const redoCanvas = useCallback(() => {
+    const next = historyFutureRef.current[historyFutureRef.current.length - 1]
+    if (!next) return
+    historyFutureRef.current = historyFutureRef.current.slice(0, -1)
+    historyPastRef.current = [
+      ...historyPastRef.current,
+      { nodes: nodesRef.current, edges: edgesRef.current },
+    ]
+    setNodes(next.nodes)
+    setEdges(next.edges)
+    setIsDirty(true)
+    setHistoryVersion(v => v + 1)
+  }, [setNodes, setEdges])
+
+  const canUndo = historyPastRef.current.length > 0
+  const canRedo = historyFutureRef.current.length > 0
+  void historyVersion // re-renders flip canUndo/canRedo via ref reads
+
   useEffect(() => { nodesRef.current = nodes }, [nodes])
   useEffect(() => { edgesRef.current = edges }, [edges])
   useEffect(() => { settingsRef.current = projectSettings }, [projectSettings])
@@ -443,12 +502,13 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setIsDirty(!clearDirty)
       setDispatchedGraph(null)
       setActiveTab('Canvas')
+      resetHistory()
       queueFitView()
       return true
     } catch {
       return false
     }
-  }, [queueFitView, setEdges, setNodes])
+  }, [queueFitView, setEdges, setNodes, resetHistory])
 
   useEffect(() => {
     let disposed = false
@@ -506,10 +566,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const onConnect = useCallback(
     (connection: Connection) => {
+      snapshotHistory()
       setEdges(eds => addEdge(connection, eds))
       setIsDirty(true)
     },
-    [setEdges]
+    [setEdges, snapshotHistory]
   )
 
   const onSave = useCallback(async () => {
@@ -548,6 +609,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       if (!raw) return
       const item: PaletteItemConfig = JSON.parse(raw)
       const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+
+      snapshotHistory()
 
       if (item.kind === 'zone') {
         const newZone: ZoneNodeType = {
@@ -589,12 +652,34 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setNodes(nds => [...nds, newComp])
       setIsDirty(true)
     },
-    [projectSettings, screenToFlowPosition, setNodes]
+    [projectSettings, screenToFlowPosition, setNodes, snapshotHistory]
   )
 
   const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
-    onNodesChange(changes)
+    // Snapshot once at the start of a drag/resize (not every frame) and once
+    // per structural change batch.
     const hasSubstantive = changes.some(c => c.type !== 'position' && c.type !== 'select' && c.type !== 'dimensions')
+    const startingDragOrResize = changes.some(c =>
+      (c.type === 'position' && c.dragging === true) ||
+      (c.type === 'dimensions' && c.resizing === true)
+    )
+    const endingDragOrResize = changes.some(c =>
+      (c.type === 'position' && c.dragging === false) ||
+      (c.type === 'dimensions' && c.resizing === false)
+    )
+
+    if (hasSubstantive) {
+      snapshotHistory()
+    } else if (startingDragOrResize && !dragOrResizeInFlightRef.current) {
+      snapshotHistory()
+      dragOrResizeInFlightRef.current = true
+    }
+    if (endingDragOrResize) {
+      dragOrResizeInFlightRef.current = false
+    }
+
+    onNodesChange(changes)
+
     if (hasSubstantive) {
       setIsDirty(true)
       return
@@ -606,14 +691,17 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
       void persistCanvasRaw(raw, false)
     }, 1000)
-  }, [onNodesChange, persistCanvasRaw])
+  }, [onNodesChange, persistCanvasRaw, snapshotHistory])
 
   const handleEdgesChange = useCallback((changes: Parameters<typeof onEdgesChange>[0]) => {
+    const hasSubstantive = changes.some(c => c.type !== 'select')
+    if (hasSubstantive) snapshotHistory()
     onEdgesChange(changes)
     setIsDirty(true)
-  }, [onEdgesChange])
+  }, [onEdgesChange, snapshotHistory])
 
   const onClear = useCallback(() => {
+    snapshotHistory()
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = null
@@ -623,9 +711,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setNodes([])
     setEdges([])
     setIsDirty(true)
-  }, [setEdges, setNodes])
+  }, [setEdges, setNodes, snapshotHistory])
 
   const onLoadDemo = useCallback(() => {
+    snapshotHistory()
     const demo = buildDemoGraph(projectSettings)
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
@@ -636,7 +725,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setNodes(demo.nodes)
     setEdges(demo.edges)
     setIsDirty(true)
-  }, [projectSettings, setEdges, setNodes])
+  }, [projectSettings, setEdges, setNodes, snapshotHistory])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
 
@@ -677,12 +766,25 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       const dispatchContext = isRedispatch
         ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
         : undefined
+      // Persist the picked Orchestrator CLI so the next DispatchModal
+      // pre-selects it. Keep this write alongside the IPC dispatch — they
+      // describe the same user action.
+      if (projectSettings.conductorRuntime !== req.conductorRuntime) {
+        setProjectSettings(current => ({ ...current, conductorRuntime: req.conductorRuntime }))
+        setIsDirty(true)
+      }
       const sessions = await window.electron.startDispatch(
         nodes,
         edges,
         projectDir,
         projectSettings,
-        { userPrompt: req.userPrompt, model: req.model, planMode: req.planMode, onlyZoneIds: req.onlyZoneIds },
+        {
+          userPrompt: req.userPrompt,
+          model: req.model,
+          planMode: req.planMode,
+          onlyZoneIds: req.onlyZoneIds,
+          conductorRuntime: req.conductorRuntime,
+        },
         dispatchContext,
       )
       setTerminalSessions(sessions)
@@ -787,7 +889,7 @@ ${paletteJson}
 ## JSON Example
 Write the canvas directly to \`architect-canvas.json\` using the modern Architect format:
 ~~~json
-{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntimeMode":"inherit","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"dispatchRuntime":"codex"}}
+{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"dispatchRuntime":"codex"}}
 ~~~
 
 ## Your Role
@@ -798,7 +900,7 @@ Help the user design, refine, and reason about their architecture. You can:
 - Replace the full canvas document when making a diagram change. Always write a complete valid top-level object with \`nodes\`, \`edges\`, and \`settings\`.
 - Preserve existing ids, positions, and \`settings\` whenever possible so the user's layout and runtime defaults are not lost.
 - Use \`type: "zone"\` for agent zones and \`type: "component"\` for design components.
-- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntimeMode\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` defines the zone agent's durable role/style (e.g. "Senior backend engineer — write idiomatic Go, prefer stdlib, always add tests"). Do NOT phrase it as "build components X, Y, Z" or otherwise encode a build list — the canvas is context, and the user supplies the task at Dispatch time.
+- For zones, include: \`id\`, \`type\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` defines the zone agent's durable role/style (e.g. "Senior backend engineer — write idiomatic Go, prefer stdlib, always add tests"). Do NOT phrase it as "build components X, Y, Z" or otherwise encode a build list — the canvas is context, and the user supplies the task at Dispatch time.
 - For components, include: \`id\`, \`type\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`.
 - To place a component inside a zone, give it a position that falls within the zone's bounding box. Zones should be sized large enough to visually cover their components with margin.
 
@@ -810,6 +912,7 @@ Only discuss and advise without editing the file when the user is asking for cri
   }, [])
 
   const applyCanvasUpdate = useCallback((update: CanvasUpdate) => {
+    snapshotHistory()
     const rawNodePayload = Array.isArray(update.nodes) ? update.nodes : null
     if (rawNodePayload && !Array.isArray(update.zones) && !Array.isArray(update.components)) {
       const migrated = migrateCanvasData({
@@ -956,7 +1059,7 @@ Only discuss and advise without editing the file when the user is asking for cri
     setActiveTab('Canvas')
     queueFitView()
     void persistCanvasRaw(rawCanvas, true)
-  }, [persistCanvasRaw, queueFitView, setEdges, setNodes])
+  }, [persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
 
   // Per-mode effective CLI for the side-panel assistant. Architecture and
   // General maintain independent runtime choices, fully decoupled from the
@@ -1109,17 +1212,55 @@ Only discuss and advise without editing the file when the user is asking for cri
     setPendingExternalCanvasRaw(null)
   }, [pendingExternalCanvasRaw])
 
+  // Canvas undo/redo keyboard shortcuts — Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z
+  // (or Cmd/Ctrl+Y) redo. Ignored while the user is typing in an input so
+  // modals/text fields keep their native undo behavior.
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (activeTab !== 'Canvas') return
+      const mod = e.metaKey || e.ctrlKey
+      if (!mod) return
+      const target = e.target as HTMLElement | null
+      const inField = target && (
+        target.tagName === 'INPUT' ||
+        target.tagName === 'TEXTAREA' ||
+        target.isContentEditable
+      )
+      if (inField) return
+      const key = e.key.toLowerCase()
+      if (key === 'z' && !e.shiftKey) {
+        e.preventDefault()
+        undoCanvas()
+      } else if ((key === 'z' && e.shiftKey) || key === 'y') {
+        e.preventDefault()
+        redoCanvas()
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [activeTab, undoCanvas, redoCanvas])
+
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
-  const isPreview = activeTab === 'Preview'
   const isSettings = activeTab === 'Settings'
 
   const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
     setProjectSettings(current => ({ ...current, ...partial }))
     setIsDirty(true)
-    if ('dispatchRuntime' in partial) setDispatchedGraph(null)
-  }, [])
+    // Picking a new canvas-default CLI bulk-applies it to every zone. Zones
+    // can still be manually overridden afterwards; divergence is then
+    // surfaced as "Custom" in the Settings panel.
+    if ('dispatchRuntime' in partial && partial.dispatchRuntime) {
+      const runtime = partial.dispatchRuntime
+      setNodes(prev => prev.map(node =>
+        node.type === 'zone'
+          ? { ...node, data: { ...(node.data as ZoneNodeData), agentRuntime: runtime } }
+          : node
+      ))
+      setDispatchedGraph(null)
+    }
+  }, [setNodes])
 
   return (
     <ProjectSettingsProvider value={projectSettings}>
@@ -1141,6 +1282,10 @@ Only discuss and advise without editing the file when the user is asking for cri
           assistantOpen={assistantOpen}
           isRedispatch={dispatchedGraph !== null}
           changedCount={changedZoneLabels.length}
+          onUndo={undoCanvas}
+          onRedo={redoCanvas}
+          canUndo={canUndo}
+          canRedo={canRedo}
         />
         <div className="flex flex-1 overflow-hidden">
           <ResizablePanel side="left" defaultSize={180}>
@@ -1216,16 +1361,11 @@ Only discuss and advise without editing the file when the user is asking for cri
             />
           </div>
 
-          {isPreview && (
-            <div className="flex-1 overflow-hidden">
-              <PreviewPanel zones={zones} projectDir={projectDir} />
-            </div>
-          )}
-
           {isSettings && (
             <div className="flex-1 overflow-hidden">
               <SettingsPanel
                 settings={projectSettings}
+                zones={zones}
                 onChange={handleSettingsChange}
                 assistantOrientation={assistantOrientation}
                 onAssistantOrientationChange={handleAssistantOrientationChange}

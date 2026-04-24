@@ -74,6 +74,10 @@ export interface StartDispatchV5Input {
     model?: string
     planMode?: boolean
     onlyZoneIds?: string[]
+    // Orchestrator (Conductor) CLI chosen in the DispatchModal dropdown.
+    // When absent, falls back to settings.dispatchRuntime. Zone CLIs are
+    // unaffected — each zone keeps its own agentRuntime.
+    conductorRuntime?: AgentRuntime
   }
   dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
 }
@@ -97,15 +101,50 @@ function broadcast(channel: string, payload: unknown): void {
   }
 }
 
+interface ZoneIdentity {
+  participantId: string
+  displayLabel: string
+}
+
+// Produce a unique participantId + displayLabel per zone, in input order.
+// When two zones share a label (e.g. the default "New Zone"), the second
+// occurrence becomes "<label>-2", the third "<label>-3", etc. participantId
+// is always sanitize(displayLabel) so filenames/state-keys stay in lockstep
+// with what the conductor sees in its prompt. Order is deterministic, so a
+// resume that re-runs this helper on the same zone set yields the same ids.
+function assignZoneIdentities(zones: ZoneGraphNode[]): Map<string, ZoneIdentity> {
+  const labelCounts = new Map<string, number>()
+  const usedParticipantIds = new Set<string>()
+  const out = new Map<string, ZoneIdentity>()
+
+  for (const zone of zones) {
+    const base = zone.data.label
+    let n = (labelCounts.get(base) ?? 0) + 1
+    let displayLabel = n === 1 ? base : `${base}-${n}`
+    let participantId = sanitize(displayLabel)
+    while (usedParticipantIds.has(participantId)) {
+      n += 1
+      displayLabel = `${base}-${n}`
+      participantId = sanitize(displayLabel)
+    }
+    labelCounts.set(base, n)
+    usedParticipantIds.add(participantId)
+    out.set(zone.id, { participantId, displayLabel })
+  }
+  return out
+}
+
 function buildWorkspaceZoneInput(
   zone: ZoneGraphNode,
+  identities: Map<string, ZoneIdentity>,
   componentsByZone: Map<string, ComponentGraphNode[]>,
   allZones: ZoneGraphNode[],
   zoneEdges: GraphEdge[],
   runtime: AgentRuntime,
   model: string,
 ): WorkspaceZoneInput {
-  const participantId = sanitize(zone.data.label)
+  const identity = identities.get(zone.id)
+  if (!identity) throw new Error(`buildWorkspaceZoneInput: missing identity for zone ${zone.id}`)
   const components: ZoneComponentSpec[] = (componentsByZone.get(zone.id) ?? []).map(c => ({
     label: c.data.label,
     tag: c.data.tag,
@@ -117,11 +156,17 @@ function buildWorkspaceZoneInput(
     .filter(e => e.target === zone.id)
     .map(e => allZones.find(z => z.id === e.source))
     .filter((z): z is ZoneGraphNode => !!z)
-    .map(z => ({ label: z.data.label, participantId: sanitize(z.data.label) }))
+    .map(z => {
+      const up = identities.get(z.id)
+      return up
+        ? { label: up.displayLabel, participantId: up.participantId }
+        : { label: z.data.label, participantId: sanitize(z.data.label) }
+    })
   const downstreamLabels = zoneEdges
     .filter(e => e.source === zone.id)
-    .map(e => allZones.find(z => z.id === e.target)?.data.label)
-    .filter((label): label is string => !!label)
+    .map(e => allZones.find(z => z.id === e.target))
+    .filter((z): z is ZoneGraphNode => !!z)
+    .map(z => identities.get(z.id)?.displayLabel ?? z.data.label)
   const enabledTools = Object.entries(zone.data.tools ?? {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key)
@@ -131,8 +176,8 @@ function buildWorkspaceZoneInput(
 
   return {
     zoneId: zone.id,
-    participantId,
-    label: zone.data.label,
+    participantId: identity.participantId,
+    label: identity.displayLabel,
     description: zone.data.description,
     runtime,
     model,
@@ -158,14 +203,15 @@ function buildWorkspaceInput(
   const { zones: allZones, componentsByZone, unassignedComponents } = indexGraph(nodes)
   const zoneIdSet = new Set(filteredZones.map(z => z.id))
   const zoneEdges = edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
+  const identities = assignZoneIdentities(filteredZones)
 
   const zones: WorkspaceZoneInput[] = filteredZones.map(zone => {
     const runtime = getZoneRuntime(zone, normalizeProjectSettings(rawSettings))
     const model = getZoneModel(zone, runtime)
-    return buildWorkspaceZoneInput(zone, componentsByZone, allZones, zoneEdges, runtime, model)
+    return buildWorkspaceZoneInput(zone, identities, componentsByZone, allZones, zoneEdges, runtime, model)
   })
 
-  const labelByZoneId = new Map(filteredZones.map(z => [z.id, z.data.label]))
+  const labelByZoneId = new Map(filteredZones.map(z => [z.id, identities.get(z.id)?.displayLabel ?? z.data.label]))
   const zoneEdgePairs = zoneEdges.map(e => ({
     fromLabel: labelByZoneId.get(e.source) ?? e.source,
     toLabel: labelByZoneId.get(e.target) ?? e.target,
@@ -200,7 +246,7 @@ function buildSchedulerZones(workspaceZones: WorkspaceZoneInput[], filteredZones
     return {
       zoneId: zone.id,
       participantId: ws?.participantId ?? sanitize(zone.data.label),
-      label: zone.data.label,
+      label: ws?.label ?? zone.data.label,
       runtime: ws?.runtime ?? 'claude',
       retriesAllowed: Math.max(0, retries),
     }
@@ -264,6 +310,9 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // Multi-zone dispatch. Mint a fresh dispatchId and lay down the workspace.
   const dispatchId = randomBytes(8).toString('hex')
   const filteredNodes = nodes.filter(n => n.type !== 'zone' || selectedIdSet.has(n.id))
+  // Resolve the Conductor runtime early — preferred source is the explicit
+  // dropdown pick in the DispatchModal, with the canvas default as fallback.
+  const conductorRuntime: AgentRuntime = dispatch.conductorRuntime ?? settings.dispatchRuntime
   const { input: workspaceInput, zones: workspaceZones } = buildWorkspaceInput(
     projectDir,
     dispatchId,
@@ -271,18 +320,19 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     edges,
     sorted,
     userPrompt,
-    settings.dispatchRuntime,
+    conductorRuntime,
     rawSettings,
   )
   setupWorkspaceV5(workspaceInput)
 
   // Broadcast the initial TerminalInfo set so the renderer can begin rendering
   // tabs incrementally as each PTY spawns.
+  const wsByZoneId = new Map(workspaceZones.map(w => [w.zoneId, w]))
   const allInfo: TerminalInfo[] = [
-    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: settings.dispatchRuntime },
+    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime },
     ...sorted.map(zone => ({
       id: zone.id,
-      label: zone.data.label,
+      label: wsByZoneId.get(zone.id)?.label ?? zone.data.label,
       runtime: getZoneRuntime(zone, settings),
       coordinatedMode: true,
     })),
@@ -318,14 +368,14 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       let settled = false
       const done = (): void => { if (!settled) { settled = true; resolve() } }
       const timer = setTimeout(() => {
-        console.warn(`[dispatch-v5] zone "${zone.data.label}" capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms`)
+        console.warn(`[dispatch-v5] zone "${ws.label}" capture did not settle in ${CAPTURE_SERIAL_TIMEOUT_MS}ms`)
         done()
       }, CAPTURE_SERIAL_TIMEOUT_MS)
 
       const zoneInfo = spawnAgentSession({
         win,
         id: zone.id,
-        label: zone.data.label,
+        label: ws.label,
         runtime,
         env,
         cwd: projectDir,
@@ -348,7 +398,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
             try {
               upsertDispatchZoneSession(projectDir, architectSessionId, {
                 zoneId: zone.id,
-                label: zone.data.label,
+                label: ws.label,
                 runtime,
                 sessionId: zoneSessionId,
               })
@@ -380,7 +430,6 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // shot — no race between seedInitialTurn and Claude's TUI being ready.
   const conductorPromptPath = join(projectDir, 'ARCHITECT', 'prompts', 'conductor.md')
   const conductorPrompt = fs.readFileSync(conductorPromptPath, 'utf-8')
-  const conductorRuntime = settings.dispatchRuntime
   const conductorModel = dispatch.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
   const conductorAdapter = getRuntimeAdapter(conductorRuntime)
   const conductorComposed = conductorAdapter.composeSystemAndUser(
@@ -421,7 +470,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
           architectRuntime: conductorRuntime,
           dispatchId,
           zoneIds: sorted.map(z => z.id),
-          zoneLabels: sorted.map(z => z.data.label),
+          zoneLabels: sorted.map(z => wsByZoneId.get(z.id)?.label ?? z.data.label),
           zoneSessions: [],
           userPrompt,
           summary: dispatchSummary,
@@ -541,16 +590,17 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
   for (const zone of filteredZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const ws = workspaceZones.find(w => w.zoneId === zone.id)
+    const displayLabel = ws?.label ?? zone.data.label
     const runtime = entry?.runtime ?? (ws?.runtime ?? getZoneRuntime(zone, settings))
-    info.push({ id: zone.id, label: zone.data.label, runtime, coordinatedMode: true })
+    info.push({ id: zone.id, label: displayLabel, runtime, coordinatedMode: true })
 
     if (!entry) {
-      console.warn(`[resume-v5] no session id stored for zone ${zone.data.label}`)
+      console.warn(`[resume-v5] no session id stored for zone ${displayLabel}`)
       continue
     }
     const adapter = getRuntimeAdapter(runtime)
     if (!adapter.revalidateSession(projectDir, entry.sessionId)) {
-      console.warn(`[resume-v5] zone ${zone.data.label} session ${entry.sessionId} not reachable; skipping`)
+      console.warn(`[resume-v5] zone ${displayLabel} session ${entry.sessionId} not reachable; skipping`)
       continue
     }
 
@@ -561,7 +611,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     spawnAgentSession({
       win,
       id: zone.id,
-      label: zone.data.label,
+      label: displayLabel,
       runtime,
       env,
       cwd: projectDir,

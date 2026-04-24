@@ -5,7 +5,6 @@ import {
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
   type AgentRuntime,
-  type AgentRuntimeMode,
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
@@ -35,7 +34,6 @@ interface Props {
   zoneId: string
   label: string
   systemPrompt: string
-  runtimeMode: AgentRuntimeMode
   configuredRuntime: AgentRuntime
   effectiveRuntime: AgentRuntime
   effectiveModel: string
@@ -54,7 +52,6 @@ export default function AgentConfigModal({
   zoneId,
   label,
   systemPrompt,
-  runtimeMode,
   configuredRuntime,
   effectiveRuntime,
   effectiveModel,
@@ -115,13 +112,6 @@ export default function AgentConfigModal({
   const removeEnvVar = (index: number) => patch({ envVars: envVars.filter((_, idx) => idx !== index) })
   const updateEnvVar = (index: number, field: keyof NodeEnvVar, value: string) =>
     patch({ envVars: envVars.map((envVar, idx) => idx === index ? { ...envVar, [field]: value } : envVar) })
-
-  const setRuntimeMode = (mode: AgentRuntimeMode) => {
-    patch({
-      agentRuntimeMode: mode,
-      agentRuntime: mode === 'override' ? effectiveRuntime : configuredRuntime,
-    })
-  }
 
   const setConfiguredRuntime = (runtime: AgentRuntime) => {
     patch({ agentRuntime: runtime })
@@ -222,31 +212,21 @@ export default function AgentConfigModal({
             <div className="p-6 space-y-6">
               <Section title="Runtime">
                 <div className="space-y-3">
-                  <Field label="Selection">
-                    <Seg
-                      options={['inherit', 'override'] as AgentRuntimeMode[]}
-                      value={runtimeMode}
-                      onChange={setRuntimeMode}
-                    />
-                  </Field>
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-slate-400">
-                    {runtimeMode === 'inherit'
-                      ? `Using project default: ${getAgentRuntime(projectSettings.dispatchRuntime).label}`
-                      : 'This zone uses its own CLI selection.'}
+                    Canvas default: {getAgentRuntime(projectSettings.dispatchRuntime).label}. Pick a different CLI to override this zone only.
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
                     {AGENT_RUNTIMES.map(runtime => {
-                      const selected = (runtimeMode === 'inherit' ? projectSettings.dispatchRuntime : configuredRuntime) === runtime.id
+                      const selected = configuredRuntime === runtime.id
                       return (
                         <button
                           key={runtime.id}
                           onClick={() => setConfiguredRuntime(runtime.id)}
-                          disabled={runtimeMode === 'inherit'}
                           className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
                             selected
                               ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
                               : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
-                          } ${runtimeMode === 'inherit' ? 'opacity-50 cursor-not-allowed' : ''}`}
+                          }`}
                         >
                           <span className="text-[12px] font-medium">{runtime.label}</span>
                           <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
