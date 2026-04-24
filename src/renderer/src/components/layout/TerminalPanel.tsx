@@ -22,7 +22,7 @@ interface TerminalInfo {
   id: string
   label: string
   runtime: AgentRuntime | 'shell'
-  mailboxMode?: boolean
+  coordinatedMode?: boolean
 }
 
 interface Props {
@@ -68,8 +68,8 @@ const termLockState = new Map<string, boolean>()
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [manualOverride, setManualOverride] = useState(false)
-  const isMailbox = !!info.mailboxMode
-  const locked = isMailbox && !manualOverride
+  const isCoordinated = !!info.coordinatedMode
+  const locked = isCoordinated && !manualOverride
 
   // Sync the lock bit into the module-level map so the stable `term.onData`
   // closure (attached once, below) can early-return without re-subscribing.
@@ -99,7 +99,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       termInstances.set(info.id, instance)
 
       term.onData(data => {
-        // Mailbox-mode zones are agent-driven; swallow keystrokes/paste/
+        // Coordinated zones are conductor-driven; swallow keystrokes/paste/
         // control bytes unless the user has taken manual control.
         if (termLockState.get(info.id) === true) return
         window.electron.terminal.input(info.id, data)
@@ -153,10 +153,10 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       className="w-full h-full flex flex-col"
       style={{ visibility: active ? 'visible' : 'hidden' }}
     >
-      {isMailbox && (locked ? (
+      {isCoordinated && (locked ? (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
           <span className="text-[11px] text-slate-400 flex items-center gap-2">
-            <Lock size={11} /> Mailbox-controlled — user input disabled
+            <Lock size={11} /> Conductor-controlled — user input disabled
           </span>
           <button
             onClick={() => setManualOverride(true)}
@@ -303,7 +303,7 @@ function PaneView({
           const s = sessionsById.get(tabId)
           if (!s) return null
           const isShell = s.runtime === 'shell'
-          const isArchitect = s.id === 'architect-agent'
+          const isConductor = s.id === 'conductor-agent'
           const isActive = tabId === pane.activeTab
           const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
           const canResume = !isShell && RESUMABLE_RUNTIMES.has(s.runtime as AgentRuntime) && exitedIds.has(s.id) && resumableIds.has(s.id)
@@ -338,15 +338,15 @@ function PaneView({
                   ) : (
                     <span
                       className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        isArchitect ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                        isConductor ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
                       } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
                     />
                   )}
-                  {s.mailboxMode && !isShell && !isArchitect && (
-                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Mailbox-controlled" />
+                  {s.coordinatedMode && !isShell && !isConductor && (
+                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Conductor-controlled" />
                   )}
                   <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
-                    {isShell ? 'Shell' : isArchitect ? '⬡ Architect' : s.label}
+                    {isShell ? 'Shell' : isConductor ? '⬡ Conductor' : s.label}
                   </span>
                   {runtime && (
                     <span

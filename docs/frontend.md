@@ -187,7 +187,7 @@ Per-zone resume options are populated from `window.electron.zone.listSessions(..
 - runtime badges per zone
 - a localhost iframe preview when the output contains a preview URL
 
-This panel is intentionally lightweight: it watches output artifacts, not the full mailbox state.
+This panel is intentionally lightweight: it watches output artifacts, not the full scheduler state. Live per-zone status badges come from the `activity:state` IPC broadcasts emitted by the scheduler's tick loop.
 
 ## Preload Contract Used By The Renderer
 
@@ -197,12 +197,14 @@ The frontend depends heavily on these groups:
 
 - filesystem: `readDir`, `readFile`, `openDirectory`, `getHomeDir`
 - canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`, `unwatchCanvas`
-- dispatches: `runGraph`, `dispatches.list`, `dispatches.resume`, `dispatches.delete`, `dispatches.updateSummary`
-- zones: `zone.launch`, `zone.listSessions`, `zone.deleteSession`, `zone.updateSessionSummary`, `zone.resetSession`
+- dispatches: `startDispatch`, `dispatches.list`, `dispatches.resume`, `dispatches.delete`, `dispatches.updateSummary`
+- zones: `zone.launch`, `zone.listSessions`, `zone.deleteSession`, `zone.updateSessionSummary`, `zone.resetSession`, `zone.onSessionCaptured`
 - terminals: `terminal.spawnShell`, `terminal.input`, `terminal.resize`, `terminal.close`, `terminal.popout`, `terminal.dock`
-- streaming events: `terminal.onData`, `terminal.onExit`, `terminal.onStatus`, `mailbox.onActivity`
+- streaming events: `terminal.onData`, `terminal.onExit`, `terminal.onStatus`, `terminal.onCaptureState`, `activity.onEvent`, `activity.onState`, `activity.onDispatchComplete`
 
-The older names `zone.run`, `zone.resume`, `zone.getSession`, and top-level `listDispatches` are not part of the current API contract.
+`activity.onEvent` fires once per appended activity-log line (zone progress, Conductor decisions, failures). `activity.onState` fires on scheduler-emitted `ParticipantStatus` transitions. `activity.onDispatchComplete` fires once when the Conductor emits a `{type:'final', summary}` decision.
+
+Older names `runGraph`, `zone.run`, `zone.resume`, `zone.getSession`, top-level `listDispatches`, and `mailbox.onActivity` are not part of the current API contract.
 
 ## Runtime-Related UI Caveats
 

@@ -4,11 +4,15 @@ This document explains how Architect actually runs agents, how zones behave at d
 
 It is based on the current implementation in:
 
-- `src/main/terminals.ts`
-- `src/main/sessionCapture.ts`
-- `src/shared/agentRuntimes.ts`
+- `src/shared/agentRuntimes.ts` — runtime catalog + effort flag mapping
+- `src/main/runtimes/` — per-CLI adapters (`claude.ts` / `codex.ts` / `gemini.ts` / `opencode.ts`)
+- `src/main/orchestrator/` — multi-zone dispatch scheduler, conductor helpers, prompt builders
+- `src/main/terminals.ts` — PTY lifecycle, `spawnAgentSession`, solo-zone flow (`runZone`), assistant flow
+- `src/main/sessionCapture.ts` — per-runtime session-id capture + on-disk revalidation
 - `src/renderer/src/components/dispatch/DispatchModal.tsx`
 - `src/renderer/src/components/nodes/AgentConfigModal.tsx`
+
+The multi-zone coordination protocol itself is documented separately in `docs/orchestration.md` (reference for `DISPATCH_PROTOCOL_VERSION = 5`).
 
 ## Runtime Catalog
 
@@ -65,11 +69,12 @@ Each zone contributes:
 
 At dispatch time Architect generates:
 
-- a zone system prompt file in `ARCHITECT/prompts/<zone>.md` (in `dispatch` mode for multi-zone dispatches, `solo` mode for single-zone launches)
-- per-zone mailbox directory `ARCHITECT/mailbox/<zone>/{inbox,outbox,.tmp,manifest.json}`
-- an output scratchpad at `ARCHITECT/outputs/<zone>.md` — zones append progress notes as they work (harness uses the mtime as one of three heartbeat signals)
+- a zone system prompt file in `ARCHITECT/prompts/<zone>.md` — compact (~40 lines) for multi-zone dispatches, a separate solo build (~30 lines) for single-zone launches via `runZone`
+- an activity log at `ARCHITECT/runtime/<dispatchId>/activity/<zone>.jsonl` — append-only JSONL, agent writes one line per meaningful step
+- a state file at `ARCHITECT/runtime/<dispatchId>/state/<zone>.kv` — atomic key=value snapshot maintained by the scheduler
+- an output scratchpad at `ARCHITECT/outputs/<zone>.md` — zones append human-readable progress notes as they work (the scheduler uses it alongside PTY idle-ms for staleness detection)
 
-Zone tasks are not files in v4 — they are `task` messages delivered into the zone's mailbox inbox by the Overseer. See "Multi-Zone Orchestration" below.
+Zone tasks are delivered as normal user-turn prompts via `pty.write` on the live zone PTY. The prompt is formatted as `TASK <taskId>: <body>`. Completion comes back as a single activity-log line (`{"kind":"done"|"failed"|"ask","taskId":"…"}`). See "Multi-Zone Orchestration" below.
 
 ## Prompt Layers
 
@@ -80,108 +85,95 @@ Architect uses two distinct prompt layers.
 Generated from zone configuration and canvas context. It includes:
 
 - zone identity and description
-- upstream and downstream zone names
+- upstream (with output file paths) and downstream zone names
 - enabled tool names
 - component list and specs
-- component-to-component wiring inside the zone
 - embedded `SKILL.md` contents
 - the freeform behavior text from the zone editor
-- the instruction to write real code in the project root
-- **in dispatch mode**: the full mailbox listen-and-respond loop (call `mailbox-listen.sh`, handle `task` / `answer` / `cancel` / `harness.wake` messages, reply via `mailbox-send.sh`, re-listen immediately)
-- **in solo mode**: instructions to work directly with the user; NO mailbox references (the scripts won't work without the MBX_* env vars set)
+- the instruction to write real code in the project root (`ARCHITECT/` is coordination-only)
+- **in multi-zone dispatch**: the activity-log contract — how to receive `TASK <taskId>:` / `ANSWER <taskId>:` / `CANCEL <taskId>:` prefixed user turns; how to emit one `done` / `failed` / `ask` activity line per task via `cat >> <path> << 'ACT_EOF'` heredoc
+- **in solo mode**: instructions to work directly with the user; no activity-log references (no scheduler is running)
 
-This is built by `buildZoneSystemPrompt(..., mode: 'dispatch' | 'solo')`. Multi-zone dispatches use `dispatch`; single-zone launches via `runZone` use `solo`.
+Built by `orchestrator/prompts/zone.ts → buildZonePrompt` for multi-zone, `orchestrator/prompts/solo.ts → buildSoloZonePrompt` for single-zone launches via `runZone`. Delivered on the CLI command line — Claude via `--append-system-prompt`; others (Codex / OpenCode / Gemini) folded into the first user prompt via the adapter's `composeSystemAndUser` with a `<<SYSTEM>>…<<END>>` wrapper.
 
-### 2. Task Message Layer
+### 2. Task Layer
 
-Per-dispatch work is delivered as **`task` messages** into the zone's mailbox inbox, not as files. The Overseer composes the task content (goals, files to touch, API contracts, acceptance criteria) and calls:
+Per-dispatch work is delivered as **normal user-turn prompts** via `pty.write` on the live zone PTY. The Scheduler formats each assignment as:
 
-```bash
-bash $MBX_SCRIPTS/mailbox-send.sh <zone-id> task "$TMPFILE"
+```
+TASK <taskId>: <body>
 ```
 
-which atomically writes a JSON message to `ARCHITECT/mailbox/<zone>/inbox/<iso-ts>-<msg-id>.json`. The zone's `mailbox-listen.sh` call returns with the message's metadata + content; the zone does the work using its normal tools (Read/Edit/Bash/etc.), then replies with a `result` message carrying `inReplyTo = <original-msg-id>` so the Overseer can correlate.
+and writes it in two steps — text first, a 120 ms pause, then a bare `\r`. The pause separates the paste-burst from the Enter key so Claude's multi-line TUI treats Enter as a distinct keystroke. A single-burst `text + \r` leaves the prompt typed into the input buffer but unsubmitted.
 
-Zones are bootstrapped with a minimal instruction — "Read your prompt file and enter your listen loop now by running mailbox-listen.sh". After that, the PTY is never written to again; the mailbox is the only coordination channel.
+The zone's role prompt teaches it to do the work using its normal tools (Read/Edit/Bash/etc.), optionally emit `progress` activity lines mid-work, and emit exactly one final activity line — `kind: 'done' | 'failed' | 'ask'`, including the `taskId` — when the task completes. The Scheduler correlates the activity line back to the in-flight task by `taskId` and notifies the Conductor.
 
-That separation matters: the system prompt is durable zone identity, while task messages are per-dispatch instructions with full audit trail in the zone's inbox + Overseer's outbox.
+Zones are bootstrapped at spawn with a minimal first user turn (`"Acknowledge readiness with 'Ready'. Do NOT append an activity-log line yet…"`). This forces the CLI to materialize a session file so capture polling succeeds; the zone's role prompt tells it to just acknowledge and wait. After that, the only inputs the zone ever receives are `TASK` / `ANSWER` / `CANCEL`-prefixed user turns from the Scheduler.
+
+That separation matters: the system prompt is durable zone identity (set once at spawn, cached in the CLI's conversation history across turns), while task deliveries are per-dispatch instructions with full audit trail in the activity log.
 
 ## Multi-Zone Orchestration
 
-When there are two or more zones, Architect runs the **v4 mailbox protocol** (`DISPATCH_PROTOCOL_VERSION = 4`).
+When there are two or more zones, Architect runs the **v5 orchestration protocol** (`DISPATCH_PROTOCOL_VERSION = 5`, implemented in `src/main/orchestrator/`). See `docs/orchestration.md` for the full protocol reference. High-level flow:
 
 ### Sequence
 
-1. `startDispatch()` normalizes settings, filters the selected zones, and generates a fresh `dispatchId` (16 hex chars).
-2. `wipeMailboxTree(projectDir)` removes any stale `ARCHITECT/mailbox/` from a prior run.
-3. `setupWorkspace()` writes the manifest, prompts, Mermaid diagram, mailbox shell scripts, and per-participant mailbox directories (one for `overseer`, one per zone).
-4. Architect **pre-spawns all zone PTYs concurrently** — no dependency-gated launching in v4. Each zone is spawned with `MBX_ROOT`, `MBX_SELF`, `MBX_SELF_LABEL`, `MBX_DISPATCH_ID`, `MBX_SCRIPTS` env vars and a bootstrap `initialPrompt` telling it to enter its listen loop.
-5. Architect spawns the `architect-agent` Overseer session with its prompt as `initialPrompt` (the content of `ARCHITECT/prompts/architect.md`).
-6. `startMailboxObserver` launches in the main process — it watches every participant's inbox/outbox via `fs.watch`, maintains `ARCHITECT/mailbox/_index.json`, broadcasts `mailbox:activity` IPC events to the renderer, and injects synthetic `harness.*` messages when zones stall.
-7. Each agent enters its prescribed loop:
-   - **Zones** repeat `mailbox-listen.sh <zone>` → process message → `mailbox-send.sh` reply → re-listen
-   - **Overseer** repeats `mailbox-listen.sh overseer 30` → `mailbox-drain.sh overseer` → plan over the batch → dispatch new tasks
-8. Dependency ordering lives in the **Overseer's reasoning**, not in spawn order. The Overseer sends upstream-zone tasks first, waits for their `result` messages, then fans out downstream tasks using the interfaces reported in the results.
+1. `startDispatch()` (in `terminals.ts`) dynamic-imports `orchestrator/dispatch.ts → startDispatchV5`, which normalizes settings, filters the selected zones, and generates a fresh `dispatchId` (16 hex chars).
+2. `setupWorkspaceV5()` wipes legacy v4 artifacts (`ARCHITECT/mailbox/`, `ARCHITECT/scripts/`) if present, wipes `ARCHITECT/runtime/<dispatchId>/` from a prior crashed run of the same id, and creates fresh `activity/`, `state/`, `tasks/` directories. It also writes `manifest.json`, `prompts/conductor.md`, `prompts/<zone>.md` per zone, and per-participant `state.kv` skeletons.
+3. Architect spawns each zone PTY **serially** (serialized via `serializeAgentSpawn`) so session-capture polls don't collide in the shared per-runtime session directory. Each zone receives its role prompt via the adapter's `composeSystemAndUser` (Claude via `--append-system-prompt`; others inlined in the first user prompt) plus a minimal bootstrap user turn (`"Acknowledge with 'Ready'…"`) so the CLI materializes a session file for capture.
+4. Architect spawns the **Conductor** session (`conductor-agent` PTY id). Its system prompt is `prompts/conductor.md`; its first user turn is `composeInitialTurn(userPrompt)` — the dispatch kick-off — delivered via argv so no post-spawn `pty.write` race exists.
+5. The **Scheduler** (`orchestrator/scheduler.ts`) starts. It attaches narrow per-file `fs.watch`es on each participant's activity log (draining any pre-existing lines on attach), starts a 15 s status tick, and registers its `stop()` with `setActiveDispatchCoordinator` so `killAll()` tears everything down cleanly.
+6. Dispatch is now live. The Conductor emits a `{type:"assign", assignments: […]}` activity-log line; the Scheduler parses it, `pty.write`s `TASK <taskId>: <body>` to each targeted zone's live PTY (two-step submit with 120 ms gap so Claude's TUI recognizes Enter). Zones do the work, emit one `{"kind":"done"|"failed"|"ask", taskId}` activity line when done. Scheduler notifies the Conductor with a compact user-turn summary per event. Repeat.
+7. Dependency ordering lives in the **Conductor's reasoning**, not in spawn order. The Conductor sends upstream-zone tasks first, waits for their `done` events, then fans out downstream tasks using the interfaces reported in the results.
 
-### Completion Is Not a Sentinel
+### Completion is an activity line
 
-A zone is "done with a task" when it sends a `result` message with `structured.result = 'success'` and `inReplyTo` matching the Overseer's original `task` message. The Overseer's `mailbox-drain.sh` call returns that result as part of the batched JSON array; the Overseer reads `structured.result`, reads the content body for a summary, and (optionally) `ARCHITECT/outputs/<zone>.md` for the narrative scratchpad.
+A zone is "done with a task" when it appends an activity-log line with `kind: 'done'` and a `taskId` matching the Scheduler's in-flight task. The Scheduler's `fs.watch`-driven callback parses the line, marks the task done, pty-writes a compact "Zone X done on t-abc: <summary>. What next?" user turn to the Conductor, and (if all in-flight tasks are complete) pty-writes an all-done turn.
 
-A dispatch is "done" when the Overseer has collected successful `result` messages from every engaged zone and reports back to the user. There is no filesystem sentinel to parse, no `ARCHITECT_COMPLETE` string to match.
+A dispatch is "done" when the Conductor emits `{type: "final", summary: "…"}`. The Scheduler broadcasts `dispatch:complete` IPC once and stops invoking the Conductor.
 
-### What The Coordinator Is Told To Do
+### What the Conductor is told to do
 
-The Overseer prompt (generated by `buildArchitectPrompt`) instructs it to:
+The Conductor prompt (`orchestrator/prompts/conductor.ts → buildConductorPrompt`) instructs it to:
 
-- read `ARCHITECT/manifest.json` and the Mermaid diagram for canvas context
-- dispatch a `task` message to each engaged zone via `mailbox-send.sh <zone> task <tmpfile>`
-- cycle `mailbox-listen.sh overseer 30` + `mailbox-drain.sh overseer` — listen → batch drain → plan → dispatch
-- react to each `result` / `question` / `harness.*` message per the documented dispositions
-- NEVER break the drain-and-plan loop; the loop is the job
-- NEVER use sub-agents or task tools; NEVER write to `ARCHITECT/tasks/` (gone); NEVER poll `status.json` (gone)
-
-The Overseer is therefore a **mailbox-mediated scheduler**. The harness watches and reports, but doesn't drive per-task coordination.
+- **not run a loop** — the harness drives its turn-taking
+- respond to each incoming user-turn summary with **exactly one** activity-log line
+- emit `kind: 'note'` with `structured.type ∈ {'assign', 'answer', 'final', 'noop'}`
+- use the `cat >> <path> << 'ACT_EOF' … ACT_EOF` heredoc pattern so JSON quoting stays clean
+- reference zones by their `participantId` (sanitized label)
+- trust the harness's user turns as ground truth — no need to inspect zone state separately
 
 ## Single-Zone Behavior
 
-If only one zone is selected, Architect skips the coordinator.
+If only one zone is selected, Architect skips the Conductor entirely and delegates to `runZone` (the same path used by the Play button on a zone node):
 
-Behavior changes:
+- no Conductor session
+- no Scheduler / activity-log coordination
+- no `runtime/<dispatchId>/` subtree
+- compact solo-mode prompt (`orchestrator/prompts/solo.ts → buildSoloZonePrompt`) that teaches the agent it's working directly with the user
+- the user prompt goes directly to the zone as its first user turn
 
-- no `Architect` coordinator session
-- no mailbox observer coordination loop
-- the user prompt goes directly to the zone runtime
-- the session is treated as interactive instead of autonomous coordinator-managed work
+Architect still writes prompt artifacts and ensures `ARCHITECT/outputs/<zone>.md` exists, but the session launches directly with the user request and does not participate in any multi-zone protocol.
 
-Architect still writes prompt artifacts to `ARCHITECT/`, but the session launches directly with the user request.
+## Staleness And Liveness Detection
 
-## Mailbox And Liveness Detection
+The v5 Scheduler's status tick (`orchestrator/status.ts → computeParticipantStatus`) uses a multi-signal decision:
 
-Under v4, completion is a **message**, not a terminal string. When a zone finishes a task:
+1. PTY alive? → no: `exited`
+2. Last activity-log line kind: `ask` → `blocked`; `failed` → `failed`; `done` on current taskId → `idle`
+3. BOTH signals quiet past threshold (`ptyIdleMs > idleThresholdMs` AND `activityIdleMs > idleThresholdMs`) → `stale`
+4. Otherwise → `starting` (no activity yet + no task) or `running`
 
-```bash
-# inside the zone's listen loop, after doing the work
-bash $MBX_SCRIPTS/mailbox-send.sh overseer result "$BODY" "$MESSAGE_ID"
-```
+Staleness requires BOTH signals quiet. PTY output alone (long silent tool call with no observable bytes) keeps the zone out of stale; activity-log writes alone likewise. This prevents false positives during long synchronous tool calls.
 
-This writes a JSON message to the Overseer's inbox with `type: 'result'`, `inReplyTo: <task-msg-id>`, and `structured.result ∈ {'success', 'blocked', 'failed'}`. The Overseer's `mailbox-drain.sh` call surfaces it in the batch; the Overseer matches `inReplyTo` against its outstanding task msgIds and knows which task completed with what outcome.
+When a participant has been `stale` continuously for `staleEscalationMs` (default 10 min), the Scheduler pty-writes a `"Zone X stale for Nm on t-abc. Retry / reassign / fail?"` user turn to the Conductor, increments `state.staleEscalations`, and resets `state.staleAt` so the counter restarts if the stale streak continues.
 
-Benefits over v3's `ARCHITECT_COMPLETE` sentinel approach:
+If the zone PTY exits (any reason), the Scheduler marks `ptyAlive=false`, fails the in-flight task, and pty-writes a `"Zone X PTY exited (code N)…"` turn to the Conductor. The Conductor decides whether to reassign the work, emit `{type:'final'}`, or do nothing.
 
-- **No false positives from string collisions** — the result is typed JSON with a taskId
-- **Structured failure reporting** — `structured.blocker.kind` and `structured.blocker.message` are first-class fields
-- **Back-and-forth support** — a zone can send `question` instead of `result`; Overseer replies with `answer`; zone continues and eventually sends `result`
-- **Full audit trail** — every message is a file with timestamp + msgId in the zone's outbox and Overseer's inbox
+Default thresholds (`ProjectSettings.harnessTimeouts`, tunable in the Settings panel):
 
-### Liveness signals (v4)
-
-When a zone *should* be producing output but isn't, the harness has three liveness signals it ORs together:
-
-1. `outputs/<zone>.md` file mtime — zone writing progress notes
-2. PTY `session.lastActivityMs` — any byte streaming from the CLI (spinner frames, tool output, reasoning traces)
-3. `tracker.startedAt` — floor timestamp marking when the current task was sent
-
-If the max of these three hasn't advanced in `IDLE_THRESHOLD_MS` (2 min), the harness fires one `harness.heartbeat-missed` into the Overseer's inbox. If no `result` arrives within `DEFAULT_TASK_TIMEOUT_MS` (30 min), the harness fires one `harness.timeout`. If the PTY itself exits, the harness fires `harness.pty-exit` and flips the participant's `_index.json` state to `'exited'` (tombstone; mailbox dir preserved for the Overseer to inspect).
+- `idleThresholdMs` = 3 min — flip to `stale`
+- `staleEscalationMs` = 10 min — escalate to Conductor
 
 ## Session Persistence And Resume
 
@@ -223,76 +215,53 @@ Resume support appears in:
 
 ## Runtime Argument Mapping
 
-Architect maps each runtime to a hard-coded CLI invocation shape in `buildRuntimeArgs()`.
+Architect maps each runtime to its CLI invocation shape via an **adapter layer** (`src/main/runtimes/`). Every runtime implements `RuntimeAdapter` with `buildSpawnArgs`, `buildResumeArgs`, `composeSystemAndUser`, `snapshotSessions`, `captureNewSession`, `revalidateSession`. `getRuntimeAdapter(runtime)` is the only way callers acquire runtime-specific behavior — there are no runtime branches in `terminals.ts` / `dispatch.ts`.
 
-### Claude Code
+### Claude Code (`runtimes/claude.ts`)
 
-Arguments used:
+Spawn args: `[perms] --model <m> [--effort <level>] --append-system-prompt <system> <user>`. Resume args: `[perms] --resume <id> --model <m> [effort] <user?>`.
 
-- `--dangerously-skip-permissions` for autonomous multi-zone work
-- `--permission-mode plan` when plan mode is enabled
-- `--resume <sessionId>` for persisted conversations
-- `--model <model>`
-- `--append-system-prompt <prompt>` on fresh spawn only
-- positional prompt text for initial work
+- `--dangerously-skip-permissions` for autonomous dispatch work; `--permission-mode plan` when plan mode is enabled
+- `supportsSystemPromptFlag: true` — the only runtime with a first-class system-prompt channel
+- Session capture polls `~/.claude/projects/<sanitized-cwd>/*.jsonl`
 
-Claude is the most complete integration because it supports:
+### Codex CLI (`runtimes/codex.ts`)
 
-- system prompt injection
-- plan mode wiring
-- persisted session resume
-- conversation reset by deleting saved session metadata
+Spawn args: `--no-alt-screen -a never -s workspace-write --model <m> [-c model_reasoning_effort="<level>"] <user>`. Resume args: `resume <id> <operating flags> <user?>` (`resume` is a subcommand, not a flag).
 
-### Codex CLI
+- `supportsSystemPromptFlag: false` — `composeSystemAndUser` inlines the system prompt into the first user prompt via `<<SYSTEM>>…<<END>>` fold
+- Approval mode pinned to `never`; sandbox pinned to `workspace-write`
+- Session capture walks `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, filters by `payload.cwd` + non-subagent
+- `revalidateSession` verifies the sessionId still resolves to a primary session for the current cwd
 
-Arguments used:
+### Gemini CLI (`runtimes/gemini.ts`)
 
-- `--no-alt-screen`
-- `-a never`
-- `-s workspace-write`
-- `resume <sessionId>` when resuming
-- `--model <model>`
-- positional prompt text
+Spawn args: `--approval-mode yolo --model <m> [effort] --prompt-interactive <user>`. Resume args: `--approval-mode yolo --resume <id> --model <m> --prompt-interactive <user?>`.
 
-Consequences:
+- `supportsSystemPromptFlag: false` — inline fold
+- Forced into autonomous approval mode (`yolo`)
+- Session capture checks both hash-based (`sha256(resolve(cwd))`) and slug-based (`~/.gemini/projects.json`) dirs under `~/.gemini/tmp/*/chats/`
+- `revalidateSession` verifies `projectHash` match and `kind !== 'subagent'`
 
-- Codex always runs with approval mode effectively disabled from Architect's side.
-- Sandbox mode is fixed to `workspace-write`.
-- There is no runtime-specific plan mode support in the current adapter.
-- Saved Codex sessions can be resumed.
-- Zone system prompts are not passed as a separate first-class argument.
+### OpenCode (`runtimes/opencode.ts`)
 
-### Gemini CLI
+Spawn args: `--model <m> --prompt <user>`. Resume args: `--session <id> --model <m> --prompt <user?>`.
 
-Arguments used:
+- `supportsSystemPromptFlag: false` — inline fold
+- **Always `--session <id>`, never `--continue` alone.** `--continue` loads the most-recent OpenCode session globally and silently hijacked resumes when Architect had spawned multiple opencode instances.
+- Session capture spawns `opencode session list --format json` under a PTY (the CLI requires TTY for stdout flush)
+- `revalidateSession` is a no-op that returns true (no cheap on-disk reachability check)
 
-- `--approval-mode yolo`
-- `--resume <sessionId>` when resuming
-- `--model <model>`
-- `--prompt-interactive <prompt>`
+### Role prompt delivery (how the adapter layer fixed the Claude-only gap)
 
-Consequences:
+Under v4, the zone's role prompt was passed to `spawnAgentSession` as `appendSystemPrompt`. The spawn helper passed it to `buildRuntimeArgs` which only honored it in the `case 'claude'` branch — Codex / Gemini / OpenCode silently dropped it in multi-zone dispatch.
 
-- Gemini is always forced into an autonomous approval mode.
-- Saved Gemini sessions can be resumed.
-- There is no system prompt injection equivalent in the current adapter.
-- Plan mode in the UI does not translate into Gemini-specific runtime behavior.
+Under v5, every caller goes through `adapter.composeSystemAndUser(systemPrompt, userPrompt)` which returns:
 
-### OpenCode
+- `{ appendSystemPromptFlag: systemPrompt, firstUserPrompt: userPrompt }` on Claude
+- `{ firstUserPrompt: "<<SYSTEM>>…<<END>>\n\nUser:\n<user>" }` on Codex / Gemini / OpenCode
 
-Arguments used:
-
-- `--continue --session <sessionId>` when resuming
-- `--prompt <prompt>`
-- `--model <model>`
-
-Consequences:
-
-- OpenCode currently has the thinnest integration.
-- No explicit approval-mode mapping is configured.
-- Saved OpenCode sessions can be resumed.
-- No system prompt injection path exists in the adapter.
-- No plan mode handling exists.
+Callers set `SpawnArgs.appendSystemPrompt` to `composed.appendSystemPromptFlag` and `SpawnArgs.userPrompt` to `composed.firstUserPrompt`. Every runtime gets its role prompt — Claude via the native flag, others inlined into the first turn. No silent drop.
 
 ## Feature Matrix
 
@@ -300,57 +269,37 @@ Consequences:
 | --- | --- | --- | --- | --- |
 | Spawn from zone/runtime picker | Yes | Yes | Yes | Yes |
 | Per-runtime model selection | Yes | Yes | Yes | Yes |
-| Multi-zone coordinator support | Yes | Yes | Yes | Yes |
+| Multi-zone Conductor support | Yes | Yes | Yes | Yes |
 | Single-zone direct run | Yes | Yes | Yes | Yes |
 | Assistant panel support | Yes | Yes | Yes | Yes |
 | Zone env var injection | Yes | Yes | Yes | Yes |
-| Zone system prompt injection as dedicated runtime arg | Yes | No | No | No |
+| Role prompt delivered to the agent | Yes (`--append-system-prompt`) | Yes (inlined fold) | Yes (inlined fold) | Yes (inlined fold) |
 | Saved session capture | Yes | Yes | Yes | Yes |
 | Resume saved session | Yes | Yes | Yes | Yes |
-| Reset conversation semantics | Yes | No | No | No |
+| Pre-resume reachability check | — | Yes (`isCodexSessionIdForCwd`) | Yes (`isGeminiSessionIdForCwd`) | — |
+| Reset conversation semantics | Yes | Yes (delete record) | Yes (delete record) | Yes (delete record) |
 | Plan mode wired to runtime args | Yes | No | No | No |
-| Runtime-specific permission strategy implemented | Yes | Partial | Partial | Minimal |
+| Reasoning-effort arg | Yes (`--effort`) | Yes (`-c model_reasoning_effort`) | No (config.json + interactive `/model` only) | No (Ctrl-T cycles in-session only) |
 
-## Important Gaps Between UI And Implementation
+## Current Gaps Between UI And Implementation
 
-The UI presents some zone controls as generic, but the code does not implement them generically.
+The UI presents some zone controls as generic, but a few still have per-runtime caveats (much narrower than the v4 era, which had silent drops of the system prompt for three of four runtimes).
 
-### System Prompt Is Effectively Claude-Only
-
-The zone editor says the system prompt is passed as `--append-system-prompt` on first spawn. That is true only for Claude.
-
-For Codex, Gemini, and OpenCode:
-
-- `appendSystemPrompt` is computed
-- `spawnAgentSession()` passes it into `buildRuntimeArgs()`
-- `buildRuntimeArgs()` ignores it for those runtimes
-
-Result:
-
-- non-Claude zones do not receive the zone behavior prompt through a dedicated system-prompt channel
-- in single-zone runs they only get the user prompt
-- in multi-zone runs they only get the bootstrap instruction to read the prompt file and enter the mailbox loop
-
-This is one of the biggest current parity gaps.
-
-### Plan Mode Is Also Effectively Claude-Only
+### Plan Mode Is Effectively Claude-Only
 
 The dispatch modal exposes a generic `Plan mode` checkbox.
 
-In code:
+In code: the flag is forwarded to all runtime launches via `SpawnArgs.planMode`, but only Claude's adapter consumes it (maps to `--permission-mode plan`).
 
-- the flag is forwarded to all runtime launches
-- only Claude actually consumes it in `buildRuntimeArgs()`
+Result: for Codex, Gemini, and OpenCode, checking the box changes recorded dispatch metadata but not CLI invocation behavior. The workaround is to encode "plan-mode-style" behavior in the zone's system prompt when running on non-Claude runtimes.
 
-Result:
+### Reasoning Effort Is Claude / Codex Only
 
-- for Codex, Gemini, and OpenCode, checking the box currently changes recorded dispatch metadata but not CLI invocation behavior
+`ProjectSettings.dispatchEffort` and the per-zone effort override are honored by Claude (`--effort`) and Codex (`-c model_reasoning_effort=…`). Gemini and OpenCode's CLIs don't accept an effort flag at spawn — Gemini needs a `config.json` preset plus an interactive `/model` command; OpenCode cycles variants in-session via `Ctrl-T`. The adapter's `effortArgsFor(runtime, effort)` returns `[]` for both, so the setting is dropped silently.
 
 ### Resume UI Is Multi-Runtime
 
-The terminal panel exposes resume for exited Claude, Codex, Gemini, and OpenCode sessions when a saved session record is available.
-
-The zone editor's "Reset conversation" control deletes Architect's saved session record for that zone. That works across runtimes, but only Claude also has dedicated system-prompt support, so the practical effect still varies by runtime.
+The terminal panel exposes resume for exited Claude, Codex, Gemini, and OpenCode sessions when a saved session record is available. The zone editor's "Reset conversation" control deletes Architect's saved session record for that zone. Works across runtimes.
 
 ## Permissions And Autonomy Semantics
 
@@ -415,27 +364,29 @@ The assistant prompt built in `App.tsx` teaches the runtime:
 
 This makes the assistant an architecture editor, not the same thing as the dispatch coordinator.
 
-## What Is Missing Or Incomplete Compared To A Fully Unified Runtime Layer
+## What Is Still Missing Or Incomplete
 
-If Architect is meant to support multiple CLIs equally, these are the main missing pieces:
+Remaining parity gaps (v5 resolved the biggest — system prompt delivery — by introducing the adapter layer):
 
-1. Non-Claude system prompt support.
-2. Runtime-aware "reset conversation" semantics outside Claude.
-3. Runtime-aware plan mode behavior outside Claude.
-4. A normalized permission model rather than per-runtime hard-coded flags.
-5. Better runtime-native orchestration than filesystem mailbox observation.
-6. Explicit runtime capability metadata so the UI can disable unsupported controls instead of implying parity.
-7. Dispatch history decoupled from session-capture success.
+1. **Plan-mode parity** — Claude-only (see "Current Gaps" above).
+2. **Reasoning-effort parity** — Claude + Codex only.
+3. **Normalized permission model** — each runtime still pushes its own autonomy flag (`--dangerously-skip-permissions`, `-a never -s workspace-write`, `--approval-mode yolo`, nothing). There is no cross-runtime capability layer.
+4. **Explicit runtime capability metadata in the UI** — the Settings page could dim / annotate controls that don't map to a given runtime (`runtimeSupportsEffortFlag` exists for effort; similar helpers could be added for plan mode and system-prompt delivery).
+5. **Dispatch history decoupled from session-capture success** — history persistence still depends on the Conductor's session id being captured; a capture timeout leaves the dispatch unresumable.
 
 ## Recommended Reading Order In The Code
 
 If you want to understand the implementation quickly, read files in this order:
 
-1. `src/shared/agentRuntimes.ts`
-2. `src/main/terminals.ts`
-3. `src/main/sessionCapture.ts`
-4. `src/main/index.ts`
-5. `src/preload/index.ts`
-6. `src/renderer/src/App.tsx`
-7. `src/renderer/src/components/dispatch/DispatchModal.tsx`
-8. `src/renderer/src/components/nodes/AgentConfigModal.tsx`
+1. `src/shared/agentRuntimes.ts` — runtime catalog + `effortArgsFor`
+2. `src/main/runtimes/types.ts` + `index.ts` — adapter interface + registry
+3. `src/main/runtimes/claude.ts` / `codex.ts` / `gemini.ts` / `opencode.ts` — per-CLI adapters (each < 60 lines)
+4. `src/main/sessionCapture.ts` — per-runtime session store polling + revalidation
+5. `src/main/terminals.ts` — PTY lifecycle, `spawnAgentSession`, `runZone` (solo), `startDispatch` / `resumeDispatch` (thin forwarders)
+6. `src/main/orchestrator/activity.ts` + `state.ts` + `status.ts` — coordination primitives
+7. `src/main/orchestrator/scheduler.ts` — task state machine, activity watchers, status tick
+8. `src/main/orchestrator/conductor.ts` — `parseDecision` + `compose*Turn` helpers
+9. `src/main/orchestrator/dispatch.ts` — `startDispatchV5` / `resumeDispatchV5`
+10. `src/main/orchestrator/workspace.ts` + `prompts/` — file layout + compact prompt builders
+11. `src/main/index.ts` + `src/preload/index.ts` — IPC surface
+12. `src/renderer/src/App.tsx` + `components/dispatch/DispatchModal.tsx` + `components/nodes/AgentConfigModal.tsx` — frontend

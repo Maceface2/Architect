@@ -22,9 +22,8 @@ import type {
 } from '../types'
 
 export const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
-  deliveryWarningMs: 45_000,
-  idleThresholdMs: 2 * 60_000,
-  taskTimeoutMs: 30 * 60_000,
+  idleThresholdMs: 3 * 60_000,
+  staleEscalationMs: 10 * 60_000,
 }
 
 export const DEFAULT_ZONE_TIMEOUT_MS = 30_000

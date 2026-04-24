@@ -171,7 +171,7 @@ export default function SettingsPanel({
 
         <Section
           title="Timeouts (Dispatch / Zones)"
-          hint="Zone timeout seeds new zones. Harness timeouts govern how the coordinator nags stalled zones across every dispatch. The side-panel assistant has no timeout."
+          hint="Zone timeout seeds new zones. Scheduler knobs govern how the conductor responds to stalled zones. The side-panel assistant has no timeout."
         >
           <div className="space-y-5">
             <div className="space-y-2">
@@ -183,36 +183,25 @@ export default function SettingsPanel({
                 step={1000}
                 onChange={value => onChange({ dispatchTimeoutMs: Math.max(0, value) })}
               />
-              <p className="text-[11px] text-slate-600">
-                Note: the harness enforces <span className="font-mono text-slate-500">max(zoneTimeout, harness.taskTimeoutMs)</span> — a zone value below the harness cap cannot shorten a task.
-              </p>
             </div>
 
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-slate-600">Harness coordination</p>
-              <NumberField
-                label="Delivery warning (ms)"
-                value={settings.harnessTimeouts.deliveryWarningMs}
-                min={0}
-                step={1000}
-                onChange={value => setHarness('deliveryWarningMs', value)}
-                hint="How long a task may sit unread in a zone inbox before the coordinator is warned."
-              />
+              <p className="text-[10px] uppercase tracking-wider text-slate-600">Scheduler staleness</p>
               <NumberField
                 label="Idle threshold (ms)"
                 value={settings.harnessTimeouts.idleThresholdMs}
                 min={0}
                 step={1000}
                 onChange={value => setHarness('idleThresholdMs', value)}
-                hint="Both outputs/*.md and the PTY must go quiet for this long before a heartbeat-missed fires."
+                hint="When both the PTY and the activity log go quiet past this threshold, the participant is marked stale."
               />
               <NumberField
-                label="Task timeout (ms)"
-                value={settings.harnessTimeouts.taskTimeoutMs}
+                label="Stale escalation (ms)"
+                value={settings.harnessTimeouts.staleEscalationMs}
                 min={0}
                 step={1000}
-                onChange={value => setHarness('taskTimeoutMs', value)}
-                hint="Hard cap on a single in-flight task. Zone overrides may only extend this."
+                onChange={value => setHarness('staleEscalationMs', value)}
+                hint="How long a stale streak must persist before the scheduler invokes the conductor for recovery."
               />
             </div>
           </div>

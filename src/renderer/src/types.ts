@@ -43,9 +43,12 @@ export interface NodeEnvVar {
 }
 
 export interface HarnessTimeouts {
-  deliveryWarningMs: number
+  // When both the PTY and the activity log go quiet past this threshold,
+  // the scheduler flips the participant to 'stale'.
   idleThresholdMs: number
-  taskTimeoutMs: number
+  // How long a stale streak must persist before the scheduler invokes the
+  // conductor for recovery.
+  staleEscalationMs: number
 }
 
 // Settings that exclusively drive zone launches and multi-zone dispatches.
@@ -69,8 +72,7 @@ export interface DispatchSettings {
   dispatchTools: NodeTools
   // Zone-timeout seed (ms) copied into new zones at creation time.
   dispatchTimeoutMs: number
-  // Coordinator timing for multi-zone dispatches (delivery warning, idle
-  // threshold, task timeout). Applied per dispatch run.
+  // Scheduler timing knobs for multi-zone dispatches. Applied per dispatch run.
   harnessTimeouts: HarnessTimeouts
 }
 

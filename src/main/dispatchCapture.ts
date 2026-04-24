@@ -9,13 +9,26 @@ export interface DispatchZoneSession {
   sessionId: string
 }
 
+// A task that was in-flight at dispatch teardown. Re-delivered to the zone
+// on resume via pty.write. Completed tasks are not persisted here — they
+// live in the zone's activity log.
+export interface PendingTask {
+  taskId: string
+  zoneId: string
+  participantId: string
+  body: string
+  status: 'pending' | 'dispatched' | 'in-progress' | 'blocked'
+  attempts: number
+  startedAt?: string
+}
+
 export interface DispatchRecord {
   architectSessionId: string
   architectRuntime: AgentRuntime
-  // v4 mailbox correlation id. Passed to every agent as MBX_DISPATCH_ID env
-  // var; stamped on every mailbox message's metadata. Independent from the
-  // CLI session id (which is how we resume the conversation on the runtime
-  // side). Generated at startDispatch/resumeDispatch start.
+  // v5 correlation id. Independent from the CLI session id (which is how we
+  // resume the conversation on the runtime side). Generated at
+  // startDispatch; pinned on the record so resume re-uses the same
+  // ARCHITECT/runtime/<dispatchId>/ subtree.
   dispatchId?: string
   zoneIds: string[]
   zoneLabels: string[]
@@ -26,9 +39,14 @@ export interface DispatchRecord {
   planMode: boolean
   timestamp: string
   protocolVersion?: number
+  // v5 additions. Both optional so legacy reads don't throw.
+  pendingTasks?: PendingTask[]
+  // Append-only log of parsed conductor decision JSON strings. Useful for
+  // resume (to re-seed scheduler state) and for post-hoc debugging.
+  conductorDecisions?: string[]
 }
 
-export const DISPATCH_PROTOCOL_VERSION = 4
+export const DISPATCH_PROTOCOL_VERSION = 5
 
 const DISPATCHES_SUBDIR = 'dispatches'
 
@@ -73,6 +91,8 @@ function readDispatch(path: string): DispatchRecord | null {
       planMode: parsed.planMode === true,
       timestamp: typeof parsed.timestamp === 'string' ? parsed.timestamp : new Date().toISOString(),
       protocolVersion: typeof parsed.protocolVersion === 'number' ? parsed.protocolVersion : undefined,
+      pendingTasks: Array.isArray(parsed.pendingTasks) ? parsed.pendingTasks : undefined,
+      conductorDecisions: Array.isArray(parsed.conductorDecisions) ? parsed.conductorDecisions : undefined,
     }
   } catch {
     return null
@@ -124,5 +144,33 @@ export function upsertDispatchZoneSession(
   if (!rec) return false
   const without = rec.zoneSessions.filter(z => z.zoneId !== entry.zoneId)
   saveDispatch(projectDir, { ...rec, zoneSessions: [...without, entry] })
+  return true
+}
+
+// Rewrites the pendingTasks array. Callers build it from current scheduler
+// state and invoke this on every task-state transition so a crash-then-
+// resume can re-deliver exactly what was in flight.
+export function setDispatchPendingTasks(
+  projectDir: string,
+  id: string,
+  pendingTasks: PendingTask[],
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  saveDispatch(projectDir, { ...rec, pendingTasks })
+  return true
+}
+
+// Append-only log of parsed conductor decision JSON. Written once per
+// successfully-parsed decision so resume has an audit trail.
+export function appendDispatchConductorDecision(
+  projectDir: string,
+  id: string,
+  decisionJson: string,
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  const existing = rec.conductorDecisions ?? []
+  saveDispatch(projectDir, { ...rec, conductorDecisions: [...existing, decisionJson] })
   return true
 }

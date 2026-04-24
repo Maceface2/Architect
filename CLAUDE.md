@@ -14,24 +14,44 @@ No lint or test scripts are configured yet.
 
 ## Architecture
 
-Architect is an **Electron + React** desktop app that lets users visually compose multi-agent systems using a drag-and-drop canvas, then dispatch them as real Claude Code CLI sessions.
+Architect is an **Electron + React** desktop app that lets users visually compose multi-agent systems using a drag-and-drop canvas, then dispatch them as real CLI sessions. Supported CLIs: **Claude Code**, **Codex**, **OpenCode**, **Gemini** (partial).
 
 ### Process model
 
 ```
 Main process (src/main/)
-  ├── index.ts             — BrowserWindow setup, IPC handlers (file system, graph execution)
-  ├── terminals.ts         — node-pty management, prompt building, startDispatch / runZone / resumeDispatch, mailbox observer
-  ├── mailbox.ts           — v4 mailbox protocol: message schema, atomic writes, script templates, _index.json writer
-  ├── sessionCapture.ts    — per-runtime session-id capture (claude/codex/gemini/opencode) + per-zone history store
-  └── dispatchCapture.ts   — per-dispatch record store (summary, zone session pins, dispatchId)
+  ├── index.ts                      — BrowserWindow, IPC handlers (file system, dispatch, assistant, terminal)
+  ├── terminals.ts                  — node-pty lifecycle, spawnAgentSession, runZone (solo flow), assistant flow
+  ├── sessionCapture.ts             — per-runtime session-id capture (claude/codex/gemini/opencode) + per-zone history store
+  ├── dispatchCapture.ts            — DispatchRecord store (v5 schema: zoneSessions, pendingTasks, conductorDecisions)
+  │
+  ├── runtimes/                     — per-CLI adapters behind one interface
+  │   ├── types.ts                  — RuntimeAdapter + SpawnArgs / ResumeArgs / ComposedPrompt
+  │   ├── claude.ts / codex.ts /
+  │   │   gemini.ts / opencode.ts   — adapters; absorb every `if runtime === 'x'` branch
+  │   ├── fold.ts                   — shared inline-system-prompt wrapper (for runtimes without --append-system-prompt)
+  │   └── index.ts                  — getRuntimeAdapter(runtime) registry
+  │
+  └── orchestrator/                 — v5 multi-zone coordination
+      ├── activity.ts               — append-only JSONL activity log: schema, append/tail/watch
+      ├── state.ts                  — per-participant atomic key=value snapshot
+      ├── status.ts                 — multi-signal ParticipantStatus computation
+      ├── conductor.ts              — parseDecision + compose*Turn helpers for the conductor PTY
+      ├── scheduler.ts              — per-task state machine, activity watchers, status tick
+      ├── workspace.ts              — setupWorkspaceV5 (manifest, prompts, state + activity + tasks skeletons)
+      ├── dispatch.ts               — startDispatchV5 / resumeDispatchV5 entry points
+      └── prompts/
+          ├── conductor.ts          — compact conductor.md builder
+          ├── zone.ts               — compact <safe>.md builder (multi-zone)
+          └── solo.ts               — compact prompt for single-zone runZone launches
 
 Preload (src/preload/index.ts)
-  └── Exposes window.electron via contextBridge: readDir, startDispatch, terminal.*, zone.*, dispatches.*, assistant.*, mailbox.*
+  └── Exposes window.electron via contextBridge: readDir, startDispatch, terminal.*, zone.*, dispatches.*,
+      assistant.*, activity.{onEvent, onState, onDispatchComplete}
 
 Renderer (src/renderer/src/)
   ├── App.tsx        — Root: DirectoryGate → ArchitectFlow (tab layout: Canvas / Files / Terminal)
-  ├── types.ts       — All shared types (ZoneNodeData, ZoneSessionRecord, DispatchRecord, DispatchRequest, etc.)
+  ├── types.ts       — Shared types (ZoneNodeData, ZoneSessionRecord, DispatchRecord, HarnessTimeouts, etc.)
   ├── components/layout/    — TopNav, Sidebar, AgentLog, FilesPanel, TerminalPanel, ResizablePanel
   ├── components/nodes/     — ZoneNode, ComponentNode, AgentConfigModal, ZoneLaunchModal
   ├── components/dispatch/  — DispatchModal (tabbed: new dispatch / resume previous)
@@ -41,192 +61,260 @@ Renderer (src/renderer/src/)
 
 ### Execution flow
 
-Note: Overseer = "Architect" (the coordinator agent).
-
 The canvas exposes two launch flows, both binary-choice (start new vs. resume previous):
 
 **Flow A — single-zone launch** (Play button on a zone → `ZoneLaunchModal`):
 
-1. Modal shows a "Start new session" input + scrollable history of prior `ZoneSessionRecord` entries for this zone.
+1. Modal shows "Start new session" + scrollable history of prior `ZoneSessionRecord` entries for this zone.
 2. User picks one — "new" submits `zone.launch({ mode: 'new', summary? })`; "resume <row>" submits `zone.launch({ mode: 'resume', sessionId })`.
-3. Main process (`terminals.ts → runZone`) spawns one PTY for just that zone. Fresh spawns snapshot the runtime's session store pre-spawn, then poll post-spawn to capture the new session id.
+3. Main process (`terminals.ts → runZone`) spawns one PTY. Solo mode uses `buildSoloZonePrompt` (short, no activity-log contract) and no scheduler — the agent talks directly with the user.
+4. Fresh spawns snapshot the runtime's session store pre-spawn, then poll post-spawn via `adapter.captureNewSession(cwd, before)` to capture the new session id.
 
 **Flow B — multi-zone dispatch** (TopNav Dispatch button → `DispatchModal`):
 
 1. "New dispatch" tab: user enters prompt + model + plan mode → `startDispatch(nodes, edges, cwd, settings, { userPrompt, model, planMode, onlyZoneIds? }, dispatchContext?)`.
 2. "Resume previous" tab: scrollable history of prior `DispatchRecord` entries → `dispatches.resume({ dispatchId, nodes, edges, settings })`.
-3. **Every entry into a dispatch** (fresh, redispatch, or resume) first calls `wipeMailboxTree(projectDir)` — `ARCHITECT/mailbox/` is pure communication state and starts clean on every run. `setupWorkspace` then rebuilds the workspace:
-    - `ARCHITECT/manifest.json` — full graph description
-    - `ARCHITECT/prompts/architect.md` — Overseer's drain-and-plan loop instructions
-    - `ARCHITECT/prompts/<safe>.md` — per-zone listen-and-respond loop instructions (in `dispatch` mode for multi-zone, `solo` mode for single-zone/runZone)
-    - `ARCHITECT/scripts/mailbox-*.sh` — the five mailbox shell scripts (+x bit set)
-    - `ARCHITECT/mailbox/overseer/` + `ARCHITECT/mailbox/<safe>/` — per-participant `{inbox/, outbox/, .tmp/, manifest.json}`
-    - `ARCHITECT/outputs/` — progress scratchpads, _not_ wiped (historical narrative persists)
-4. One PTY is spawned per zone plus one Overseer session. Each agent is spawned with `MBX_ROOT`, `MBX_SELF`, `MBX_SELF_LABEL`, `MBX_DISPATCH_ID`, and `MBX_SCRIPTS` env vars so the mailbox shell scripts can run without additional configuration. Each session owns a `@xterm/headless` `Terminal` instance; PTY bytes are fed into it but the headless emulator is only used for the `spawning → ready` prompt-glyph cue at bootstrap — there is no per-task cue detection in v4.
-5. Overseer gets its full prompt as `initialPrompt` (the architect.md content); zones get a short bootstrap `initialPrompt` ("Read your prompt file and enter your listen loop now") plus their role prompt baked into `--append-system-prompt` (Claude-only, currently). All agents enter their respective mailbox loops on first turn.
-6. The harness starts the **mailbox observer** (`startMailboxObserver`), which watches every participant's inbox/outbox via `fs.watch`, refreshes `ARCHITECT/mailbox/_index.json` on activity, broadcasts `mailbox:activity` IPC events to the renderer, and injects synthetic harness events when zones stall (see "Mailbox protocol" below).
-7. Each zone's captured CLI session id is upserted into the `DispatchRecord` so "Resume previous" can replay the exact same coordinator + pinned zone sessions.
-8. Terminal I/O streams to the renderer via `terminal:data` / `terminal:exit` / `terminal:status` IPC events. Mailbox activity streams via the additive `mailbox:activity` channel.
+3. `terminals.ts` forwards to `orchestrator/dispatch.ts` (dynamic import, to avoid a module-load cycle with `spawnAgentSession`). Single-zone dispatches fall through to `runZone` — no conductor needed.
+4. Multi-zone path: mint `dispatchId`, call `setupWorkspaceV5(projectDir, dispatchId, …)` to lay down:
+    - `ARCHITECT/manifest.json` — graph description (protocolVersion: 5, dispatchId, per-zone entries with runtime/model/components/upstream/downstream/paths)
+    - `ARCHITECT/prompts/conductor.md` — compact conductor prompt (~60 lines)
+    - `ARCHITECT/prompts/<safe>.md` — compact per-zone prompt (~40 lines)
+    - `ARCHITECT/runtime/<dispatchId>/` (ephemeral) — `activity/`, `state/`, `tasks/`, `index.json`
+    - `ARCHITECT/outputs/<safe>.md` — progress scratchpad dirs ensured (contents preserved across dispatches)
+    - Legacy `ARCHITECT/mailbox/` + `ARCHITECT/scripts/` (v4 leftovers) are `rm -rf`'d on entry.
+5. Spawn each zone PTY serially (serialized capture avoids diff-races in the shared `~/.claude/projects/<cwd>/` etc.). Each zone spawn passes its full role prompt via `adapter.composeSystemAndUser` — Claude gets `--append-system-prompt`; codex/opencode/gemini fold it into the first user prompt via `<<SYSTEM>>…<<END>>`. Each zone also receives a short **bootstrap user prompt** as its first turn (`"Acknowledge with 'Ready'. Do NOT append an activity-log line yet…"`) so the CLI materializes a session file on disk — without it, capture polling times out.
+6. Spawn the Conductor PTY. Its system prompt is `conductor.md`; its **initial user turn is the dispatch kick-off** (`composeInitialTurn(userPrompt)` = `"New dispatch. User task: <prompt>. Emit one {type:'assign'} decision line"`). Delivered via argv, same spawn-time mechanism as the zone bootstrap — no post-spawn pty.write needed.
+7. Build and start the `Scheduler`. It attaches a per-file `fs.watch` on every participant's activity log (drains any pre-existing lines on attach to handle races), runs a 15 s status tick for staleness detection, and registers its `stop()` with `setActiveDispatchCoordinator` so `killAll()` tears everything down.
+8. Terminal I/O streams to the renderer via `terminal:data` / `terminal:exit` / `terminal:status`. Activity events stream via `activity:event`; status transitions stream via `activity:state`. Final summary emits `dispatch:complete`.
 
-**Big Change on Save**: if the canvas was previously dispatched and zone config changed, clicking Save auto-opens the dispatch modal with a prefilled prompt describing the diff (added / updated / removed zones).
+**Big Change on Save**: if the canvas was previously dispatched and zone config changed, clicking Save auto-opens the Dispatch modal with a prefilled prompt describing the diff (added / updated / removed zones).
 
-### Mailbox protocol (v4)
+### Orchestration v5 (activity-log + conductor)
 
-Coordination between the Overseer and zone agents is **peer-to-peer message passing via per-participant inboxes**, inspired by `PatilShreyas/claude-code-session-bridge`. `DISPATCH_PROTOCOL_VERSION = 4` (in `dispatchCapture.ts`); v3 and older resumes are rejected with `legacy-protocol`.
+Coordination between zones and the Conductor is **file-based activity logs + pty.write task delivery**. No shell scripts, no mailbox files, no polling loops inside agents. `DISPATCH_PROTOCOL_VERSION = 5` (in `dispatchCapture.ts`); v4 and older resumes are rejected with `legacy-protocol`.
 
-**Key shift from v3**: the harness does not poke the zone PTY with per-task instructions and does not scrape the rendered screen for `ARCHITECT_TASK_ACK` / `ARCHITECT_COMPLETE` sentinels. All per-task delivery flows through JSON message files; the only PTY write the harness does is a one-shot bootstrap at spawn time telling the agent to enter its loop.
+The design goal: one coordination primitive that works identically across Claude, Codex, OpenCode, and Gemini — so no Claude-only flags (`--append-system-prompt` is absorbed by the adapter, not prescribed), no bash-tool-semantics assumptions (v4's `mailbox-listen.sh` blocking loop didn't work on Codex's TUI), no screen-scrape cue detection.
 
 #### Participants
 
-Each participant owns a directory under `ARCHITECT/mailbox/`:
+Every participant has a stable id used as both filename prefix and state-file basename:
 
-- `overseer` — the Architect/coordinator agent
-- `<safe>` — each zone, using `sanitize(zone.data.label)` (same identity as v3 filenames)
-- `__harness__` — reserved sender id for synthetic events the harness injects into the Overseer's inbox
+- `conductor` — the planner/coordinator agent. PTY id: `conductor-agent`.
+- `<safe>` — each zone, using `sanitize(zone.data.label)`. PTY id: zone's React Flow node id.
 
-Layout per participant:
+The Conductor's participant id is fixed (`conductor`); it's the only coordinator per dispatch.
+
+#### Transport: activity logs
+
+Each participant owns one append-only JSONL file:
 
 ```
-ARCHITECT/mailbox/<id>/
-  manifest.json              # { participantId, role, label, protocolVersion, startedAt, lastHeartbeat }
-  inbox/<iso-ts>-<msgid>.json
-  outbox/<iso-ts>-<msgid>.json   # sender's audit copy, status=read
-  .tmp/                      # staging for mktemp+rename atomic writes
+ARCHITECT/runtime/<dispatchId>/activity/<participantId>.jsonl
 ```
 
-Filenames are `<ISO-timestamp>-<msg-id>.json` so lexicographic ordering = chronological FIFO. Tempfiles live in the sibling `.tmp/`, never the inbox — every reader filters by `*.json`.
-
-#### Message schema
-
-Defined in `src/main/mailbox.ts`:
+Every meaningful action lands as one line:
 
 ```ts
-interface MailboxMessage {
-    id: string; // "msg-<12 hex>"
-    from: string; // participantId
-    to: string;
-    type:
-        | "task"
-        | "result"
-        | "question"
-        | "answer"
-        | "cancel"
-        | "session-ended"
-        | "harness.pty-exit"
-        | "harness.delivery-warning"
-        | "harness.heartbeat-missed"
-        | "harness.timeout"
-        | "harness.wake"
-        | "harness.backpressure";
-    timestamp: string; // ISO8601
-    status: "pending" | "read";
-    content: string;
-    structured: { taskId?; result?; durationMs?; blocker?; round? } | null;
-    inReplyTo: string | null;
-    metadata: { dispatchId: string; protocolVersion: 4; fromLabel: string };
+interface ActivityEvent {
+    ts: string // ISO8601
+    kind:
+        | "task-received" // agent acknowledges a dispatched task
+        | "progress" // mid-work update (optional, keeps stale detection quiet)
+        | "ask" // blocked on a question
+        | "answer" // reply to a prior ask (conductor → zone flow, rare)
+        | "done" // task finished successfully
+        | "failed" // task aborted with reason
+        | "note" // free-form log line; conductor decisions use this
+    taskId?: string
+    content: string
+    structured?: Record<string, unknown>
 }
 ```
 
-All writes are atomic: `mktemp` in the target's `.tmp/` sibling dir, then `mv` (same-filesystem rename). Schema validation runs inside `mailbox-send.sh` (jq + type-whitelist) so malformed sends exit non-zero before the file materializes.
+Agents emit lines with **one POSIX shell command** (no jq, no polling loop):
 
-#### Agent loops
+```bash
+cat >> '<abs-activity-path>' << 'ACT_EOF'
+{"ts":"2026-04-23T21:10:00Z","kind":"done","taskId":"t-abc","content":"…"}
+ACT_EOF
+```
 
-**Zone (worker)** runs `bash $MBX_SCRIPTS/mailbox-listen.sh <safe>` as a bash tool call. The script polls its own inbox every 2s, returns the first `pending` message (marked `read` atomically), or blocks indefinitely. On return the agent processes the message, sends a `result` / `question` / etc. via `mailbox-send.sh`, and **immediately re-enters** the listen loop. This is prescribed by `buildZoneSystemPrompt(..., 'dispatch')`.
+The `cat << 'ACT_EOF'` heredoc is chosen because it sidesteps shell quoting issues inside JSON; every CLI with a Bash/shell tool handles it uniformly.
 
-**Overseer (planner)** runs `mailbox-listen.sh overseer 30` (30s timeout so the loop unblocks periodically even when idle), then `mailbox-drain.sh overseer` to pull all accumulated pending messages as a JSON array at once. Reasons over the batch, plans, dispatches new `task` messages, and loops. Prescribed by `buildArchitectPrompt`.
+The harness watches each log with narrow per-file `fs.watch`. `watchActivity` tracks offset + a partial-line buffer, drains any pre-existing bytes on attach (race safety), and fires one parsed `ActivityEvent` per newline. Malformed lines are logged and skipped.
 
-Asymmetry is intentional: zones are workers (one at a time); the Overseer is a scheduler (batched reasoning over accumulated results).
+#### Task delivery: pty.write, not a mailbox
 
-#### Harness role (shrunken from v3)
+When the Conductor emits an `{type: 'assign'}` decision (see below), the `Scheduler` dispatches work by writing a normal user-turn prompt to each targeted zone's live PTY:
 
-`startMailboxObserver` in `terminals.ts` is an observer + synthetic-event injector. It does NOT poke PTYs after bootstrap, does NOT scrape screens for ack/complete, does NOT write `status.json` (there is no `status.json`).
+```
+TASK <taskId>: <body>
+```
 
-What it does:
+Plus `ANSWER <taskId>: <body>` for conductor replies and `CANCEL <taskId>: <reason>` for aborts. The zone's role prompt teaches it the prefix semantics.
 
-1. Spawns PTYs; captures CLI session IDs; writes prompts, scripts, participant manifests.
-2. One bootstrap `sendPrompt` per session at first-ready — tells the agent to read its prompt file and enter its loop. Per-task delivery never touches the PTY.
-3. Watches every participant's inbox + outbox via `fs.watch`, broadcasts `mailbox:activity` IPC on each write, refreshes `ARCHITECT/mailbox/_index.json` (harness-owned observability snapshot).
-4. For outgoing `task` messages, arms two timers:
-    - `DELIVERY_WARNING_MS` (45s) — if still `pending` in the zone's inbox, inject `harness.delivery-warning` to Overseer + `harness.wake` to the zone
-    - `DEFAULT_TASK_TIMEOUT_MS` (30min) — if no matching `result` arrives, inject `harness.timeout`
-5. Runs a heartbeat scan every 15s; fires `harness.heartbeat-missed` for any in-flight task where BOTH `outputs/<safe>.md` mtime AND PTY `lastActivityMs` have been quiet for `IDLE_THRESHOLD_MS` (2 min). Either signal advancing keeps the zone considered alive; the OR prevents false positives during long tool calls where the agent isn't appending progress notes.
-6. On zone PTY exit: injects `harness.pty-exit`, flips the participant to `state: 'exited'` in `_index.json`, but preserves the mailbox dir as a tombstone so the Overseer gets a structured answer ("exited + final tail") if it asks about the dead zone later.
-7. Two-tier cancel: soft `cancel` message is consumed by the zone on its next listen turn; hard-cancel fires SIGINT to the zone PTY after `HARD_CANCEL_MS` (60s) of unconsumed pending `cancel`.
-8. Deduplication: `fs.watch` on macOS fires multiple events per atomic rename, so `scheduleTaskTimers` no-ops if `taskTrackers.has(msg.id)` — otherwise you'd get duplicate `harness.*` events per task.
+`scheduler.writeToParticipant(pid, text)` is a **two-step submit** — write the text, wait 120 ms, then write a bare `\r`. This separates the paste-burst from the Enter key so Claude's multi-line TUI treats Enter as a distinct keystroke rather than a literal character inside pasted content. Single-burst `text + \r` leaves the turn typed into the input buffer but unsubmitted.
 
-#### `_index.json` — single pane of glass (replaces v3's `status.json`)
+#### Conductor decisions
+
+The Conductor is **harness-driven**, not self-driving. Between turns, the scheduler pty.writes one compact user-turn summary per material event:
+
+- `done` → `"Zone X done on t-abc: <summary>. What next?"`
+- `failed` (retries left) → `"Zone X failed t-abc: <reason>. Will retry. Acknowledge or override."`
+- `failed` (exhausted) → `"Zone X failed t-abc: <reason>. Retries exhausted. Recover, reroute, or mark final."`
+- `ask` → `"Zone X blocked on t-abc: <question>. Answer or reassign."`
+- `stale` (past `staleEscalationMs`) → `"Zone X stale for Nm on t-abc. Retry / reassign / fail?"`
+- `pty-exit` → `"Zone X PTY exited (code N). Decide how to proceed."`
+- all-done → `"All engaged zones reported done. Emit one {type:'final'} decision."`
+
+The Conductor responds with **one activity-log line** per turn, `kind: 'note'`, `structured.type` ∈:
 
 ```ts
-interface MailboxIndex {
-    dispatchId: string;
-    protocolVersion: 4;
-    updatedAt: string;
-    participants: Record<
-        string,
-        {
-            role: "overseer" | "zone" | "harness";
-            label: string;
-            state: "starting" | "running" | "idle" | "exited" | "unknown";
-            lastActivityMs: number;
-            exitCode?: number;
-            pendingTaskIds: string[];
-            inboxPending: number;
-            outboxCount: number;
-            tail: string; // last N bytes of PTY output — debugger view
-        }
-    >;
+type ConductorDecision =
+  | { type: "assign";  assignments: Array<{ zoneId: string; body: string; taskId?: string }> }
+  | { type: "answer";  targetZoneId: string; body: string }
+  | { type: "final";   summary: string }
+  | { type: "noop";    reason?: string }
+```
+
+The scheduler's activity watcher parses each conductor line via `parseDecision`, executes it (pty.write to zones, mark task done, emit `dispatch:complete`, etc.), and appends the decision JSON to `DispatchRecord.conductorDecisions[]` for audit + resume.
+
+**No drain loop** is prescribed. No `mailbox-listen.sh`. The Conductor's prompt explicitly says: *"You do not run a loop. The harness drives your turn-taking."*
+
+#### Scheduler responsibilities
+
+`orchestrator/scheduler.ts`:
+
+1. Attaches activity watchers for conductor + every zone.
+2. Maintains per-task state (`pending → dispatched → in-progress → {done | failed | blocked → in-progress (after answer) | failed}`).
+3. Routes zone activity lines:
+    - `task-received` / `progress` / `note` → update `lastActivityTs`
+    - `done` → mark task complete; pty.write conductor-done turn; if all zones idle, signal all-done
+    - `failed` → retry with same `taskId` up to `zone.data.behavior.retries`; on exhaustion, pty.write conductor-failed turn
+    - `ask` → set `lastTaskStatus = 'blocked'`; pty.write conductor-ask turn
+4. Executes conductor decisions (assign / answer / final / noop).
+5. Persists `DispatchRecord.pendingTasks[]` on every task transition so a crash-then-resume can re-deliver in-flight work exactly.
+6. Runs a 15 s status tick: recomputes each participant's `ParticipantStatus`, sets/clears `staleAt`, and escalates to the conductor after `staleEscalationMs` of continuous staleness.
+7. Handles PTY exits: marks the participant `ptyAlive=false`, fails the in-flight task, and pty.writes a conductor-exit turn.
+
+The scheduler **never** spawns PTYs directly; it receives `writeToPty` + `getPtyLastActivityMs` + broadcast functions as deps from `dispatch.ts`.
+
+#### Multi-signal status
+
+`orchestrator/status.ts → computeParticipantStatus` picks a `ParticipantStatus` ∈ `{ starting, running, idle, blocked, failed, stale, exited }` from:
+
+1. **PTY alive?** no → `exited`
+2. **Last activity kind:** `ask → blocked`; `failed → failed`; `done` on the current task → `idle`
+3. **Both idle past threshold** (`ptyIdleMs > idleThresholdMs && activityIdleMs > idleThresholdMs`) → `stale`
+4. Otherwise → `starting` (no activity yet, no task) or `running`
+
+Staleness requires BOTH signals quiet. PTY output alone (long silent tool call) keeps the zone out of stale; activity lines alone likewise. This is diagnostic — escalation to the conductor is a separate decision gated by `staleEscalationMs`.
+
+#### State files
+
+`ARCHITECT/runtime/<dispatchId>/state/<participantId>.kv` — flat key=value, atomic mktemp+rename writes:
+
+```
+role=zone
+label=Frontend
+runtime=claude
+sessionId=<uuid>
+lastTaskId=t-abc
+lastTaskStatus=in-progress
+lastTaskStartedAt=2026-04-23T21:08:00Z
+lastActivityTs=2026-04-23T21:10:00Z
+ptyAlive=true
+staleEscalations=0
+staleAt=2026-04-23T21:14:00Z
+```
+
+Ephemeral. Reconstructable from the activity log + DispatchRecord, so it's wiped on every dispatch entry.
+
+#### Harness timeouts
+
+`ProjectSettings.harnessTimeouts`:
+
+- `idleThresholdMs` (default 3 min) — when both the PTY and the activity log go quiet past this threshold, the participant flips to `stale`.
+- `staleEscalationMs` (default 10 min) — how long a stale streak must persist before the scheduler invokes the conductor for recovery.
+
+Exposed in the Settings panel. v4's `deliveryWarningMs` + `taskTimeoutMs` are gone — the mailbox transport they served doesn't exist.
+
+#### Lifecycle state machine
+
+`spawning → running → failed`. v4's `finished` is unused — zones stay alive across tasks and only exit via PTY close. Per-task state lives in `state.kv` + the activity log, not the session lifecycle. Broadcast via `terminal:status` IPC.
+
+### Runtime adapters
+
+Every per-CLI quirk sits behind `RuntimeAdapter` in `src/main/runtimes/types.ts`:
+
+```ts
+interface RuntimeAdapter {
+    readonly id: AgentRuntime
+    readonly supportsSystemPromptFlag: boolean // only claude today
+    buildSpawnArgs(opts: SpawnArgs): string[]
+    buildResumeArgs(opts: ResumeArgs): string[]
+    composeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt
+    snapshotSessions(cwd: string): Promise<Set<string>> | Set<string>
+    captureNewSession(cwd: string, before: Set<string>, timeoutMs?: number): Promise<string | null>
+    revalidateSession(cwd: string, sessionId: string): boolean
 }
 ```
 
-`state: 'unknown'` is valid — used when a participant has no recent PTY activity AND no pending inbox work (can't distinguish "thinking silently" from "loop broken"). The Overseer's prompt treats `unknown` as "probably fine, check back on next listen tick."
+- **claude**: `--append-system-prompt` for the system prompt, positional for the user prompt. `--resume <id>` for resume. `--dangerously-skip-permissions` | `--permission-mode plan`. Session dir: `~/.claude/projects/<sanitized-cwd>/*.jsonl`.
+- **codex**: `resume <id>` subcommand (not flag) for resume; `--no-alt-screen -a never -s workspace-write` operating flags. Positional for prompt. No system-prompt flag — adapter folds it inline via `<<SYSTEM>>…<<END>>`. Session dir: `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`. Pre-resume reachability check: `isCodexSessionIdForCwd`.
+- **gemini**: `--approval-mode yolo`, `--prompt-interactive <prompt>`, `--resume <id>`. Inline fold. Session dir: `~/.gemini/tmp/{hash|slug}/chats/session-*.json`. Pre-resume check: `isGeminiSessionIdForCwd`.
+- **opencode**: `--session <id>` (explicit; never `--continue` alone, which loads the most-recent session and silently hijacks resumes). `--prompt <prompt>`. Inline fold. Session capture spawns `opencode session list --format json` under a PTY (the CLI requires TTY for stdout).
 
-The Overseer does NOT probe `~/.claude/`, process tree, or CLI-native session stores to ask "is zone X alive / what's it doing?" Those are eventually consistent. Every question is answered via its own inbox or a `mailbox-status.sh` call. Existence = `_index.json.participants.has(<id>)`.
-
-#### v3 → v4 blocker-kind mapping
-
-| v3 `blocker.kind`                | v4 equivalent                                                                      |
-| -------------------------------- | ---------------------------------------------------------------------------------- |
-| `delivery-failed` (no ack 45s)   | `harness.delivery-warning` + `harness.wake` nudge                                  |
-| `idle-stuck` (outputs stale 90s) | `harness.heartbeat-missed` (2 min, BOTH outputs + PTY must be quiet)               |
-| `task-timeout` (30min)           | `harness.timeout`                                                                  |
-| `pty-exit`                       | `harness.pty-exit`                                                                 |
-| `malformed-completion`           | validation at send time; malformed content → `result.structured.result = 'failed'` |
-| `zone-reported`                  | `result` with `structured.result ∈ {blocked, failed}`                              |
-
-#### Ready detection (bootstrap only)
-
-`renderScreenText(term)` is still used for the `spawning → ready` transition at PTY boot (walks `term.buffer.active`, calls `line.translateToString(true)`, matches on known prompt glyphs `>` / `❯` / `›` / `>>>` / `│ >` etc). That's the only remaining screen-grid read in v4. Per-task cue detection was deleted.
-
-#### Lifecycle state machine (simplified)
-
-`spawning → ready → running → failed`. Note `finished` is gone — v4 agents live in a continuous listen loop and only exit via PTY close (which flips to `failed`). Per-task state lives in `_index.json.participants[*].state`, not the session lifecycle. Broadcast via `terminal:status` IPC.
+Every call site in `terminals.ts` / `dispatch.ts` goes through `getRuntimeAdapter(runtime)`.
 
 ### Session & dispatch persistence
 
-Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral matters:
+Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral:
 
 **Durable (survives dispatch teardown)**:
 
-- `ARCHITECT/sessions/<zoneKey>/<sessionId>.json` — one file per captured zone session: `{ runtime, sessionId, capturedAt, summary, dispatchId? }`. Oldest entries pruned past `MAX_ZONE_SESSIONS = 20`. Legacy single-file layout migrated on first read. This feeds the ZoneLaunchModal's history picker.
-- `ARCHITECT/dispatches/<architectSessionId>.json` — one file per dispatch: `{ architectSessionId, architectRuntime, dispatchId, zoneIds, zoneLabels, zoneSessions[], userPrompt, summary, model, planMode, timestamp, protocolVersion }`. The `zoneSessions` array pins each zone's `sessionId`. `dispatchId` (v4 addition) is the mailbox correlation id stamped on every message's metadata. `protocolVersion: 4` is required for resume; older dispatches fail with `legacy-protocol`.
-- `ARCHITECT/outputs/<safe>.md` — narrative progress log. Preserved across dispatches. `isRedispatch` flag in the Architect prompt tells the Overseer to expect prior outputs.
+- `ARCHITECT/sessions/<zoneKey>/<sessionId>.json` — one file per captured zone session: `{ runtime, sessionId, capturedAt, summary, model?, dispatchId? }`. Oldest entries pruned past `MAX_ZONE_SESSIONS = 20`. Feeds the ZoneLaunchModal history picker.
+- `ARCHITECT/dispatches/<architectSessionId>.json` — one file per dispatch:
+
+    ```ts
+    interface DispatchRecord {
+        architectSessionId: string
+        architectRuntime: AgentRuntime
+        dispatchId?: string
+        zoneIds: string[]
+        zoneLabels: string[]
+        zoneSessions: Array<{ zoneId; label; runtime; sessionId }>
+        userPrompt: string
+        summary: string
+        model: string
+        planMode: boolean
+        timestamp: string
+        protocolVersion?: number // = 5 for v5 dispatches
+        pendingTasks?: PendingTask[] // in-flight at teardown; re-delivered on resume
+        conductorDecisions?: string[] // append-only audit log of parsed decision JSON
+    }
+    ```
+
+    `protocolVersion: 5` required for resume; v4 and older dispatches fail with `legacy-protocol`.
+
+- `ARCHITECT/outputs/<safe>.md` — narrative progress log. Preserved across dispatches. Zones may append to this as a free-form scratchpad during work.
 
 **Ephemeral (wiped on every `startDispatch` / `resumeDispatch`)**:
 
-- `ARCHITECT/mailbox/` — the entire tree. Wiped via `wipeMailboxTree(projectDir)` at the start of every dispatch entry point, then rebuilt fresh. Pure communication state; durable conversation lives in CLI-native session files (`~/.claude/projects/...`, etc.) reloaded via `resumeSessionId`.
-- `ARCHITECT/scripts/mailbox-*.sh` — overwritten on every `setupWorkspace` so script fixes land immediately.
-- `ARCHITECT/prompts/architect.md` + `ARCHITECT/prompts/<safe>.md` — regenerated from current canvas state per dispatch.
+- `ARCHITECT/runtime/<dispatchId>/` — entire subtree (`activity/`, `state/`, `tasks/`, `index.json`). Per-dispatch subdirectory means concurrent/historical dispatches never overwrite each other. Resume wipes only its own subtree.
+- `ARCHITECT/prompts/conductor.md` + `<safe>.md` — regenerated per dispatch.
+- Legacy `ARCHITECT/mailbox/` + `ARCHITECT/scripts/` — `rm -rf`'d on first v5 entry; never recreated.
 
-**Why wipe mailbox on resume too**: the dispatch picker lets the user pick any historical dispatch, not just the most recent. By the time they resume an old one, the shared `ARCHITECT/mailbox/` has almost certainly been trampled by later runs, so whatever's on disk is unrelated junk. Durable conversation is in the CLI's own session store.
+**Resume flow** (`resumeDispatchV5`):
 
-**Runtime-specific CLI session capture** (sessionCapture.ts):
+1. Load `DispatchRecord`; reject if `protocolVersion < 5`.
+2. Wipe `ARCHITECT/runtime/<dispatchId>/`, re-run `setupWorkspaceV5`.
+3. For each zone, call `adapter.revalidateSession(cwd, sessionId)`; stale ids → skip the spawn (scheduler sees them as `exited` from turn zero).
+4. Spawn each reachable zone with `buildResumeArgs(sessionId)` — **no initial prompt** (zones come back idle).
+5. Spawn the Conductor with `buildResumeArgs(architectSessionId)` — also no initial prompt.
+6. Build + start the Scheduler; re-deliver each `record.pendingTasks[i]` via `scheduler.redispatchTask(task)` (pty.write, same `taskId` as before so correlations hold).
 
-- Claude: polls `~/.claude/projects/<sanitized-cwd>/*.jsonl` for a new UUID
-- Codex: walks `~/.codex/sessions/YYYY/MM/DD/rollout-*.jsonl`, filters by `payload.cwd` and primary (non-subagent)
-- Gemini: checks both hash-based and slug-based dirs under `~/.gemini/tmp/*/chats/`; filters by `projectHash` and `kind !== 'subagent'`
-- OpenCode: spawns `opencode session list --format json` under a PTY (CLI requires TTY for stdout)
-
-`isRecordReachable` revalidates codex/gemini session ids against on-disk files before resume; stale entries fail fast with `session-not-found`.
+Durable conversation for every runtime lives in its CLI-native session store — reloaded via `buildResumeArgs`. Architect never stores conversation text.
 
 ### Skills system
 
@@ -238,15 +326,17 @@ All renderer ↔ main communication goes through `window.electron` (defined in p
 
 - `readDir / readFile / getHomeDir / openDirectory` — file system ops
 - `saveCanvas / loadCanvas / watchCanvas / unwatchCanvas / onCanvasChanged` — canvas persistence + external-edit watcher
-- `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]`
+- `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]` (each `{id, label, runtime, coordinatedMode?}`; `coordinatedMode: true` on zones spawned inside a dispatch so the renderer locks user input)
 - `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll` — PTY control
-- `terminal.onData / terminal.onExit / terminal.onSpawned / terminal.onStatus / terminal.popout / terminal.dock` — terminal streaming, lifecycle state broadcasts, popout windows
-- `zone.launch({ mode: 'new' | 'resume', sessionId?, summary?, ... })` — spawn or resume a single zone
+- `terminal.onData / terminal.onExit / terminal.onSpawned / terminal.onStatus / terminal.onCaptureState / terminal.popout / terminal.dock / terminal.onPopoutClosed` — terminal streaming, lifecycle state broadcasts, popout windows
+- `zone.launch({ mode: 'new' | 'resume', sessionId?, summary?, ... })` — spawn or resume a single zone via `runZone`
 - `zone.listSessions / zone.deleteSession / zone.updateSessionSummary / zone.resetSession` — per-zone history management
 - `zone.onSessionCaptured` — broadcast when a fresh spawn captures its CLI session id (event includes `summary` and optional `dispatchId`)
-- `dispatches.list / dispatches.delete / dispatches.updateSummary / dispatches.resume` — per-dispatch record management; `resume` replays coordinator + all pinned zone sessions
-- `mailbox.onActivity` — additive v4 channel broadcasting one event per inbox/outbox write: `{ dispatchId, participantId, direction: 'inbox' | 'outbox', filename, msgId?, type?, from?, to? }`. Lets the renderer reflect message flow in real time without polling the filesystem. UI consumers are optional — the existing `terminal:status` + raw PTY stream still drive the terminal tabs.
-- `assistant.start(projectDir, contextMd, runtime, mode) / assistant.stop` — side-panel assistant. `mode: 'architecture' | 'general'` selects the prompt/behavior: architecture mode edits `architect-canvas.json` via `ARCHITECT_CANVAS_UPDATE` blocks; general mode is a plain coding assistant with the canvas attached as read-only reference. Each mode has its own sanitized zone key (`Architecture_Assistant_Design` / `Architecture_Assistant_General`) and PTY id (`architect-assistant-architecture` / `architect-assistant-general`), so session history and resume points are independent per mode. `assistant.stop()` tears down both.
+- `dispatches.list / dispatches.delete / dispatches.updateSummary / dispatches.resume` — per-dispatch record management; `resume` replays the Conductor + all pinned zone sessions
+- `activity.onEvent` — one event per appended activity-log line: `{ dispatchId, participantId, event: ActivityEvent }`. Lets the renderer surface agent progress, Conductor decisions, and failures in real time without polling.
+- `activity.onState` — one event per `ParticipantStatus` transition emitted by the scheduler's tick loop: `{ dispatchId, participantId, status, lastTaskId? }`.
+- `activity.onDispatchComplete` — fires once when the Conductor emits `{type:'final', summary}`: `{ dispatchId, summary }`.
+- `assistant.start(projectDir, contextMd, runtime, mode, opts?) / assistant.stop / assistant.stopMode` — side-panel assistant. `mode: 'architecture' | 'general'` selects the prompt/behavior: architecture mode edits `architect-canvas.json` via `ARCHITECT_CANVAS_UPDATE` blocks; general mode is a plain coding assistant with the canvas attached as read-only reference. Each mode has its own sanitized zone key and PTY id, so session history and resume points are independent per mode. The assistant flow is intentionally decoupled from dispatch — it does not use the scheduler / activity logs.
 
 ### Styling
 
@@ -266,7 +356,7 @@ Architect is an Electron app and shares many low-level concerns with VS Code (sh
 
 Before implementing anything related to: shell spawning, PATH resolution, PTY management, app packaging, IPC design, or file watching — check the VS Code source for a proven approach.
 
-VS Code also uses `@xterm/headless` for server-side terminal state. Architect uses the same pattern for the one remaining screen-grid scan (the `spawning → ready` prompt-glyph detector at bootstrap in `renderScreenText`). Per-task cue detection was removed in v4 — all coordination flows through mailbox message files. If you ever reintroduce screen-based detection, reference `src/vs/platform/terminal/node/terminalProcess.ts` for prior art.
+VS Code also uses `@xterm/headless` for server-side terminal state. Architect keeps each PTY's `@xterm/headless` `Terminal` instance fed with raw bytes for the `session.tail` buffer (last N bytes — used by debug views), but all per-task coordination in v5 flows through activity-log JSONL files and `pty.write`-delivered user turns. Screen-grid scanning / sigil regex was removed entirely. If you ever reintroduce screen-based detection, reference `src/vs/platform/terminal/node/terminalProcess.ts` for prior art.
 
 ## graphify
 

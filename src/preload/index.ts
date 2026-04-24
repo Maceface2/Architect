@@ -201,35 +201,44 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
-  // Mailbox observability — emits one event per inbox/outbox write so the
-  // renderer can reflect message flow in real time. Payload is intentionally
-  // light (ids + type); consumers read the dispatch's _index.json for the
-  // full snapshot.
-  mailbox: {
-    onActivity: (
+  // v5 coordination observability — one event per activity-log line, plus
+  // status-transition events from the scheduler's tick loop.
+  activity: {
+    onEvent: (
       cb: (event: {
         dispatchId: string
         participantId: string
-        direction: 'inbox' | 'outbox'
-        filename: string
-        msgId?: string
-        type?: string
-        from?: string
-        to?: string
+        event: {
+          ts: string
+          kind: 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+          taskId?: string
+          content: string
+          structured?: Record<string, unknown>
+        }
       }) => void,
     ) => {
-      const handler = (_: unknown, event: {
+      const handler = (_: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+      ipcRenderer.on('activity:event', handler)
+      return () => ipcRenderer.removeListener('activity:event', handler)
+    },
+    onState: (
+      cb: (event: {
         dispatchId: string
         participantId: string
-        direction: 'inbox' | 'outbox'
-        filename: string
-        msgId?: string
-        type?: string
-        from?: string
-        to?: string
-      }) => cb(event)
-      ipcRenderer.on('mailbox:activity', handler)
-      return () => ipcRenderer.removeListener('mailbox:activity', handler)
+        status: 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
+        lastTaskId?: string
+      }) => void,
+    ) => {
+      const handler = (_: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+      ipcRenderer.on('activity:state', handler)
+      return () => ipcRenderer.removeListener('activity:state', handler)
+    },
+    onDispatchComplete: (
+      cb: (event: { dispatchId: string; summary: string }) => void,
+    ) => {
+      const handler = (_: unknown, event: { dispatchId: string; summary: string }) => cb(event)
+      ipcRenderer.on('dispatch:complete', handler)
+      return () => ipcRenderer.removeListener('dispatch:complete', handler)
     },
   },
 })
