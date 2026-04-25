@@ -346,11 +346,15 @@ export class Scheduler {
     })
     this.persistPendingTasks()
 
-    this.writeToParticipant(
-      CONDUCTOR_PARTICIPANT_ID,
-      composeZoneDoneTurn(zone.label, zone.participantId, taskId, event.content),
-    )
-    this.maybeSignalAllDone()
+    // If this completion drains the in-flight set, fold the all-done signal
+    // into the same conductor turn. Two back-to-back writeToParticipant
+    // calls would coalesce paste before Enter fires (writeToParticipant's
+    // \r is delayed 120ms), submitting both texts as one muddled turn.
+    let conductorTurn = composeZoneDoneTurn(zone.label, zone.participantId, taskId, event.content)
+    if (!this.finalEmitted && this.isAllDone()) {
+      conductorTurn += '\n\n' + composeAllDoneTurn()
+    }
+    this.writeToParticipant(CONDUCTOR_PARTICIPANT_ID, conductorTurn)
   }
 
   private onZoneTaskFailed(zone: SchedulerZone, event: ActivityEvent): void {
@@ -439,6 +443,19 @@ export class Scheduler {
     taskId?: string
     attempts: number
   }): string {
+    // If the conductor reassigns a zone before its previous task reached a
+    // terminal state, mark the prior task superseded so it stops counting
+    // against maybeIsAllDone(). Without this, the dispatch can never reach
+    // {type:'final'} — the orphaned task pins anyInFlight=true forever.
+    const prevTaskId = this.currentTaskByParticipant.get(opts.participantId)
+    if (prevTaskId && prevTaskId !== opts.taskId) {
+      const prevTask = this.tasksByTaskId.get(prevTaskId)
+      if (prevTask && prevTask.status !== 'done' && prevTask.status !== 'failed') {
+        prevTask.status = 'failed'
+        prevTask.lastError = 'superseded by conductor reassignment'
+      }
+    }
+
     const taskId = opts.taskId ?? mintTaskId()
     const now = new Date().toISOString()
     const task: InFlightTask = {
@@ -489,16 +506,13 @@ export class Scheduler {
     }
   }
 
-  private maybeSignalAllDone(): void {
-    if (this.finalEmitted) return
-    // "All done" = no in-flight tasks AND at least one completed task exists.
+  // "All done" = no in-flight tasks AND at least one completed task exists.
+  private isAllDone(): boolean {
     const anyInFlight = Array.from(this.tasksByTaskId.values()).some(t =>
       t.status !== 'done' && t.status !== 'failed',
     )
-    if (anyInFlight) return
-    const anyDone = Array.from(this.tasksByTaskId.values()).some(t => t.status === 'done')
-    if (!anyDone) return
-    this.writeToParticipant(CONDUCTOR_PARTICIPANT_ID, composeAllDoneTurn())
+    if (anyInFlight) return false
+    return Array.from(this.tasksByTaskId.values()).some(t => t.status === 'done')
   }
 
   // ─── status tick ─────────────────────────────────────────────────────────

@@ -134,23 +134,9 @@ export function watchActivity(
   onEvent: (event: ActivityEvent) => void,
   onParseError?: (line: string, err: Error) => void,
 ): ActivityWatcher {
-  // Drain any lines that landed before the watcher could attach. The
-  // scheduler is constructed after spawning the conductor, and Claude's
-  // first activity-log write can arrive during that window. Callers
-  // ensure the activity file is empty at setup time (setupWorkspaceV5
-  // wipes the runtime subtree), so this drain is a no-op outside the
-  // tight race window.
-  for (const event of readAllActivity(path)) onEvent(event)
-
   let offset = 0
   let buffer = ''
   let closed = false
-
-  try {
-    offset = fs.statSync(path).size
-  } catch {
-    offset = 0
-  }
 
   const drain = (): void => {
     if (closed) return
@@ -199,9 +185,16 @@ export function watchActivity(
     }
   }
 
+  // Drain pre-existing bytes through the same offset-advancing path. This
+  // replaces a prior readAllActivity()+statSync pattern that had a race
+  // window: a write landing between the read and the stat would push the
+  // initial offset past bytes the read didn't see, so the line was
+  // neither replayed nor tailed.
+  drain()
+
   const watcher = fs.watch(path, () => drain())
-  // Fire an initial drain in case writes landed between the stat above and
-  // the watcher attaching.
+  // One more drain in case bytes landed between the drain above and the
+  // watcher attaching.
   drain()
 
   return {

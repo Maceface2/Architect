@@ -582,6 +582,16 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
   )
   setupWorkspaceV5(workspaceInput)
 
+  // Validate the conductor session up front. If it's pruned, abort before
+  // spawning any worker PTYs — otherwise an aborted resume leaves zone
+  // processes running with no scheduler attached.
+  const conductorRuntime = record.architectRuntime
+  const conductorAdapter = getRuntimeAdapter(conductorRuntime)
+  if (!conductorAdapter.revalidateSession(projectDir, record.architectSessionId)) {
+    console.warn(`[resume-v5] conductor session ${record.architectSessionId} not reachable; aborting resume`)
+    return { ok: false, error: 'not-found' }
+  }
+
   const info: TerminalInfo[] = [
     { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: record.architectRuntime },
   ]
@@ -591,23 +601,32 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     scheduler?.handlePtyExit(participantId, exitCode ?? null)
   }
 
+  // Track participants whose PTYs we couldn't revive. After the scheduler
+  // is up we surface these to the conductor as exits so any pending tasks
+  // targeting them fail visibly instead of dangling forever in writeToPty
+  // no-op land.
+  const skippedParticipantIds = new Set<string>()
+
   // Resume each zone with its pinned session id. Zones that can't be
-  // revalidated on-disk are surfaced in TerminalInfo (runtime=shell? no —
-  // keep runtime; scheduler sees them as exited immediately).
+  // revalidated on-disk are surfaced in TerminalInfo and recorded as
+  // skipped — the scheduler will mark them exited once it starts.
   for (const zone of filteredZones) {
     const entry = record.zoneSessions.find(z => z.zoneId === zone.id)
     const ws = workspaceZones.find(w => w.zoneId === zone.id)
     const displayLabel = ws?.label ?? zone.data.label
     const runtime = entry?.runtime ?? (ws?.runtime ?? getZoneRuntime(zone, settings))
+    const participantId = ws?.participantId ?? sanitize(zone.data.label)
     info.push({ id: zone.id, label: displayLabel, runtime, coordinatedMode: true })
 
     if (!entry) {
       console.warn(`[resume-v5] no session id stored for zone ${displayLabel}`)
+      skippedParticipantIds.add(participantId)
       continue
     }
     const adapter = getRuntimeAdapter(runtime)
     if (!adapter.revalidateSession(projectDir, entry.sessionId)) {
       console.warn(`[resume-v5] zone ${displayLabel} session ${entry.sessionId} not reachable; skipping`)
+      skippedParticipantIds.add(participantId)
       continue
     }
 
@@ -626,19 +645,13 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       resumeSessionId: entry.sessionId,
       effort: settings.dispatchEffort,
       coordinatedMode: true,
-      onExit: onZoneExit(ws?.participantId ?? sanitize(zone.data.label)),
+      onExit: onZoneExit(participantId),
     })
   }
 
   // Resume conductor. No initial prompt — it comes back idle and waits
   // for the scheduler's next pty.write (either a re-delivery or a fresh
   // user-turn prompted by the next material event).
-  const conductorRuntime = record.architectRuntime
-  const conductorAdapter = getRuntimeAdapter(conductorRuntime)
-  if (!conductorAdapter.revalidateSession(projectDir, record.architectSessionId)) {
-    console.warn(`[resume-v5] conductor session ${record.architectSessionId} not reachable; aborting resume`)
-    return { ok: false, error: 'not-found' }
-  }
   spawnAgentSession({
     win,
     id: CONDUCTOR_PTY_ID,
@@ -678,9 +691,18 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
 
   // Re-deliver any in-flight tasks from the prior run. Completed tasks stay
   // completed (they're not in pendingTasks); zones that were idle come back
-  // idle.
+  // idle. Tasks targeting skipped participants are still registered so
+  // handlePtyExit can fail them — without that, redispatch would write to
+  // a missing PTY (no-op) and the conductor would never see a failure.
   for (const task of record.pendingTasks ?? []) {
     scheduler.redispatchTask(task as PendingTask)
+  }
+
+  // Surface skipped participants as exits so the conductor can recover.
+  // This both fails any pending task we just registered for that zone and
+  // emits a composePtyExitTurn so the conductor knows to reroute or finish.
+  for (const participantId of skippedParticipantIds) {
+    scheduler.handlePtyExit(participantId, null)
   }
 
   return { ok: true, info }
