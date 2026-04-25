@@ -23,8 +23,21 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<ActivityKind>([
   'task-received', 'progress', 'ask', 'answer', 'done', 'failed', 'note',
 ])
 
+// Hard cap on the `content` field. ~8 KB is roughly 2K tokens — fits the
+// conductor's per-turn context budget and prevents log-spam / disk
+// exhaustion from a runaway zone. Lines exceeding the cap are rejected at
+// parse time.
+export const MAX_CONTENT_BYTES = 8192
+
 export interface ActivityEvent {
   ts: string                              // ISO8601
+  // Authorship marker. Must equal the participantId that owns the activity
+  // log file. The watcher rejects events whose `from` doesn't match the
+  // file's expected participantId — defends against a hallucinating zone
+  // writing into another zone's log (cross-impersonation) and against
+  // newline-injection forgery (the forged half can't claim a different
+  // `from` and still match the file owner).
+  from: string
   kind: ActivityKind
   taskId?: string                         // optional; many lines will have one
   content: string                         // free-form text for humans / conductor
@@ -58,22 +71,47 @@ export function ensureActivityLog(path: string): void {
   }
 }
 
-export function parseActivityLine(line: string): ActivityEvent | null {
+// Specific reasons an activity line can be rejected. Kept tagged so log
+// lines can say WHY a write was dropped — silent drops were a real pain
+// point during stress testing (e.g. an orphan-claim line that's syntactically
+// valid but rejected by an in-memory guard looks identical from outside to a
+// dropped malformed line).
+export type ActivityRejection =
+  | 'empty-line'
+  | 'non-json'
+  | 'not-object'
+  | 'missing-ts'
+  | 'missing-or-unknown-kind'
+  | 'missing-content'
+  | 'oversized-content'
+  | 'missing-from'
+  | 'from-mismatch'
+
+export type ActivityParseResult =
+  | { ok: true; event: ActivityEvent }
+  | { ok: false; reason: ActivityRejection }
+
+// Detailed parser. Use this when you want to log the rejection reason.
+export function parseActivityLineDetailed(line: string, expectedFrom?: string): ActivityParseResult {
   const trimmed = line.trim()
-  if (!trimmed) return null
+  if (!trimmed) return { ok: false, reason: 'empty-line' }
   let parsed: unknown
   try {
     parsed = JSON.parse(trimmed)
   } catch {
-    return null
+    return { ok: false, reason: 'non-json' }
   }
-  if (!parsed || typeof parsed !== 'object') return null
+  if (!parsed || typeof parsed !== 'object') return { ok: false, reason: 'not-object' }
   const obj = parsed as Record<string, unknown>
-  if (typeof obj.ts !== 'string') return null
-  if (typeof obj.kind !== 'string' || !KNOWN_KINDS.has(obj.kind)) return null
-  if (typeof obj.content !== 'string') return null
+  if (typeof obj.ts !== 'string') return { ok: false, reason: 'missing-ts' }
+  if (typeof obj.kind !== 'string' || !KNOWN_KINDS.has(obj.kind)) return { ok: false, reason: 'missing-or-unknown-kind' }
+  if (typeof obj.content !== 'string') return { ok: false, reason: 'missing-content' }
+  if (Buffer.byteLength(obj.content, 'utf-8') > MAX_CONTENT_BYTES) return { ok: false, reason: 'oversized-content' }
+  if (typeof obj.from !== 'string' || !obj.from) return { ok: false, reason: 'missing-from' }
+  if (expectedFrom !== undefined && obj.from !== expectedFrom) return { ok: false, reason: 'from-mismatch' }
   const event: ActivityEvent = {
     ts: obj.ts,
+    from: obj.from,
     kind: obj.kind as ActivityKind,
     content: obj.content,
   }
@@ -81,7 +119,14 @@ export function parseActivityLine(line: string): ActivityEvent | null {
   if (obj.structured && typeof obj.structured === 'object' && !Array.isArray(obj.structured)) {
     event.structured = obj.structured as Record<string, unknown>
   }
-  return event
+  return { ok: true, event }
+}
+
+// Thin wrapper preserving the original null-on-reject API for callers that
+// don't care about the reason (readers, tail).
+export function parseActivityLine(line: string, expectedFrom?: string): ActivityEvent | null {
+  const result = parseActivityLineDetailed(line, expectedFrom)
+  return result.ok ? result.event : null
 }
 
 // Appends one event as a single JSON line. Used by harness-side writers
@@ -93,8 +138,9 @@ export function appendActivity(path: string, event: ActivityEvent): void {
 }
 
 // Returns every parsed event in the file in chronological order. Malformed
-// lines are silently skipped. Used for resume / debugging.
-export function readAllActivity(path: string): ActivityEvent[] {
+// lines and lines whose `from` field doesn't match `expectedFrom` are
+// silently skipped. Used for resume / debugging.
+export function readAllActivity(path: string, expectedFrom?: string): ActivityEvent[] {
   let raw: string
   try {
     raw = fs.readFileSync(path, 'utf-8')
@@ -103,15 +149,15 @@ export function readAllActivity(path: string): ActivityEvent[] {
   }
   const events: ActivityEvent[] = []
   for (const line of raw.split('\n')) {
-    const event = parseActivityLine(line)
+    const event = parseActivityLine(line, expectedFrom)
     if (event) events.push(event)
   }
   return events
 }
 
 // Returns the last `n` parsed events. Convenience for status computation.
-export function tailActivity(path: string, n = 1): ActivityEvent[] {
-  const all = readAllActivity(path)
+export function tailActivity(path: string, n = 1, expectedFrom?: string): ActivityEvent[] {
+  const all = readAllActivity(path, expectedFrom)
   return n >= all.length ? all : all.slice(all.length - n)
 }
 
@@ -133,6 +179,7 @@ export function watchActivity(
   path: string,
   onEvent: (event: ActivityEvent) => void,
   onParseError?: (line: string, err: Error) => void,
+  expectedFrom?: string,
 ): ActivityWatcher {
   let offset = 0
   let buffer = ''
@@ -174,12 +221,12 @@ export function watchActivity(
     buffer = parts.pop() ?? ''
     for (const part of parts) {
       if (!part) continue
-      const event = parseActivityLine(part)
-      if (event) {
-        onEvent(event)
-      } else if (onParseError) {
+      const result = parseActivityLineDetailed(part, expectedFrom)
+      if (result.ok) {
+        onEvent(result.event)
+      } else if (result.reason !== 'empty-line' && onParseError) {
         try {
-          onParseError(part, new Error('malformed activity line'))
+          onParseError(part, new Error(`activity line rejected: ${result.reason}`))
         } catch {}
       }
     }

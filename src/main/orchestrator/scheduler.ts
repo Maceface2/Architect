@@ -14,8 +14,12 @@ import {
 } from './activity'
 import {
   composeAllDoneTurn,
+  composeAssignRejectedTurn,
+  composeDeadlockTurn,
+  composePrematureFinalTurn,
   composePtyExitTurn,
   composeStaleTurn,
+  composeUnassignedAskDroppedTurn,
   composeZoneAskTurn,
   composeZoneDoneTurn,
   composeZoneFailedTurn,
@@ -100,6 +104,10 @@ export class Scheduler {
   private readonly currentTaskByParticipant = new Map<string, string>()
   private readonly ptyByParticipant = new Map<string, string>()
   private readonly participantById = new Map<string, SchedulerZone>()
+  // Tracks who each blocked zone is waiting on. Populated when a zone's
+  // ask carries `structured.blockedOn` pointing at another known participant.
+  // Cleared when the zone is unblocked (answered, done, or failed).
+  private readonly blockedOnByParticipant = new Map<string, string>()
   private statusTimer: NodeJS.Timeout | null = null
   private stopped = false
   private finalEmitted = false
@@ -129,6 +137,7 @@ export class Scheduler {
         (line, err) => {
           console.warn(`[scheduler] ${participantId} activity parse error:`, err.message, 'line=', line.slice(0, 200))
         },
+        participantId,
       )
       this.watchers.push(watcher)
     }
@@ -180,6 +189,7 @@ export class Scheduler {
     const zone = this.participantById.get(participantId)
     if (!zone) return
     this.updateStateAtomic(participantId, { ptyAlive: false })
+    this.blockedOnByParticipant.delete(participantId)
     const currentTaskId = this.currentTaskByParticipant.get(participantId)
     if (currentTaskId) {
       const task = this.tasksByTaskId.get(currentTaskId)
@@ -205,11 +215,19 @@ export class Scheduler {
       participantId,
       event,
     })
-    this.updateStateAtomic(participantId, { lastActivityTs: event.ts })
 
     if (participantId === CONDUCTOR_PARTICIPANT_ID) {
+      // Conductor lines are always meaningful (they're decisions or audit
+      // notes); refresh its lastActivityTs from wall-clock unconditionally.
+      // The event-supplied `ts` is not trusted — a hostile/hallucinating
+      // sender could backdate or post-date it to manipulate stale detection.
+      this.updateStateAtomic(participantId, { lastActivityTs: new Date().toISOString() })
       this.handleConductorActivity(event)
     } else {
+      // For zones, only refresh lastActivityTs if the event passes
+      // validation (correct authorship, taskId actually assigned to this
+      // zone). Orphan events from a confused zone shouldn't suppress its
+      // own staleness clock.
       this.handleZoneActivity(participantId, event)
     }
   }
@@ -237,6 +255,28 @@ export class Scheduler {
           const zone = this.findZoneByLoose(assignment.zoneId)
           if (!zone) {
             console.warn(`[scheduler] conductor assigned to unknown zone "${assignment.zoneId}"`)
+            this.writeToParticipant(
+              CONDUCTOR_PARTICIPANT_ID,
+              composeAssignRejectedTurn('unknown-zone', {
+                zoneId: assignment.zoneId,
+                knownZoneIds: this.config.zones.map(z => z.participantId),
+              }),
+            )
+            continue
+          }
+          if (assignment.taskId && this.tasksByTaskId.has(assignment.taskId)) {
+            console.warn(`[scheduler] duplicate taskId "${assignment.taskId}" rejected`)
+            this.writeToParticipant(
+              CONDUCTOR_PARTICIPANT_ID,
+              composeAssignRejectedTurn('duplicate-task', { taskId: assignment.taskId }),
+            )
+            continue
+          }
+          if (!assignment.body || assignment.body.trim().length === 0) {
+            this.writeToParticipant(
+              CONDUCTOR_PARTICIPANT_ID,
+              composeAssignRejectedTurn('empty-body', { zoneId: zone.participantId }),
+            )
             continue
           }
           this.dispatchTaskInternal({
@@ -251,12 +291,33 @@ export class Scheduler {
       case 'answer':
         this.deliverAnswer(decision)
         break
-      case 'final':
-        if (!this.finalEmitted) {
-          this.finalEmitted = true
-          this.deps.onDispatchComplete(decision.summary)
+      case 'final': {
+        if (this.finalEmitted) break
+        // Premature-final gate: collect every still-in-flight task. If any
+        // exist, push a correction turn back to the conductor and DO NOT
+        // fire onDispatchComplete. Mitigates the conductor short-circuiting
+        // a dispatch by saying "final" while zones are still working.
+        const stillRunning: Array<{ label: string; participantId: string; taskId: string | null }> = []
+        for (const task of this.tasksByTaskId.values()) {
+          if (task.status === 'done' || task.status === 'failed') continue
+          const zone = this.participantById.get(task.participantId)
+          stillRunning.push({
+            label: zone?.label ?? task.participantId,
+            participantId: task.participantId,
+            taskId: task.taskId,
+          })
         }
+        if (stillRunning.length) {
+          this.writeToParticipant(
+            CONDUCTOR_PARTICIPANT_ID,
+            composePrematureFinalTurn(stillRunning),
+          )
+          break
+        }
+        this.finalEmitted = true
+        this.deps.onDispatchComplete(decision.summary)
         break
+      }
       case 'noop':
         // Intentional no-op. Logged via appendDispatchConductorDecision.
         break
@@ -280,7 +341,12 @@ export class Scheduler {
       console.warn(`[scheduler] conductor answered unknown zone "${decision.targetZoneId}"`)
       return
     }
-    const currentTaskId = this.currentTaskByParticipant.get(zone.participantId)
+    // Route by the ask's pending taskId, not the harness's stale notion of
+    // what task the zone is currently on. If a zone asked about t-X but the
+    // harness records its current task as t-Y, we want the answer to land
+    // tagged as t-X — that's what the zone is actually waiting for.
+    const blocked = this.findPendingAskFor(zone.participantId)
+    const currentTaskId = blocked?.taskId ?? this.currentTaskByParticipant.get(zone.participantId)
     if (currentTaskId) {
       const task = this.tasksByTaskId.get(currentTaskId)
       if (task) {
@@ -290,9 +356,19 @@ export class Scheduler {
         lastTaskStatus: 'in-progress',
       })
     }
+    // Clearing the blockedOn entry is part of unblocking the zone; if a
+    // cycle was previously detected, this also breaks the recorded chain.
+    this.blockedOnByParticipant.delete(zone.participantId)
     const taskId = currentTaskId ?? 'unknown'
     this.writeToParticipant(zone.participantId, `ANSWER ${taskId}: ${decision.body}`)
     this.persistPendingTasks()
+  }
+
+  private findPendingAskFor(participantId: string): InFlightTask | null {
+    for (const task of this.tasksByTaskId.values()) {
+      if (task.participantId === participantId && task.status === 'blocked') return task
+    }
+    return null
   }
 
   private handleZoneActivity(participantId: string, event: ActivityEvent): void {
@@ -300,6 +376,12 @@ export class Scheduler {
     if (!zone) return
     const currentTaskId = this.currentTaskByParticipant.get(participantId)
     const task = currentTaskId ? this.tasksByTaskId.get(currentTaskId) : undefined
+
+    // `validated` controls whether we refresh `lastActivityTs`. Orphan
+    // events (claims about taskIds the zone wasn't assigned) shouldn't
+    // suppress staleness — that would let a confused zone hide silence
+    // behind fake activity.
+    let validated = false
 
     switch (event.kind) {
       case 'task-received':
@@ -309,20 +391,30 @@ export class Scheduler {
             lastTaskStatus: 'in-progress',
           })
           this.persistPendingTasks()
+          validated = true
         }
         break
       case 'progress':
+        // Mid-work pings from the assigned zone: only honor if the taskId
+        // actually matches the zone's current task. Bare progress notes
+        // (no taskId) are accepted as long as the zone has a current task.
+        if (task && (!event.taskId || event.taskId === task.taskId)) {
+          validated = true
+        }
+        break
       case 'note':
-        // Activity line alone is enough; state already updated above.
+        // Free-form notes are always allowed. Used for audit/debug; never
+        // mutates task state.
+        validated = true
         break
       case 'done':
-        this.onZoneTaskDone(zone, event)
+        validated = this.onZoneTaskDone(zone, event)
         break
       case 'failed':
-        this.onZoneTaskFailed(zone, event)
+        validated = this.onZoneTaskFailed(zone, event)
         break
       case 'ask':
-        this.onZoneTaskAsk(zone, event)
+        validated = this.onZoneTaskAsk(zone, event)
         break
       case 'answer':
         // Zones don't emit 'answer' — that kind is reserved for conductor
@@ -330,16 +422,36 @@ export class Scheduler {
         break
     }
 
+    if (validated) {
+      this.updateStateAtomic(participantId, { lastActivityTs: new Date().toISOString() })
+    }
     this.broadcastStateFor(participantId)
   }
 
-  private onZoneTaskDone(zone: SchedulerZone, event: ActivityEvent): void {
+  private onZoneTaskDone(zone: SchedulerZone, event: ActivityEvent): boolean {
     const taskId = event.taskId ?? this.currentTaskByParticipant.get(zone.participantId)
-    if (!taskId) return
+    if (!taskId) {
+      console.warn(`[scheduler] ${zone.participantId} done dropped: no taskId on event and no current task`)
+      return false
+    }
     const task = this.tasksByTaskId.get(taskId)
-    if (!task || task.status === 'done') return
+    if (!task) {
+      // Orphan: claims a taskId that the harness doesn't track. Loud-warn
+      // so stress tests can verify the validation path actually fires
+      // (silent rejections were indistinguishable from "fix didn't run").
+      console.warn(`[scheduler] ${zone.participantId} orphan done dropped: taskId=${taskId} not assigned`)
+      return false
+    }
+    if (task.status === 'done') return false
+    // Assignment guard: the task must currently belong to this zone. Drops
+    // orphan-done events that name a taskId assigned to someone else.
+    if (task.participantId !== zone.participantId) {
+      console.warn(`[scheduler] ${zone.participantId} cross-zone done dropped: taskId=${taskId} belongs to ${task.participantId}`)
+      return false
+    }
     task.status = 'done'
     this.currentTaskByParticipant.delete(zone.participantId)
+    this.blockedOnByParticipant.delete(zone.participantId)
     this.updateStateAtomic(zone.participantId, {
       lastTaskStatus: 'done',
       lastTaskId: taskId,
@@ -355,13 +467,26 @@ export class Scheduler {
       conductorTurn += '\n\n' + composeAllDoneTurn()
     }
     this.writeToParticipant(CONDUCTOR_PARTICIPANT_ID, conductorTurn)
+    return true
   }
 
-  private onZoneTaskFailed(zone: SchedulerZone, event: ActivityEvent): void {
+  private onZoneTaskFailed(zone: SchedulerZone, event: ActivityEvent): boolean {
     const taskId = event.taskId ?? this.currentTaskByParticipant.get(zone.participantId)
-    if (!taskId) return
+    if (!taskId) {
+      console.warn(`[scheduler] ${zone.participantId} failed dropped: no taskId on event and no current task`)
+      return false
+    }
     const task = this.tasksByTaskId.get(taskId)
-    if (!task) return
+    if (!task) {
+      console.warn(`[scheduler] ${zone.participantId} orphan failed dropped: taskId=${taskId} not assigned`)
+      return false
+    }
+    // Assignment guard: drop failed events that claim a taskId assigned to
+    // a different zone.
+    if (task.participantId !== zone.participantId) {
+      console.warn(`[scheduler] ${zone.participantId} cross-zone failed dropped: taskId=${taskId} belongs to ${task.participantId}`)
+      return false
+    }
 
     // Retry path: keep the same taskId so the conductor's outgoing-task
     // correlation stays stable. Only the attempts counter increments.
@@ -392,13 +517,14 @@ export class Scheduler {
           false,
         ),
       )
-      return
+      return true
     }
 
     // Exhausted. Defer to conductor for recovery.
     task.status = 'failed'
     task.lastError = event.content
     this.currentTaskByParticipant.delete(zone.participantId)
+    this.blockedOnByParticipant.delete(zone.participantId)
     this.updateStateAtomic(zone.participantId, {
       lastTaskStatus: 'failed',
       lastTaskId: taskId,
@@ -416,22 +542,82 @@ export class Scheduler {
         true,
       ),
     )
+    return true
   }
 
-  private onZoneTaskAsk(zone: SchedulerZone, event: ActivityEvent): void {
+  private onZoneTaskAsk(zone: SchedulerZone, event: ActivityEvent): boolean {
     const taskId = event.taskId ?? this.currentTaskByParticipant.get(zone.participantId)
-    if (!taskId) return
+    if (!taskId) {
+      console.warn(`[scheduler] ${zone.participantId} ask dropped: no taskId on event and no current task`)
+      return false
+    }
     const task = this.tasksByTaskId.get(taskId)
-    if (task) task.status = 'blocked'
+    // Assignment guard: a zone can't claim 'blocked' on a task it was never
+    // given. Drop the event, do not mutate KV, and tell the conductor the
+    // ask was discarded so it doesn't try to ANSWER a phantom.
+    if (!task || task.participantId !== zone.participantId) {
+      const reason = !task ? `taskId=${taskId} not assigned` : `taskId=${taskId} belongs to ${task.participantId}`
+      console.warn(`[scheduler] ${zone.participantId} unassigned ask dropped: ${reason}`)
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        composeUnassignedAskDroppedTurn(zone.label, zone.participantId, taskId, event.content),
+      )
+      return false
+    }
+    task.status = 'blocked'
     this.updateStateAtomic(zone.participantId, {
       lastTaskStatus: 'blocked',
       lastTaskId: taskId,
     })
     this.persistPendingTasks()
+
+    // Cycle tracking: if the zone names a `blockedOn` participantId in
+    // `structured`, record the edge and walk for a cycle. The field is
+    // optional and forward-compatible — pre-existing prompts won't include
+    // it, in which case we just skip cycle detection for that ask.
+    const blockedOnRaw = event.structured && typeof event.structured === 'object'
+      ? (event.structured as Record<string, unknown>).blockedOn
+      : undefined
+    if (typeof blockedOnRaw === 'string' && this.participantById.has(blockedOnRaw) && blockedOnRaw !== zone.participantId) {
+      this.blockedOnByParticipant.set(zone.participantId, blockedOnRaw)
+      const cycle = this.detectCycle(zone.participantId)
+      if (cycle) {
+        this.writeToParticipant(
+          CONDUCTOR_PARTICIPANT_ID,
+          composeDeadlockTurn(cycle.map(pid => ({
+            label: this.participantById.get(pid)?.label ?? pid,
+            participantId: pid,
+          }))),
+        )
+        return true
+      }
+    }
+
     this.writeToParticipant(
       CONDUCTOR_PARTICIPANT_ID,
       composeZoneAskTurn(zone.label, zone.participantId, taskId, event.content),
     )
+    return true
+  }
+
+  // Walks the blockedOn chain starting from `start` and returns the cycle
+  // (in order, starting with the participant the cycle returns to) if one
+  // exists. Bounded depth to prevent runaway in pathological maps.
+  private detectCycle(start: string): string[] | null {
+    const path: string[] = []
+    const seen = new Set<string>()
+    let cur: string | undefined = start
+    const maxDepth = this.config.zones.length + 2
+    while (cur && path.length <= maxDepth) {
+      if (seen.has(cur)) {
+        const idx = path.indexOf(cur)
+        return idx >= 0 ? path.slice(idx) : null
+      }
+      seen.add(cur)
+      path.push(cur)
+      cur = this.blockedOnByParticipant.get(cur)
+    }
+    return null
   }
 
   // ─── task dispatch ───────────────────────────────────────────────────────
@@ -443,6 +629,13 @@ export class Scheduler {
     taskId?: string
     attempts: number
   }): string {
+    // Defense in depth — parseDecision rejects empty bodies, but a future
+    // caller (resume path, retry path) might bypass that. Don't pty.write a
+    // bare `TASK <id>:` prompt; it'd loop the zone into an empty ask.
+    if (!opts.body || opts.body.trim().length === 0) {
+      console.warn(`[scheduler] dispatchTaskInternal called with empty body for ${opts.participantId}; skipping`)
+      return ''
+    }
     // If the conductor reassigns a zone before its previous task reached a
     // terminal state, mark the prior task superseded so it stops counting
     // against maybeIsAllDone(). Without this, the dispatch can never reach
@@ -455,6 +648,8 @@ export class Scheduler {
         prevTask.lastError = 'superseded by conductor reassignment'
       }
     }
+    // Reassignment unblocks the zone — clear any recorded blockedOn edge.
+    this.blockedOnByParticipant.delete(opts.participantId)
 
     const taskId = opts.taskId ?? mintTaskId()
     const now = new Date().toISOString()
@@ -588,7 +783,7 @@ export class Scheduler {
 
   private lastActivityEvent(participantId: string): ActivityEvent | null {
     const path = activityLogPath(this.config.projectDir, this.config.dispatchId, participantId)
-    const events = tailActivity(path, 1)
+    const events = tailActivity(path, 1, participantId)
     return events[0] ?? null
   }
 

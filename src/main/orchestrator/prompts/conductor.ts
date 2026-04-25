@@ -102,11 +102,11 @@ For each incoming user turn, respond by appending **exactly one** activity-log l
 
 \`\`\`bash
 cat >> '${activityLog}' << 'ACT_EOF'
-{"ts":"<iso-utc>","kind":"note","content":"<one-line human summary>","structured":<decision>}
+{"ts":"<iso-utc>","from":"conductor","kind":"note","content":"<one-line human summary>","structured":<decision>}
 ACT_EOF
 \`\`\`
 
-Replace \`<iso-utc>\` with the current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). Replace \`<decision>\` with one of:
+Replace \`<iso-utc>\` with the current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). The \`from\` field must be the literal string \`"conductor"\` — the harness rejects events whose \`from\` doesn't match the activity log's owner. Keep \`content\` under 8 KB. Replace \`<decision>\` with one of:
 
 - **Assign work** — dispatch task(s) to zones:
   \`\`\`json
@@ -153,5 +153,7 @@ ${flow}${unassigned}
 - Project source code lives in \`${projectDir}\` — zones write real files there. The \`ARCHITECT/\` directory is coordination-only.
 - Keep task bodies concrete: name the files/endpoints to touch, contract at seams with other zones, acceptance criteria.
 - Trust the harness's user turns as ground truth — you don't need to verify zone state separately.
+- \`{type:"final"}\` is rejected if any zone is still working on a task. Wait for the explicit "All engaged zones reported done" turn before emitting it. If you emit final too early, the harness will push back with the list of still-running zones and you'll need to acknowledge or reassign before final lands.
+- Empty \`body\` / \`summary\` fields, assignments to unknown zones, and reused \`taskId\` values are rejected at parse time. The harness will tell you what was rejected — fix and re-emit.
 `
 }

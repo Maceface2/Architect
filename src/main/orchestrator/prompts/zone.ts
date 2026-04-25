@@ -110,11 +110,11 @@ Use this exact shell command shape (heredoc keeps JSON quoting straightforward):
 
 \`\`\`bash
 cat >> '${activityLog}' << 'ACT_EOF'
-{"ts":"<iso-utc>","kind":"done","taskId":"<id>","content":"<one-line summary>"}
+{"ts":"<iso-utc>","from":"${participantId}","kind":"done","taskId":"<id>","content":"<one-line summary>"}
 ACT_EOF
 \`\`\`
 
-Replace \`<iso-utc>\` with a current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). Replace \`<id>\` with the taskId from the prompt. Valid \`kind\` values:
+Replace \`<iso-utc>\` with a current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). Replace \`<id>\` with the taskId from the prompt. The \`from\` field must be the literal string \`"${participantId}"\` — the harness rejects events whose \`from\` doesn't match the activity-log file's owner. Valid \`kind\` values:
 
 - \`"done"\` — task finished successfully. Put what you produced in \`content\`.
 - \`"failed"\` — task aborted. Put the concrete blocker in \`content\` (e.g. "file X does not exist").
@@ -124,9 +124,11 @@ Replace \`<iso-utc>\` with a current UTC ISO timestamp (e.g. \`2026-04-23T21:10:
 
 \`\`\`bash
 cat >> '${activityLog}' << 'ACT_EOF'
-{"ts":"<iso-utc>","kind":"progress","taskId":"<id>","content":"<short note>"}
+{"ts":"<iso-utc>","from":"${participantId}","kind":"progress","taskId":"<id>","content":"<short note>"}
 ACT_EOF
 \`\`\`
+
+**Content size limit:** keep the \`content\` field under 8 KB. Lines exceeding that cap are rejected by the harness parser. For long output, write to your scratchpad (below) and put a short pointer in \`content\`.
 
 After your final \`done\`/\`failed\`/\`ask\` line, stop and wait for the next user turn. **Do not loop. Do not poll.**
 

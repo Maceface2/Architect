@@ -28,7 +28,7 @@ export interface ParsedDecision {
 // the event is not a structured decision (malformed or a different kind).
 export function parseDecision(event: ActivityEvent): ParsedDecision | null {
   if (event.kind !== 'note') return null
-  if (!event.structured || typeof event.structured !== 'object') return null
+  if (event.structured == null || typeof event.structured !== 'object') return null
   const s = event.structured as Record<string, unknown>
   if (typeof s.type !== 'string') return null
 
@@ -40,6 +40,8 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
       if (!row || typeof row !== 'object') return null
       const a = row as Record<string, unknown>
       if (typeof a.zoneId !== 'string' || typeof a.body !== 'string') return null
+      if (a.zoneId.trim().length === 0) return null
+      if (a.body.trim().length === 0) return null
       const entry: { zoneId: string; body: string; taskId?: string } = {
         zoneId: a.zoneId,
         body: a.body,
@@ -51,9 +53,12 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
     decision = { type: 'assign', assignments }
   } else if (s.type === 'answer') {
     if (typeof s.targetZoneId !== 'string' || typeof s.body !== 'string') return null
+    if (s.targetZoneId.trim().length === 0) return null
+    if (s.body.trim().length === 0) return null
     decision = { type: 'answer', targetZoneId: s.targetZoneId, body: s.body }
   } else if (s.type === 'final') {
     if (typeof s.summary !== 'string') return null
+    if (s.summary.trim().length === 0) return null
     decision = { type: 'final', summary: s.summary }
   } else if (s.type === 'noop') {
     decision = { type: 'noop', reason: typeof s.reason === 'string' ? s.reason : undefined }
@@ -125,4 +130,52 @@ export function composePtyExitTurn(
   exitCode: number | null,
 ): string {
   return `Zone ${zoneLabel} (\`${participantId}\`) PTY exited (code ${exitCode ?? 'n/a'}). Further messages to it will fail. Decide how to proceed.`
+}
+
+// Conductor emitted {type:'final'} while zones are still in-flight. Tell it
+// who's still working and require it to wait for the all-done signal.
+export function composePrematureFinalTurn(
+  stillRunning: Array<{ label: string; participantId: string; taskId: string | null }>,
+): string {
+  const list = stillRunning
+    .map(z => `${z.label} (\`${z.participantId}\`)${z.taskId ? ` on ${z.taskId}` : ''}`)
+    .join(', ')
+  return `Premature {type:"final"} rejected. Zones still in-flight: ${list}. Wait for the all-done signal before emitting final, or reassign/cancel the outstanding tasks.`
+}
+
+// A zone emitted kind:'ask' for a taskId that isn't currently assigned to
+// it. KV was not mutated; tell the conductor the ask was dropped so it
+// doesn't try to ANSWER a phantom.
+export function composeUnassignedAskDroppedTurn(
+  zoneLabel: string,
+  participantId: string,
+  claimedTaskId: string,
+  question: string,
+): string {
+  return `Zone ${zoneLabel} (\`${participantId}\`) emitted an ask for task \`${claimedTaskId}\` that it was never assigned. Dropped. Question content (for context): ${question}. Reassign if needed.`
+}
+
+// An assignment was rejected. Used for unknown-zone, duplicate-task, and
+// empty-body reasons (parametric so we don't proliferate composers).
+export function composeAssignRejectedTurn(
+  reason: 'unknown-zone' | 'duplicate-task' | 'empty-body',
+  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[] },
+): string {
+  switch (reason) {
+    case 'unknown-zone': {
+      const known = details.knownZoneIds?.length ? details.knownZoneIds.join(', ') : '(none)'
+      return `Assignment to unknown zone \`${details.zoneId ?? '?'}\` rejected. Known zones: ${known}. Reassign or emit {type:"final"}.`
+    }
+    case 'duplicate-task':
+      return `Assignment with duplicate taskId \`${details.taskId ?? '?'}\` rejected — that id is already tracked. Use a new taskId or omit it.`
+    case 'empty-body':
+      return `Assignment to \`${details.zoneId ?? '?'}\` rejected: body was empty. Provide a concrete task description.`
+  }
+}
+
+// Two or more zones are blocked on each other. Surface the cycle to the
+// conductor; do not auto-resolve.
+export function composeDeadlockTurn(cycle: Array<{ label: string; participantId: string }>): string {
+  const chain = cycle.map(z => `${z.label} (\`${z.participantId}\`)`).join(' → ')
+  return `Deadlock detected: ${chain} → (back to start). Break the cycle by answering one of the asks or cancelling/reassigning a task.`
 }
