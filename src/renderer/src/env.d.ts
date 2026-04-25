@@ -12,6 +12,7 @@ interface TerminalInfo {
   label: string
   runtime: AgentRuntime | 'shell'
   coordinatedMode?: boolean
+  planMode?: boolean
 }
 
 interface ElectronAPI {

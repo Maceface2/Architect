@@ -23,6 +23,7 @@ interface TerminalInfo {
   label: string
   runtime: AgentRuntime | 'shell'
   coordinatedMode?: boolean
+  planMode?: boolean
 }
 
 interface Props {
@@ -70,6 +71,13 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const [manualOverride, setManualOverride] = useState(false)
   const isCoordinated = !!info.coordinatedMode
   const locked = isCoordinated && !manualOverride
+  // Plan-mode pill state. The conductor's prompt instructs it to wait for
+  // the user to type `GO` on its own line before emitting any assignments.
+  // We mirror that locally: while the user hasn't typed GO yet, render a
+  // small badge in the header. The detector uses a per-instance line
+  // buffer to recognize a clean `GO\n` and ignores anything else.
+  const [planAcknowledged, setPlanAcknowledged] = useState(false)
+  const showPlanPill = !!info.planMode && !planAcknowledged
 
   // Sync the lock bit into the module-level map so the stable `term.onData`
   // closure (attached once, below) can early-return without re-subscribing.
@@ -148,11 +156,43 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
     return unsub
   }, [info.id])
 
+  // GO-detection: while the dispatch is in plan mode and not yet
+  // acknowledged, watch for the user typing `GO` (case-insensitive) on its
+  // own line. Registers as a SECOND `term.onData` listener (xterm allows
+  // multiple); this one's only job is to dismiss the pill.
+  useEffect(() => {
+    if (!info.planMode || planAcknowledged) return
+    const instance = termInstances.get(info.id)
+    if (!instance) return
+    let line = ''
+    const dispose = instance.term.onData(data => {
+      for (const ch of data) {
+        if (ch === '\r' || ch === '\n') {
+          if (/^\s*go\s*$/i.test(line)) setPlanAcknowledged(true)
+          line = ''
+        } else if (ch === '\x7f' || ch === '\b') {
+          line = line.slice(0, -1)
+        } else if (ch >= ' ') {
+          line += ch
+        }
+      }
+    })
+    return () => dispose.dispose()
+  }, [info.id, info.planMode, planAcknowledged])
+
   return (
     <div
       className="w-full h-full flex flex-col"
       style={{ visibility: active ? 'visible' : 'hidden' }}
     >
+      {showPlanPill && (
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-500/15 border-b border-amber-500/40 flex-shrink-0">
+          <span className="text-[11px] text-amber-200 flex items-center gap-2">
+            <span className="px-1.5 py-0.5 rounded bg-amber-500/30 border border-amber-500/50 font-medium tracking-wide">PLAN MODE</span>
+            waiting for <span className="font-mono font-semibold">GO</span> — discuss the plan with the conductor, then type <span className="font-mono font-semibold">GO</span> to dispatch
+          </span>
+        </div>
+      )}
       {isCoordinated && (locked ? (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
           <span className="text-[11px] text-slate-400 flex items-center gap-2">

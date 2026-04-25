@@ -40,7 +40,7 @@ import {
 } from '../terminals'
 import { runZone } from '../terminals'
 import { CONDUCTOR_PARTICIPANT_ID, Scheduler, type SchedulerZone } from './scheduler'
-import { composeInitialTurn } from './conductor'
+import { composeInitialTurn, composePlanModeInitialTurn } from './conductor'
 import { setupWorkspaceV5, type WorkspaceInput, type WorkspaceZoneInput } from './workspace'
 import type { ZoneComponentSpec, ZoneUpstreamRef } from './prompts/zone'
 
@@ -439,9 +439,18 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   const conductorPrompt = fs.readFileSync(conductorPromptPath, 'utf-8')
   const conductorModel = dispatch.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
   const conductorAdapter = getRuntimeAdapter(conductorRuntime)
+  const planMode = dispatch.planMode === true
+  // Plan mode in Architect = "the conductor plans with the user in prose
+  // before any zone gets a task." It is NOT the same as Claude's
+  // --permission-mode plan (read-only). We deliberately do NOT pass
+  // planMode=true to spawnAgentSession below — agents run with normal
+  // permissions and the conductor's planning is enforced by its prompt.
+  const conductorInitialTurn = planMode
+    ? composePlanModeInitialTurn(userPrompt)
+    : composeInitialTurn(userPrompt)
   const conductorComposed = conductorAdapter.composeSystemAndUser(
     conductorPrompt,
-    composeInitialTurn(userPrompt),
+    conductorInitialTurn,
   )
 
   await serializeAgentSpawn(() => new Promise<void>(resolve => {
@@ -463,7 +472,12 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       appendSystemPrompt: conductorComposed.appendSystemPromptFlag,
       model: conductorModel,
       effort: settings.dispatchEffort,
-      planMode: dispatch.planMode === true,
+      // Pass planMode through to the conductor's CLI so Claude Code's
+      // status bar reflects "plan mode on". The conductor's prompt
+      // additionally instructs it to wait for the user to type GO before
+      // emitting any {type:"assign"} decisions.
+      planMode,
+      planModeBadge: planMode,
       capture: {
         projectDir,
         zoneKey: CONDUCTOR_PTY_ID,
@@ -662,6 +676,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     model: record.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime],
     resumeSessionId: record.architectSessionId,
     planMode: record.planMode === true,
+    planModeBadge: record.planMode === true,
     effort: settings.dispatchEffort,
   })
 

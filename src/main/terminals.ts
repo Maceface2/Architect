@@ -236,6 +236,12 @@ export interface TerminalInfo {
   // turn flow. Never set on the Conductor, solo-zone launches, assistant,
   // or shell sessions.
   coordinatedMode?: boolean
+  // True when this terminal is the Conductor of a dispatch the user has
+  // requested in plan mode. The renderer renders a "plan mode — waiting
+  // for GO" pill in the terminal's header until the user types GO. The
+  // conductor's prompt teaches it to discuss the plan with the user
+  // before emitting any {type:"assign"} decisions.
+  planMode?: boolean
 }
 
 // Position + dimensions come straight from React Flow nodes.
@@ -389,6 +395,12 @@ interface SpawnAgentOptions {
   // See TerminalInfo.coordinatedMode. Set true for zones spawned inside a
   // multi-zone dispatch/resume; omitted everywhere else.
   coordinatedMode?: boolean
+  // See TerminalInfo.planMode. Set true when this spawn is the Conductor of
+  // a dispatch the user opened in plan mode, so the renderer can show the
+  // "plan mode — waiting for GO" pill. Distinct from the spawn-level
+  // `planMode` flag above (which controls Claude's --permission-mode plan
+  // CLI arg); this one is purely a renderer hint.
+  planModeBadge?: boolean
 }
 
 const sessions = new Map<string, Session>()
@@ -593,6 +605,7 @@ export function spawnAgentSession({
   onSessionCaptured,
   onCaptureSettled,
   coordinatedMode,
+  planModeBadge,
 }: SpawnAgentOptions): TerminalInfo {
   // Reset any capture state from a prior spawn at this id (e.g. resume replacing
   // a fresh session). captureRuntime below will re-mark 'pending' if needed.
@@ -711,7 +724,13 @@ export function spawnAgentSession({
     }
   }
 
-  return { id, label, runtime, ...(coordinatedMode ? { coordinatedMode: true } : {}) }
+  return {
+    id,
+    label,
+    runtime,
+    ...(coordinatedMode ? { coordinatedMode: true } : {}),
+    ...(planModeBadge ? { planMode: true } : {}),
+  }
 }
 
 export function spawnShellSession(
