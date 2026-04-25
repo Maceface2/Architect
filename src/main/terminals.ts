@@ -230,11 +230,14 @@ export interface TerminalInfo {
   id: string
   label: string
   runtime: AgentRuntime | 'shell'
-  // True when this terminal is a scheduler-coordinated worker (zone in a
-  // multi-zone dispatch or resume). The renderer uses it to lock user input
-  // by default so accidental typing doesn't crowd the conductor-driven
-  // turn flow. Never set on the Conductor, solo-zone launches, assistant,
-  // or shell sessions.
+  // True when this terminal is part of a scheduler-driven dispatch (any zone
+  // OR the Conductor). The renderer uses it to lock user input by default so
+  // accidental typing doesn't interleave with scheduler-delivered prompts —
+  // the scheduler's two-step submit (text → 120ms → \r) races with concurrent
+  // user keystrokes and corrupts whichever turn is mid-flight. The user can
+  // click "Take manual control" to type (e.g. to send GO in plan mode or chat
+  // with the Conductor mid-dispatch). Never set on solo-zone launches, the
+  // assistant, or shell sessions.
   coordinatedMode?: boolean
   // True when this terminal is the Conductor of a dispatch the user has
   // requested in plan mode. The renderer renders a "plan mode — waiting
@@ -392,8 +395,8 @@ interface SpawnAgentOptions {
   // Callers use this to serialize spawn ordering: wait for one zone's
   // session file to land on disk before snapshotting the next zone.
   onCaptureSettled?: (sessionId: string | null) => void
-  // See TerminalInfo.coordinatedMode. Set true for zones spawned inside a
-  // multi-zone dispatch/resume; omitted everywhere else.
+  // See TerminalInfo.coordinatedMode. Set true for zones AND the Conductor
+  // spawned inside a multi-zone dispatch/resume; omitted everywhere else.
   coordinatedMode?: boolean
   // See TerminalInfo.planMode. Set true when this spawn is the Conductor of
   // a dispatch the user opened in plan mode, so the renderer can show the
@@ -554,6 +557,7 @@ function createSession(
       }
       try { session.term.dispose() } catch {}
       sessions.delete(id)
+      clearCoordinationState(id)
     }
     onExit?.(exitCode ?? null)
   })
@@ -772,6 +776,83 @@ export function writeToTerminal(id: string, data: string) {
   sessions.get(id)?.pty.write(data)
 }
 
+// Per-PTY coordination state for the scheduler↔user write race. The Conductor
+// (and any zone the user opted into manual control on) is shared between two
+// writers: the scheduler's `submitTurnToTerminal` and the user's keystrokes via
+// `terminal:input`. While the user holds manual control, scheduler turns are
+// queued instead of interleaving. On release, the queue drains sequentially
+// with a gap between turns so paste-detection doesn't coalesce them.
+const userControlState = new Map<string, boolean>()
+const turnQueue = new Map<string, string[]>()
+const draining = new Set<string>()
+
+const SUBMIT_BODY_TO_CR_MS = 120  // body→\r gap (Claude paste-detection)
+const INTER_TURN_GAP_MS = 220     // \r→next-body gap (let TUI commit the turn)
+
+// Submit one full turn (body + Enter) to a PTY. Use this instead of two
+// separate writeToTerminal calls — the two-step pattern (body, 120ms, CR) is
+// load-bearing because Claude's TUI treats a single burst as paste content
+// and won't interpret an embedded \r as Enter. While `userControlState[id]`
+// is true (user has manual control), turns are queued and replayed on release.
+export function submitTurnToTerminal(id: string, text: string): void {
+  if (userControlState.get(id) === true) {
+    const q = turnQueue.get(id) ?? []
+    q.push(text)
+    turnQueue.set(id, q)
+    return
+  }
+  performSubmit(id, text)
+}
+
+function performSubmit(id: string, text: string): void {
+  const sess = sessions.get(id)
+  if (!sess) return
+  sess.pty.write(text)
+  setTimeout(() => {
+    // If the user took control during the 120ms gap, skip the CR — the body
+    // has already landed in the TUI input line, and submitting it now would
+    // race with whatever the user has started typing. The body sits there as
+    // pre-filled text the user can backspace or accept. Subsequent queued
+    // turns will drain after release.
+    if (userControlState.get(id) === true) return
+    sessions.get(id)?.pty.write('\r')
+  }, SUBMIT_BODY_TO_CR_MS)
+}
+
+// User toggles manual control. Releasing (hasControl=false) drains the queue.
+export function setUserControl(id: string, hasControl: boolean): void {
+  userControlState.set(id, hasControl)
+  if (!hasControl) drainTurnQueue(id)
+}
+
+function drainTurnQueue(id: string): void {
+  if (draining.has(id)) return
+  draining.add(id)
+  const next = (): void => {
+    if (userControlState.get(id) === true) { draining.delete(id); return }
+    const q = turnQueue.get(id)
+    if (!q || q.length === 0) { draining.delete(id); return }
+    if (!sessions.has(id)) { draining.delete(id); turnQueue.delete(id); return }
+    const text = q.shift()!
+    const sess = sessions.get(id)!
+    sess.pty.write(text)
+    setTimeout(() => {
+      if (userControlState.get(id) === true) { draining.delete(id); return }
+      sessions.get(id)?.pty.write('\r')
+      setTimeout(next, INTER_TURN_GAP_MS)
+    }, SUBMIT_BODY_TO_CR_MS)
+  }
+  next()
+}
+
+// Clear all coordination state for a PTY id. Called when a session ends so a
+// later dispatch reusing the same id (e.g. CONDUCTOR_PTY_ID) starts clean.
+function clearCoordinationState(id: string): void {
+  userControlState.delete(id)
+  turnQueue.delete(id)
+  draining.delete(id)
+}
+
 export function resizeTerminal(id: string, cols: number, rows: number) {
   const session = sessions.get(id)
   if (!session) return
@@ -793,6 +874,7 @@ export function killAll() {
     try { session.term.dispose() } catch {}
     sessions.delete(id)
     captureStates.delete(id)
+    clearCoordinationState(id)
   }
 }
 
@@ -825,6 +907,7 @@ export function closeTerminal(id: string): { ok: boolean; reason?: string } {
     try { session.pty.kill() } catch {}
     try { session.term.dispose() } catch {}
     sessions.delete(id)
+    clearCoordinationState(id)
   }
   // Only clear capture bookkeeping if capture already settled. While still
   // 'pending', leave the entries so the in-flight poll's persistAndBroadcast
@@ -1352,6 +1435,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     try { existing.pty.kill() } catch {}
     try { existing.term.dispose() } catch {}
     sessions.delete(zone.id)
+    clearCoordinationState(zone.id)
   }
 
   if (opts.mode === 'resume') {

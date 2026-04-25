@@ -29,8 +29,8 @@ import {
   serializeAgentSpawn,
   setActiveDispatchCoordinator,
   spawnAgentSession,
+  submitTurnToTerminal,
   topoSort,
-  writeToTerminal,
   killAll,
   type GraphEdge,
   type GraphNode,
@@ -336,7 +336,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // tabs incrementally as each PTY spawns.
   const wsByZoneId = new Map(workspaceZones.map(w => [w.zoneId, w]))
   const allInfo: TerminalInfo[] = [
-    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime },
+    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime, coordinatedMode: true },
     ...sorted.map(zone => ({
       id: zone.id,
       label: wsByZoneId.get(zone.id)?.label ?? zone.data.label,
@@ -478,6 +478,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       // emitting any {type:"assign"} decisions.
       planMode,
       planModeBadge: planMode,
+      coordinatedMode: true,
       capture: {
         projectDir,
         zoneKey: CONDUCTOR_PTY_ID,
@@ -535,7 +536,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      writeToPty: (ptyId, text) => writeToTerminal(ptyId, text),
+      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId, summary }),
@@ -607,7 +608,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
   }
 
   const info: TerminalInfo[] = [
-    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: record.architectRuntime },
+    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: record.architectRuntime, coordinatedMode: true },
   ]
 
   let scheduler: Scheduler | null = null
@@ -677,6 +678,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     resumeSessionId: record.architectSessionId,
     planMode: record.planMode === true,
     planModeBadge: record.planMode === true,
+    coordinatedMode: true,
     effort: settings.dispatchEffort,
   })
 
@@ -693,7 +695,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      writeToPty: (ptyId, text) => writeToTerminal(ptyId, text),
+      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId: pinnedDispatchId, summary }),

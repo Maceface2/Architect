@@ -90,6 +90,9 @@ contextBridge.exposeInMainWorld('electron', {
     input: (id: string, data: string) =>
       ipcRenderer.send('terminal:input', id, data),
 
+    setUserControl: (id: string, hasControl: boolean) =>
+      ipcRenderer.send('terminal:set-user-control', id, hasControl),
+
     resize: (id: string, cols: number, rows: number) =>
       ipcRenderer.send('terminal:resize', id, cols, rows),
 

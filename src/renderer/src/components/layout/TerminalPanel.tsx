@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { AlertTriangle, ExternalLink, Lock, Plus, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Keyboard, Lock, Plus, RotateCcw, Terminal as TerminalIcon, Unlock, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -84,6 +84,14 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   useEffect(() => {
     termLockState.set(info.id, locked)
   }, [info.id, locked])
+
+  // Tell main when the user has manual control of a coordinated terminal so
+  // the scheduler queues turns instead of interleaving with user typing.
+  // Releasing control drains the queue.
+  useEffect(() => {
+    if (!isCoordinated) return
+    window.electron.terminal.setUserControl(info.id, manualOverride)
+  }, [info.id, isCoordinated, manualOverride])
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -196,24 +204,31 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       {isCoordinated && (locked ? (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
           <span className="text-[11px] text-slate-400 flex items-center gap-2">
-            <Lock size={11} /> Conductor-controlled — user input disabled
+            <Lock size={11} /> Scheduler-coordinated — agent communications flowing
           </span>
           <button
             onClick={() => setManualOverride(true)}
-            className="px-2 py-0.5 text-[10px] font-medium rounded bg-red-500/20 text-red-300 hover:bg-red-500/30 border border-red-500/40 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded bg-[#58A6FF]/15 text-[#58A6FF] hover:bg-[#58A6FF]/25 hover:text-white border border-[#58A6FF]/40 transition-colors"
+            title="Pause incoming agent messages and type a reply"
           >
-            Take manual control
+            <Keyboard size={12} />
+            Take control to type
           </button>
         </div>
       ) : (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/15 border-b border-red-500/40 flex-shrink-0">
-          <span className="text-[11px] text-red-300 flex items-center gap-2">
-            <AlertTriangle size={11} /> Manual override active — typing here may break the zone's listen loop
+        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/20 border-b-2 border-red-500/70 flex-shrink-0 animate-pulse-glow">
+          <span className="text-[11px] text-red-200 flex items-center gap-2 font-medium">
+            <AlertTriangle size={12} className="text-red-300" />
+            <span>
+              <span className="font-semibold text-red-100">Incoming agent communications blocked</span>
+              <span className="text-red-300/90"> — they will queue until you re-lock</span>
+            </span>
           </span>
           <button
             onClick={() => setManualOverride(false)}
-            className="px-2 py-0.5 text-[10px] font-medium rounded bg-slate-700/60 text-slate-200 hover:bg-slate-700/80 border border-white/20 transition-colors"
+            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded bg-slate-700/70 text-slate-100 hover:bg-slate-600 border border-white/20 transition-colors"
           >
+            <Unlock size={12} />
             Re-lock
           </button>
         </div>
@@ -384,8 +399,8 @@ function PaneView({
                       } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
                     />
                   )}
-                  {s.coordinatedMode && !isShell && !isConductor && (
-                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Conductor-controlled" />
+                  {s.coordinatedMode && !isShell && (
+                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Scheduler-coordinated" />
                   )}
                   <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
                     {isShell ? (s.label || 'Shell') : isConductor ? '⬡ Conductor' : s.label}

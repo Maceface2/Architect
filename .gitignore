@@ -5,3 +5,5 @@ dist/
 *.log
 graphify-out/
 ARCHITECT/mailbox/
+out-tsc/
+test_results/

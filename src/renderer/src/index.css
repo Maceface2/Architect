@@ -66,3 +66,22 @@ body {
 .react-flow__node.dragging {
   opacity: 0.8;
 }
+
+/* Pulsing red glow for the "agent communications blocked" banner shown when
+   the user takes manual control of a coordinated terminal. */
+@keyframes pulseGlow {
+  0%, 100% {
+    box-shadow:
+      inset 0 0 18px rgba(239, 68, 68, 0.18),
+      0 0 12px rgba(239, 68, 68, 0.35);
+  }
+  50% {
+    box-shadow:
+      inset 0 0 28px rgba(239, 68, 68, 0.32),
+      0 0 24px rgba(239, 68, 68, 0.65);
+  }
+}
+
+.animate-pulse-glow {
+  animation: pulseGlow 2s ease-in-out infinite;
+}

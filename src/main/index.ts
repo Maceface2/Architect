@@ -9,6 +9,7 @@ import {
   resumeDispatch,
   resetZoneSession,
   writeToTerminal,
+  setUserControl,
   resizeTerminal,
   killAll,
   closeTerminal,
@@ -270,6 +271,10 @@ ipcMain.handle('terminal:spawn-shell', (_event, cwd: string, opts?: { force?: bo
 
 ipcMain.on('terminal:input', (_event, id: string, data: string) => {
   writeToTerminal(id, data)
+})
+
+ipcMain.on('terminal:set-user-control', (_event, id: string, hasControl: boolean) => {
+  setUserControl(id, hasControl)
 })
 
 ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) => {

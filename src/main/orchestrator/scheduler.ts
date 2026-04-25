@@ -62,9 +62,10 @@ export interface SchedulerConfig {
 }
 
 export interface SchedulerDeps {
-  // pty.write to the given participant. The scheduler translates
-  // participantId → terminal PTY id internally.
-  writeToPty(ptyId: string, text: string): void
+  // Submit a full user turn (body + Enter) to the given PTY. The implementor
+  // owns the two-step submit (body → 120ms gap → \r) and any queueing while
+  // the user holds manual control. Scheduler doesn't time the submit itself.
+  submitTurn(ptyId: string, text: string): void
   broadcastActivity(event: {
     dispatchId: string
     participantId: string
@@ -826,18 +827,10 @@ export class Scheduler {
       console.warn(`[scheduler] no pty mapped for participant ${participantId}`)
       return
     }
-    // Two-step submit: write the text as one chunk, then send Enter after a
-    // short delay. Claude's multi-line TUI treats a single burst of bytes as
-    // pasted content and doesn't interpret an embedded/trailing \r as the
-    // Enter key — so the text lands in the input buffer but the turn never
-    // submits. Separating Enter into its own event past the paste-detection
-    // window (tmux uses ~50ms; we pad to 120ms for margin) makes the TUI
-    // treat it as a distinct keystroke.
-    this.deps.writeToPty(ptyId, text)
-    setTimeout(() => {
-      if (this.stopped) return
-      this.deps.writeToPty(ptyId, '\r')
-    }, 120)
+    if (this.stopped) return
+    // Delegates the two-step submit (body → 120ms → Enter) and the
+    // user-manual-control queue to terminals.ts. See submitTurnToTerminal.
+    this.deps.submitTurn(ptyId, text)
   }
 }
 

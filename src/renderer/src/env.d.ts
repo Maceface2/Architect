@@ -72,6 +72,7 @@ interface ElectronAPI {
   terminal: {
     spawnShell: (cwd: string, opts?: { force?: boolean }) => Promise<TerminalInfo | null>
     input: (id: string, data: string) => void
+    setUserControl: (id: string, hasControl: boolean) => void
     resize: (id: string, cols: number, rows: number) => void
     killAll: () => void
     close: (id: string) => Promise<{ ok: boolean; reason?: string }>
