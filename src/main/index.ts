@@ -10,6 +10,7 @@ import {
   resetZoneSession,
   writeToTerminal,
   resizeTerminal,
+  releaseInputGateQueue,
   killAll,
   closeTerminal,
   getCaptureState,
@@ -274,6 +275,10 @@ ipcMain.on('terminal:input', (_event, id: string, data: string) => {
 
 ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) => {
   resizeTerminal(id, cols, rows)
+})
+
+ipcMain.on('terminal:release-queue', (_event, id: string) => {
+  releaseInputGateQueue(id)
 })
 
 ipcMain.on('terminal:kill-all', () => {

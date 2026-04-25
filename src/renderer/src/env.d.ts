@@ -92,6 +92,10 @@ interface ElectronAPI {
     dock: (id: string) => Promise<{ ok: boolean }>
     onPopoutClosed: (cb: (event: { id: string }) => void) => () => void
     onSpawned: (cb: (info: TerminalInfo) => void) => () => void
+    releaseQueue: (id: string) => void
+    onInputGateQueueDepth: (
+      cb: (event: { id: string; depth: number }) => void,
+    ) => () => void
   }
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
   saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>

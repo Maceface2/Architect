@@ -30,7 +30,9 @@ import {
   setActiveDispatchCoordinator,
   spawnAgentSession,
   topoSort,
-  writeToTerminal,
+  writeTurnCoordinated,
+  enableInputGate,
+  disableInputGate,
   killAll,
   type GraphEdge,
   type GraphNode,
@@ -522,6 +524,11 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     console.warn('[dispatch-v5] conductor session id was not captured; persistence to DispatchRecord is disabled for this run')
   }
 
+  // Enable the input gate on the conductor PTY so harness-driven turns from
+  // the scheduler queue while the user is mid-typing. Zones don't get a gate
+  // (they have coordinatedMode user-input lock anyway).
+  enableInputGate(CONDUCTOR_PTY_ID)
+
   const schedulerZones = buildSchedulerZones(workspaceZones, sorted)
   scheduler = new Scheduler(
     {
@@ -535,7 +542,11 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      writeToPty: (ptyId, text) => writeToTerminal(ptyId, text),
+      // writeTurnCoordinated handles the paste/Enter separation for every
+      // PTY and additionally queues writes for any PTY with an input gate
+      // enabled (just the conductor today; zones have no gate so they fall
+      // through to an immediate two-step submit).
+      writeToPty: (ptyId, text) => writeTurnCoordinated(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId, summary }),
@@ -549,7 +560,12 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   )
 
   wireScheduler(scheduler, architectSessionId ?? '', projectDir)
-  setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
+  setActiveDispatchCoordinator({
+    stop: () => {
+      scheduler?.stop()
+      disableInputGate(CONDUCTOR_PTY_ID)
+    },
+  })
   scheduler.start()
   // First conductor turn was delivered via argv at spawn (composeInitialTurn
   // folded into the --append-system-prompt call). No post-spawn pty.write
@@ -680,6 +696,10 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     effort: settings.dispatchEffort,
   })
 
+  // Mirror the start path: enable the conductor's input gate so harness
+  // turns delivered after resume queue while the user is mid-typing.
+  enableInputGate(CONDUCTOR_PTY_ID)
+
   const schedulerZones = buildSchedulerZones(workspaceZones, filteredZones)
   scheduler = new Scheduler(
     {
@@ -693,7 +713,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      writeToPty: (ptyId, text) => writeToTerminal(ptyId, text),
+      writeToPty: (ptyId, text) => writeTurnCoordinated(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId: pinnedDispatchId, summary }),
@@ -701,7 +721,12 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
     },
   )
-  setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
+  setActiveDispatchCoordinator({
+    stop: () => {
+      scheduler?.stop()
+      disableInputGate(CONDUCTOR_PTY_ID)
+    },
+  })
   scheduler.start()
 
   // Re-deliver any in-flight tasks from the prior run. Completed tasks stay

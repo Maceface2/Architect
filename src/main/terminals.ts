@@ -406,6 +406,137 @@ interface SpawnAgentOptions {
 const sessions = new Map<string, Session>()
 let activeDispatchCoordinator: { stop: () => void } | null = null
 
+// ── Input gate ────────────────────────────────────────────────────────────
+// Per-PTY shadow buffer that lets us defer harness-driven writes (scheduler
+// turns sent to the conductor) while the user is mid-typing in the same
+// terminal. The conductor PTY is shared between the user and the scheduler;
+// without arbitration, byte-level interleaving fuses the user's draft into
+// the harness turn. The gate observes user keystrokes flowing through
+// `writeToTerminal` and queues coordinated harness writes until the buffer
+// looks empty — i.e. the user has either submitted or cancelled.
+//
+// The gate is opt-in per session via `enableInputGate(id)`; without it,
+// writeToTerminal and writeTurnCoordinated behave exactly as before.
+//
+// We can't see what's actually in the TUI's input field (Claude Code, etc.
+// run in their own process), so this is an approximation: we count printable
+// bytes and backspaces, treat Enter / Esc / Ctrl+C / Ctrl+U as buffer-clear,
+// and skip CSI escape sequences (cursor moves, mode toggles).
+interface InputGate {
+  buffer: string
+  lastUserInputAt: number
+  pendingHarness: Array<() => void>
+  flushTimer: NodeJS.Timeout | null
+}
+
+const inputGates = new Map<string, InputGate>()
+
+// How long the user must stop typing — with an empty buffer — before a
+// queued harness write flushes. Short, just enough to separate "submitted"
+// from "pasted" in burst input.
+const INPUT_GATE_IDLE_WINDOW_MS = 250
+
+// How long the user can be idle with a non-empty buffer ("parked draft")
+// before we force-flush queued harness writes. Resets on every keystroke,
+// so an actively-typing user never trips this regardless of how long the
+// composition takes. Only fires when the user actually walks away.
+const INPUT_GATE_PARKED_TIMEOUT_MS = 30_000
+
+export function enableInputGate(id: string): void {
+  if (inputGates.has(id)) return
+  inputGates.set(id, {
+    buffer: '',
+    lastUserInputAt: 0,
+    pendingHarness: [],
+    flushTimer: null,
+  })
+}
+
+export function disableInputGate(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) return
+  // Drain anything queued so we don't drop harness signals on the floor.
+  flushAllInputGate(gate)
+  if (gate.flushTimer) clearTimeout(gate.flushTimer)
+  inputGates.delete(id)
+  broadcast('inputGate:queueDepth', { id, depth: 0 })
+}
+
+function applyBytesToGate(gate: InputGate, data: string): void {
+  gate.lastUserInputAt = Date.now()
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i]
+    if (ch === '\r' || ch === '\x03' || ch === '\x15') {
+      gate.buffer = ''
+      continue
+    }
+    if (ch === '\x1b') {
+      if (data[i + 1] === '[') {
+        // CSI: skip up to and including the final byte in [@-~].
+        let j = i + 2
+        while (j < data.length && !/[\x40-\x7e]/.test(data[j])) j++
+        i = j
+        continue
+      }
+      // Bare Esc → cancel input.
+      gate.buffer = ''
+      continue
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      gate.buffer = gate.buffer.slice(0, -1)
+      continue
+    }
+    gate.buffer += ch
+  }
+}
+
+function canFlushInputGate(gate: InputGate): boolean {
+  const sinceInput = gate.lastUserInputAt === 0
+    ? Number.POSITIVE_INFINITY
+    : Date.now() - gate.lastUserInputAt
+  if (gate.buffer.length === 0) {
+    // Buffer drained (Enter / Esc / Ctrl-C / Ctrl-U or never-typed) —
+    // wait the short idle window so we don't inject between a submit
+    // and the user's next keystroke if they're typing in bursts.
+    return sinceInput >= INPUT_GATE_IDLE_WINDOW_MS
+  }
+  // Non-empty buffer = the user has a draft. Only flush if they've truly
+  // walked away (no keystrokes for the parked-timeout window). Every new
+  // keystroke updates lastUserInputAt and resets this naturally.
+  return sinceInput >= INPUT_GATE_PARKED_TIMEOUT_MS
+}
+
+function scheduleInputGateDrain(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate || gate.pendingHarness.length === 0) return
+  if (gate.flushTimer) return
+  gate.flushTimer = setTimeout(() => {
+    gate.flushTimer = null
+    if (canFlushInputGate(gate)) {
+      flushAllInputGate(gate)
+      broadcast('inputGate:queueDepth', { id, depth: 0 })
+    } else {
+      scheduleInputGateDrain(id)
+    }
+  }, INPUT_GATE_IDLE_WINDOW_MS)
+}
+
+function flushAllInputGate(gate: InputGate): void {
+  if (gate.flushTimer) { clearTimeout(gate.flushTimer); gate.flushTimer = null }
+  const drain = gate.pendingHarness.splice(0)
+  for (const fn of drain) {
+    try { fn() } catch (err) { console.error('[input-gate] queued write threw', err) }
+  }
+}
+
+// Manual release used by the renderer's "click the badge to flush" affordance.
+export function releaseInputGateQueue(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) return
+  flushAllInputGate(gate)
+  broadcast('inputGate:queueDepth', { id, depth: 0 })
+}
+
 // Per-session capture readiness. 'pending' means a fresh spawn is still polling
 // for its new CLI session id; 'ready' means capture settled (resolved or timed
 // out). Used by the renderer's close-terminal flow to block close until the
@@ -769,7 +900,40 @@ function hashCwd(cwd: string): string {
 }
 
 export function writeToTerminal(id: string, data: string) {
+  const gate = inputGates.get(id)
+  if (gate) {
+    applyBytesToGate(gate, data)
+    if (gate.pendingHarness.length > 0) scheduleInputGateDrain(id)
+  }
   sessions.get(id)?.pty.write(data)
+}
+
+// Delivers a complete user turn to a PTY: the text plus a trailing Enter
+// keystroke separated by a 120ms gap (Claude's TUI treats a single
+// `text + \r` burst as pasted content and never submits — see scheduler.ts
+// for the original commentary). For PTYs with an input gate enabled
+// (currently just the conductor), the submit is queued until the user's
+// own input buffer goes idle.
+export function writeTurnCoordinated(id: string, text: string): void {
+  const submit = (): void => {
+    const session = sessions.get(id)
+    if (!session) return
+    session.pty.write(text)
+    setTimeout(() => sessions.get(id)?.pty.write('\r'), 120)
+  }
+
+  const gate = inputGates.get(id)
+  if (!gate) { submit(); return }
+
+  if (canFlushInputGate(gate)) { submit(); return }
+
+  gate.pendingHarness.push(submit)
+  broadcast('inputGate:queueDepth', { id, depth: gate.pendingHarness.length })
+  // No separate force-flush timer: scheduleInputGateDrain re-arms every
+  // INPUT_GATE_IDLE_WINDOW_MS while the queue is non-empty, and
+  // canFlushInputGate eventually returns true when the user goes idle past
+  // the parked-timeout (or sooner if they submit / cancel).
+  scheduleInputGateDrain(id)
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number) {

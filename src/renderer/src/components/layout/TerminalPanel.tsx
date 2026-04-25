@@ -255,6 +255,7 @@ function PaneView({
   resumingIds,
   capturePendingIds,
   closingIds,
+  inputGateDepths,
   onActivate,
   onMoveTab,
   onReorder,
@@ -272,6 +273,7 @@ function PaneView({
   resumingIds: Set<string>
   capturePendingIds: Set<string>
   closingIds: Set<string>
+  inputGateDepths: Map<string, number>
   onActivate: (paneId: string, tabId: string) => void
   onMoveTab: (tabId: string, targetPaneId: string, idx?: number) => void
   onReorder: (paneId: string, fromIdx: number, toIdx: number) => void
@@ -399,6 +401,19 @@ function PaneView({
                     </span>
                   )}
                 </button>
+                {isConductor && (inputGateDepths.get(s.id) ?? 0) > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      window.electron.terminal.releaseQueue(s.id)
+                    }}
+                    className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 hover:text-amber-200 transition-colors flex-shrink-0"
+                    title={`${inputGateDepths.get(s.id) ?? 0} harness message(s) waiting for your input buffer to clear. Submit your draft (Enter), discard it (Esc), or click to release now.`}
+                    aria-label="Release queued harness messages"
+                  >
+                    ↩ {inputGateDepths.get(s.id) ?? 0} queued
+                  </button>
+                )}
                 {canResume && (
                   <button
                     onClick={() => onResume(s)}
@@ -555,6 +570,24 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
   const [capturePendingIds, setCapturePendingIds] = useState<Set<string>>(new Set())
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set())
+  const [inputGateDepths, setInputGateDepths] = useState<Map<string, number>>(new Map())
+
+  // Subscribe to input-gate queue-depth changes so the conductor tab can
+  // surface "harness writes are waiting" while the user has a draft in the
+  // input field. Click handler in PaneView calls terminal.releaseQueue.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onInputGateQueueDepth(({ id, depth }) => {
+      setInputGateDepths(prev => {
+        const cur = prev.get(id) ?? 0
+        if (cur === depth) return prev
+        const next = new Map(prev)
+        if (depth === 0) next.delete(id)
+        else next.set(id, depth)
+        return next
+      })
+    })
+    return unsub
+  }, [])
 
   // Track exits.
   useEffect(() => {
@@ -847,6 +880,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     resumingIds,
     capturePendingIds,
     closingIds,
+    inputGateDepths,
     onActivate: (paneId: string, tabId: string) => onLayoutChange(setActiveTab(layout, paneId, tabId)),
     onMoveTab: (tabId: string, targetPaneId: string, idx?: number) =>
       onLayoutChange(moveTabToPane(layout, tabId, targetPaneId, idx)),

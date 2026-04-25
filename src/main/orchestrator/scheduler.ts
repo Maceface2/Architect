@@ -62,8 +62,11 @@ export interface SchedulerConfig {
 }
 
 export interface SchedulerDeps {
-  // pty.write to the given participant. The scheduler translates
-  // participantId → terminal PTY id internally.
+  // Deliver a complete user turn (text + Enter) to the given PTY. The
+  // implementation is responsible for the paste-vs-keystroke separation
+  // (Claude's TUI requires text and \r as distinct events past the paste-
+  // detection window) and for any input-gate queueing — the scheduler just
+  // hands off the composed turn and forgets it.
   writeToPty(ptyId: string, text: string): void
   broadcastActivity(event: {
     dispatchId: string
@@ -826,18 +829,9 @@ export class Scheduler {
       console.warn(`[scheduler] no pty mapped for participant ${participantId}`)
       return
     }
-    // Two-step submit: write the text as one chunk, then send Enter after a
-    // short delay. Claude's multi-line TUI treats a single burst of bytes as
-    // pasted content and doesn't interpret an embedded/trailing \r as the
-    // Enter key — so the text lands in the input buffer but the turn never
-    // submits. Separating Enter into its own event past the paste-detection
-    // window (tmux uses ~50ms; we pad to 120ms for margin) makes the TUI
-    // treat it as a distinct keystroke.
+    // The dep is contract-bound to deliver the complete turn (text + Enter)
+    // and handle paste-vs-keystroke separation + input-gate queueing.
     this.deps.writeToPty(ptyId, text)
-    setTimeout(() => {
-      if (this.stopped) return
-      this.deps.writeToPty(ptyId, '\r')
-    }, 120)
   }
 }
 
