@@ -94,7 +94,7 @@ interface ElectronAPI {
     onSpawned: (cb: (info: TerminalInfo) => void) => () => void
     releaseQueue: (id: string) => void
     onInputGateQueueDepth: (
-      cb: (event: { id: string; depth: number }) => void,
+      cb: (event: { id: string; depth: number; slashMode?: boolean; slashLabel?: string | null }) => void,
     ) => () => void
   }
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
