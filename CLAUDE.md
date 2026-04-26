@@ -155,6 +155,19 @@ Plus `ANSWER <taskId>: <body>` for conductor replies and `CANCEL <taskId>: <reas
 
 `scheduler.writeToParticipant(pid, text)` is a **two-step submit** — write the text, wait 120 ms, then write a bare `\r`. This separates the paste-burst from the Enter key so Claude's multi-line TUI treats Enter as a distinct keystroke rather than a literal character inside pasted content. Single-burst `text + \r` leaves the turn typed into the input buffer but unsubmitted.
 
+#### User-control lock
+
+Every coordinated PTY (zones in a dispatch + the conductor) is shared between two writers: the scheduler's `submitTurnToTerminal` and the user's keystrokes via `terminal:input`. To prevent interleaving, the main process keeps a per-PTY `userControlState` map (`src/main/terminals.ts`). While `userControlState[id] === true`, scheduler turns are queued in `turnQueue[id]`; releasing drains the queue sequentially with a 220 ms inter-turn gap, and any turn whose 120 ms body→CR window overlaps a re-acquire is left as pre-filled text in the TUI input (no stray `\r`).
+
+The renderer auto-drives the lock from `TerminalPanel.tsx` so users don't manage it explicitly:
+
+- **Acquire** on any non-Enter, non-Arrow keystroke into a coordinated terminal — the moment the user starts typing, scheduler writes are queued.
+- **Release** on Enter — *unless* the user looks like they're inside a slash-command picker. The renderer maintains a per-PTY line buffer (printable + Backspace) and a `pickerActiveUntil` timestamp. Enter on a line whose first non-whitespace char is `/` (covers `/model`, `/cmd `, `/cmd  arg`, bare `/`) refreshes a 2.5 s suppression window; arrow-key navigation refreshes the same window. While the window is hot, Enter does not release. Once the user is arrow-free and slash-free for 2.5 s, the next Enter releases as normal.
+
+Detection runs on `term.onKey` (DOM keydown), not `term.onData`, so it ignores protocol chatter (focus reports, cursor-position replies, mouse motion) that some CLIs — Codex in particular — emit through `onData`. The `PICKER_SUPPRESS_MS` constant lives at the top of `TerminalPanel.tsx`.
+
+When a coordinated PTY exits, `clearCoordinationState(id)` wipes its lock + queue + draining state so a re-spawn under the same id (e.g. `CONDUCTOR_PTY_ID`) starts clean; the renderer mirrors this on `terminal:exit`.
+
 #### Conductor decisions
 
 The Conductor is **harness-driven**, not self-driving. Between turns, the scheduler pty.writes one compact user-turn summary per material event:
@@ -326,8 +339,8 @@ All renderer ↔ main communication goes through `window.electron` (defined in p
 
 - `readDir / readFile / getHomeDir / openDirectory` — file system ops
 - `saveCanvas / loadCanvas / watchCanvas / unwatchCanvas / onCanvasChanged` — canvas persistence + external-edit watcher
-- `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]` (each `{id, label, runtime, coordinatedMode?}`; `coordinatedMode: true` on zones spawned inside a dispatch so the renderer locks user input)
-- `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll` — PTY control
+- `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]` (each `{id, label, runtime, coordinatedMode?}`; `coordinatedMode: true` on zones spawned inside a dispatch so the renderer auto-acquires the user-control lock when the user types — see "User-control lock" below)
+- `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll / terminal.setUserControl` — PTY control. `setUserControl(id, hasControl)` is the renderer's hook into the per-PTY scheduler-write queue (see "User-control lock"); the user only invokes it through normal typing (auto-acquire on keystroke, auto-release on a non-slash, non-picker Enter).
 - `terminal.onData / terminal.onExit / terminal.onSpawned / terminal.onStatus / terminal.onCaptureState / terminal.popout / terminal.dock / terminal.onPopoutClosed` — terminal streaming, lifecycle state broadcasts, popout windows
 - `zone.launch({ mode: 'new' | 'resume', sessionId?, summary?, ... })` — spawn or resume a single zone via `runZone`
 - `zone.listSessions / zone.deleteSession / zone.updateSessionSummary / zone.resetSession` — per-zone history management

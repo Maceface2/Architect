@@ -137,6 +137,22 @@ Plus `ANSWER <taskId>: <body>` when the Conductor emits `{type:'answer'}` and `C
 
 This separates the paste-burst from the Enter key so Claude's multi-line TUI treats Enter as a distinct keystroke — not part of pasted content. A single-burst `text + \r` leaves the turn typed into the input buffer but unsubmitted. (Empirically verified on `claude-haiku-4-5`; same mechanism `tmux send-keys "text" Enter` uses.)
 
+## User-control lock
+
+Every coordinated PTY (zones in a dispatch + the conductor) has two writers: the scheduler's `submitTurnToTerminal` and the user's keystrokes via `terminal:input`. To keep them from interleaving mid-turn, `src/main/terminals.ts` keeps a per-PTY `userControlState` map. While `userControlState[id] === true`, scheduler turns are appended to `turnQueue[id]` instead of going to the PTY; releasing drains the queue sequentially with the same two-step submit (`SUBMIT_BODY_TO_CR_MS = 120`, `INTER_TURN_GAP_MS = 220`). If the user re-acquires during the 120 ms body→CR window, `performSubmit` skips the trailing `\r` so the half-typed body sits in the TUI input as pre-fill rather than racing the user's keystrokes with a stray submit. `clearCoordinationState(id)` wipes the lock + queue + draining set on PTY exit so a re-spawn under the same id starts clean.
+
+The renderer auto-drives the lock from `src/renderer/src/components/layout/TerminalPanel.tsx` so the user never toggles it explicitly:
+
+- **Acquire** on any non-Enter, non-Arrow keystroke into a coordinated terminal — the moment the user starts typing, scheduler writes are queued behind `setUserControl(id, true)`.
+- **Release** on Enter — *unless* the user looks like they're inside a slash-command picker. The renderer maintains a per-PTY line buffer (printable chars + Backspace, reset on every Enter) and a `pickerActiveUntil` timestamp. Two signals refresh a 2.5 s suppression window (`PICKER_SUPPRESS_MS`):
+  1. Enter on a line whose first non-whitespace char is `/` (covers `/model`, `/cmd `, `/cmd  arg`, bare `/`).
+  2. Any of `ArrowUp` / `ArrowDown` / `ArrowLeft` / `ArrowRight`.
+  While the window is hot, plain Enter does *not* release. Once the user is arrow-free and slash-free for 2.5 s, the next Enter releases as normal and the queue drains.
+
+Detection runs on `term.onKey` (real DOM keydown) rather than `term.onData`, so it ignores protocol chatter (focus reports, cursor-position replies, mouse motion) that some CLIs — Codex in particular — emit through `onData`. The renderer mirrors `terminal:exit` by clearing its local `lockHeldRef` so a re-spawn starts unlocked, matching `clearCoordinationState` on the main side.
+
+The motivating case is interactive slash commands like `/model`, `/agents`, `/init`: the first Enter submits the command and opens a picker, then arrow keys + a final Enter pick the option. Releasing on the first Enter would drain queued scheduler turns into the open picker; the suppression window prevents that without requiring the user to learn a new gesture.
+
 ## Conductor contract
 
 The Conductor is **harness-driven**, not self-driving. It does not run a loop.
