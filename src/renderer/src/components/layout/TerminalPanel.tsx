@@ -57,6 +57,11 @@ const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
 const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
 
+// Must match INPUT_GATE_PARKED_TIMEOUT_MS in src/main/terminals.ts. The
+// renderer renders the countdown locally (xterm sees the keystrokes anyway,
+// so we don't need to round-trip lastUserInputAt through IPC).
+const INPUT_GATE_PARKED_TIMEOUT_MS = 60_000
+
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 
@@ -66,11 +71,45 @@ const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 // When `true`, user input (typing, paste, control bytes) is swallowed.
 const termLockState = new Map<string, boolean>()
 
-function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
+function TermTab({
+  info,
+  active,
+  inputGateDepth,
+  conductorQueueDepth,
+  conductorLastTypedAt,
+  conductorSlashMode,
+  conductorSlashLabel,
+  onConductorTyped,
+}: {
+  info: TerminalInfo
+  active: boolean
+  inputGateDepth: number
+  conductorQueueDepth: number
+  conductorLastTypedAt: number
+  conductorSlashMode: boolean
+  conductorSlashLabel: string | null
+  onConductorTyped: () => void
+}) {
   const containerRef = useRef<HTMLDivElement>(null)
   const [manualOverride, setManualOverride] = useState(false)
   const isCoordinated = !!info.coordinatedMode
   const locked = isCoordinated && !manualOverride
+  const isConductor = info.id === 'conductor-agent'
+
+  // Banner is shown on every terminal tab whenever the conductor is blocked,
+  // so the user notices regardless of which tab they're looking at.
+  const [now, setNow] = useState<number>(() => Date.now())
+  const showQueueBanner = conductorQueueDepth > 0
+  const secondsUntilFlush = conductorLastTypedAt === 0
+    ? 0
+    : Math.max(0, Math.ceil((conductorLastTypedAt + INPUT_GATE_PARKED_TIMEOUT_MS - now) / 1000))
+
+  // Tick once per second while the banner is visible.
+  useEffect(() => {
+    if (!showQueueBanner) return
+    const t = setInterval(() => setNow(Date.now()), 1000)
+    return () => clearInterval(t)
+  }, [showQueueBanner])
   // Plan-mode pill state. The conductor's prompt instructs it to wait for
   // the user to type `GO` on its own line before emitting any assignments.
   // We mirror that locally: while the user hasn't typed GO yet, render a
@@ -154,6 +193,29 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
     })
     return unsub
   }, [info.id])
+
+  // Track user keystrokes on the CONDUCTOR's terminal so the panel-wide
+  // banner countdown is in sync. Other tabs don't need to track typing
+  // here — the conductor is the only gated PTY.
+  //
+  // xterm sends mouse and focus reports through the same onData path as
+  // keystrokes (Claude Code's TUI enables both modes). Skip them so a
+  // click on the terminal pane or a tab-focus change doesn't reset the
+  // countdown.
+  useEffect(() => {
+    if (!isConductor) return
+    const instance = termInstances.get(info.id)
+    if (!instance) return
+    const dispose = instance.term.onData(data => {
+      if (termLockState.get(info.id) === true) return
+      // Mouse reports: \x1b[<...M (SGR), \x1b[M... (X10)
+      if (data.startsWith('\x1b[<') || data.startsWith('\x1b[M')) return
+      // Focus reports: \x1b[I (focus-in), \x1b[O (focus-out)
+      if (data === '\x1b[I' || data === '\x1b[O') return
+      onConductorTyped()
+    })
+    return () => dispose.dispose()
+  }, [info.id, isConductor, onConductorTyped])
 
   useEffect(() => {
     const unsub = window.electron.terminal.onExit(({ id }) => {
@@ -241,6 +303,51 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
           </div>
         )}
       </div>
+      {showQueueBanner && (
+        <div className="flex items-center justify-between gap-3 px-3 py-1.5 bg-amber-500/15 border-t border-amber-500/40 flex-shrink-0">
+          <span className="text-[11px] text-amber-200 flex items-center gap-2">
+            <AlertTriangle size={11} className="flex-shrink-0" />
+            <span>
+              {conductorSlashMode ? (
+                <>
+                  {conductorSlashLabel ? (
+                    <>
+                      Slash command <span className="font-mono font-semibold">{conductorSlashLabel}</span> in progress
+                    </>
+                  ) : (
+                    <>Slash command in progress</>
+                  )}
+                  {' '}on <span className="font-medium">⬡ Conductor</span> —
+                  {' '}{conductorQueueDepth === 1 ? 'a zone update is' : `${conductorQueueDepth} zone updates are`} held
+                  {' '}so they don't get fed into its follow-up input.
+                  {' '}Click <span className="font-medium">Release now</span> once the command finishes.
+                </>
+              ) : conductorQueueDepth === 1 ? (
+                <>A zone update is waiting on your draft.{' '}{
+                  isConductor
+                    ? <>Take your time — keep typing to extend. Press <span className="font-mono font-semibold">Enter</span> to send; otherwise auto-sends <span className="font-mono font-semibold tabular-nums">{secondsUntilFlush}s</span> after you stop typing.</>
+                    : <>Switch to <span className="font-medium">⬡ Conductor</span> to finish and send your draft. Auto-sends <span className="font-mono font-semibold tabular-nums">{secondsUntilFlush}s</span> after typing stops.</>
+                }</>
+              ) : (
+                <>{conductorQueueDepth} zone updates are waiting on your draft.{' '}{
+                  isConductor
+                    ? <>Take your time — keep typing to extend. Press <span className="font-mono font-semibold">Enter</span> to send; otherwise auto-sends <span className="font-mono font-semibold tabular-nums">{secondsUntilFlush}s</span> after you stop typing.</>
+                    : <>Switch to <span className="font-medium">⬡ Conductor</span> to finish and send your draft. Auto-sends <span className="font-mono font-semibold tabular-nums">{secondsUntilFlush}s</span> after typing stops.</>
+                }</>
+              )}
+            </span>
+          </span>
+          <button
+            onClick={() => window.electron.terminal.releaseQueue('conductor-agent')}
+            className="px-2 py-0.5 text-[10px] font-medium rounded bg-amber-500/30 text-amber-100 hover:bg-amber-500/50 border border-amber-500/50 transition-colors flex-shrink-0"
+            title={conductorSlashMode
+              ? 'Mark the slash command as done and deliver the held harness messages now'
+              : 'Submit your draft and send the queued harness messages now without waiting'}
+          >
+            Release now
+          </button>
+        </div>
+      )}
     </div>
   )
 }
@@ -270,6 +377,12 @@ function PaneView({
   resumingIds,
   capturePendingIds,
   closingIds,
+  inputGateDepths,
+  conductorQueueDepth,
+  conductorLastTypedAt,
+  conductorSlashMode,
+  conductorSlashLabel,
+  onConductorTyped,
   onActivate,
   onMoveTab,
   onReorder,
@@ -287,6 +400,12 @@ function PaneView({
   resumingIds: Set<string>
   capturePendingIds: Set<string>
   closingIds: Set<string>
+  inputGateDepths: Map<string, number>
+  conductorQueueDepth: number
+  conductorLastTypedAt: number
+  conductorSlashMode: boolean
+  conductorSlashLabel: string | null
+  onConductorTyped: () => void
   onActivate: (paneId: string, tabId: string) => void
   onMoveTab: (tabId: string, targetPaneId: string, idx?: number) => void
   onReorder: (paneId: string, fromIdx: number, toIdx: number) => void
@@ -414,6 +533,19 @@ function PaneView({
                     </span>
                   )}
                 </button>
+                {isConductor && (inputGateDepths.get(s.id) ?? 0) > 0 && (
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      window.electron.terminal.releaseQueue(s.id)
+                    }}
+                    className="ml-1 px-1.5 py-0.5 rounded text-[9px] font-medium bg-amber-500/15 text-amber-300 hover:bg-amber-500/25 hover:text-amber-200 transition-colors flex-shrink-0"
+                    title={`${inputGateDepths.get(s.id) ?? 0} harness message(s) waiting for your input buffer to clear. Submit your draft (Enter), discard it (Esc), or click to release now.`}
+                    aria-label="Release queued harness messages"
+                  >
+                    ↩ {inputGateDepths.get(s.id) ?? 0} queued
+                  </button>
+                )}
                 {canResume && (
                   <button
                     onClick={() => onResume(s)}
@@ -491,7 +623,16 @@ function PaneView({
               className="absolute inset-1"
               style={{ visibility: active ? 'visible' : 'hidden' }}
             >
-              <TermTab info={s} active={active} />
+              <TermTab
+                info={s}
+                active={active}
+                inputGateDepth={inputGateDepths.get(tabId) ?? 0}
+                conductorQueueDepth={conductorQueueDepth}
+                conductorLastTypedAt={conductorLastTypedAt}
+                conductorSlashMode={conductorSlashMode}
+                conductorSlashLabel={conductorSlashLabel}
+                onConductorTyped={onConductorTyped}
+              />
             </div>
           )
         })}
@@ -570,6 +711,40 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
   const [capturePendingIds, setCapturePendingIds] = useState<Set<string>>(new Set())
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set())
+  const [inputGateDepths, setInputGateDepths] = useState<Map<string, number>>(new Map())
+  // Conductor's last-typed timestamp lifted to panel level so non-conductor
+  // tabs can render the same countdown banner. Updated by the conductor's
+  // TermTab via the onConductorTyped callback below.
+  const [conductorLastTypedAt, setConductorLastTypedAt] = useState<number>(0)
+  // Conductor is in slash-command mode (user submitted a line starting
+  // with /). The gate holds harness messages until the user explicitly
+  // releases or cancels — auto-flush is disabled. Set from main's
+  // inputGate:queueDepth payload.
+  const [conductorSlashMode, setConductorSlashMode] = useState<boolean>(false)
+  // Name of the slash command holding the queue (e.g. "/model"). Null
+  // when slash mode is off or only the bare "/" has been typed.
+  const [conductorSlashLabel, setConductorSlashLabel] = useState<string | null>(null)
+
+  // Subscribe to input-gate queue-depth changes so the conductor tab can
+  // surface "harness writes are waiting" while the user has a draft in the
+  // input field. Click handler in PaneView calls terminal.releaseQueue.
+  useEffect(() => {
+    const unsub = window.electron.terminal.onInputGateQueueDepth(({ id, depth, slashMode, slashLabel }) => {
+      setInputGateDepths(prev => {
+        const cur = prev.get(id) ?? 0
+        if (cur === depth) return prev
+        const next = new Map(prev)
+        if (depth === 0) next.delete(id)
+        else next.set(id, depth)
+        return next
+      })
+      if (id === 'conductor-agent') {
+        setConductorSlashMode(!!slashMode)
+        setConductorSlashLabel(slashLabel ?? null)
+      }
+    })
+    return unsub
+  }, [])
 
   // Track exits.
   useEffect(() => {
@@ -855,6 +1030,9 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     return n.children.reduce((s, c) => s + count(c), 0)
   })(layout.root)
 
+  const conductorQueueDepth = inputGateDepths.get('conductor-agent') ?? 0
+  const onConductorTyped = () => setConductorLastTypedAt(Date.now())
+
   const paneProps = {
     sessionsById,
     exitedIds,
@@ -862,6 +1040,12 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     resumingIds,
     capturePendingIds,
     closingIds,
+    inputGateDepths,
+    conductorQueueDepth,
+    conductorLastTypedAt,
+    conductorSlashMode,
+    conductorSlashLabel,
+    onConductorTyped,
     onActivate: (paneId: string, tabId: string) => onLayoutChange(setActiveTab(layout, paneId, tabId)),
     onMoveTab: (tabId: string, targetPaneId: string, idx?: number) =>
       onLayoutChange(moveTabToPane(layout, tabId, targetPaneId, idx)),

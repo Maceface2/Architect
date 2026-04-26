@@ -31,6 +31,9 @@ import {
   spawnAgentSession,
   submitTurnToTerminal,
   topoSort,
+  writeTurnCoordinated,
+  enableInputGate,
+  disableInputGate,
   killAll,
   type GraphEdge,
   type GraphNode,
@@ -336,7 +339,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // tabs incrementally as each PTY spawns.
   const wsByZoneId = new Map(workspaceZones.map(w => [w.zoneId, w]))
   const allInfo: TerminalInfo[] = [
-    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime, coordinatedMode: true },
+    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime },
     ...sorted.map(zone => ({
       id: zone.id,
       label: wsByZoneId.get(zone.id)?.label ?? zone.data.label,
@@ -478,7 +481,6 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       // emitting any {type:"assign"} decisions.
       planMode,
       planModeBadge: planMode,
-      coordinatedMode: true,
       capture: {
         projectDir,
         zoneKey: CONDUCTOR_PTY_ID,
@@ -523,6 +525,11 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     console.warn('[dispatch-v5] conductor session id was not captured; persistence to DispatchRecord is disabled for this run')
   }
 
+  // Enable the input gate on the conductor PTY so harness-driven turns from
+  // the scheduler queue while the user is mid-typing. Zones don't get a gate
+  // (they have coordinatedMode user-input lock anyway).
+  enableInputGate(CONDUCTOR_PTY_ID)
+
   const schedulerZones = buildSchedulerZones(workspaceZones, sorted)
   scheduler = new Scheduler(
     {
@@ -536,7 +543,14 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
+      // Route by participant: the Conductor uses the input gate
+      // (writeTurnCoordinated → queues harness writes while user is mid-
+      // typing); zones use the lock+queue model (submitTurnToTerminal →
+      // queues while the user holds manual control via the lock UI).
+      submitTurn: (ptyId, text) =>
+        ptyId === CONDUCTOR_PTY_ID
+          ? writeTurnCoordinated(ptyId, text)
+          : submitTurnToTerminal(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId, summary }),
@@ -550,7 +564,12 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   )
 
   wireScheduler(scheduler, architectSessionId ?? '', projectDir)
-  setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
+  setActiveDispatchCoordinator({
+    stop: () => {
+      scheduler?.stop()
+      disableInputGate(CONDUCTOR_PTY_ID)
+    },
+  })
   scheduler.start()
   // First conductor turn was delivered via argv at spawn (composeInitialTurn
   // folded into the --append-system-prompt call). No post-spawn pty.write
@@ -608,7 +627,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
   }
 
   const info: TerminalInfo[] = [
-    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: record.architectRuntime, coordinatedMode: true },
+    { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: record.architectRuntime },
   ]
 
   let scheduler: Scheduler | null = null
@@ -678,9 +697,12 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     resumeSessionId: record.architectSessionId,
     planMode: record.planMode === true,
     planModeBadge: record.planMode === true,
-    coordinatedMode: true,
     effort: settings.dispatchEffort,
   })
+
+  // Mirror the start path: enable the conductor's input gate so harness
+  // turns delivered after resume queue while the user is mid-typing.
+  enableInputGate(CONDUCTOR_PTY_ID)
 
   const schedulerZones = buildSchedulerZones(workspaceZones, filteredZones)
   scheduler = new Scheduler(
@@ -695,7 +717,10 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       statusTickMs: STATUS_TICK_MS,
     },
     {
-      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
+      submitTurn: (ptyId, text) =>
+        ptyId === CONDUCTOR_PTY_ID
+          ? writeTurnCoordinated(ptyId, text)
+          : submitTurnToTerminal(ptyId, text),
       broadcastActivity: event => broadcast('activity:event', event),
       broadcastState: event => broadcast('activity:state', event),
       onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId: pinnedDispatchId, summary }),
@@ -703,7 +728,12 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
     },
   )
-  setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
+  setActiveDispatchCoordinator({
+    stop: () => {
+      scheduler?.stop()
+      disableInputGate(CONDUCTOR_PTY_ID)
+    },
+  })
   scheduler.start()
 
   // Re-deliver any in-flight tasks from the prior run. Completed tasks stay

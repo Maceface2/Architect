@@ -159,6 +159,15 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('terminal:spawned', handler)
       return () => ipcRenderer.removeListener('terminal:spawned', handler)
     },
+
+    releaseQueue: (id: string) =>
+      ipcRenderer.send('terminal:release-queue', id),
+
+    onInputGateQueueDepth: (cb: (event: { id: string; depth: number; slashMode?: boolean; slashLabel?: string | null }) => void) => {
+      const handler = (_: unknown, event: { id: string; depth: number; slashMode?: boolean; slashLabel?: string | null }) => cb(event)
+      ipcRenderer.on('inputGate:queueDepth', handler)
+      return () => ipcRenderer.removeListener('inputGate:queueDepth', handler)
+    },
   },
 
   // Terminal layout persistence (per project)

@@ -11,6 +11,7 @@ import {
   writeToTerminal,
   setUserControl,
   resizeTerminal,
+  releaseInputGateQueue,
   killAll,
   closeTerminal,
   getCaptureState,
@@ -279,6 +280,10 @@ ipcMain.on('terminal:set-user-control', (_event, id: string, hasControl: boolean
 
 ipcMain.on('terminal:resize', (_event, id: string, cols: number, rows: number) => {
   resizeTerminal(id, cols, rows)
+})
+
+ipcMain.on('terminal:release-queue', (_event, id: string) => {
+  releaseInputGateQueue(id)
 })
 
 ipcMain.on('terminal:kill-all', () => {

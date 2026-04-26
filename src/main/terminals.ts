@@ -409,6 +409,315 @@ interface SpawnAgentOptions {
 const sessions = new Map<string, Session>()
 let activeDispatchCoordinator: { stop: () => void } | null = null
 
+// ── Input gate ────────────────────────────────────────────────────────────
+// Per-PTY shadow buffer that lets us defer harness-driven writes (scheduler
+// turns sent to the conductor) while the user is mid-typing in the same
+// terminal. The conductor PTY is shared between the user and the scheduler;
+// without arbitration, byte-level interleaving fuses the user's draft into
+// the harness turn. The gate observes user keystrokes flowing through
+// `writeToTerminal` and queues coordinated harness writes until the buffer
+// looks empty — i.e. the user has either submitted or cancelled.
+//
+// The gate is opt-in per session via `enableInputGate(id)`; without it,
+// writeToTerminal and writeTurnCoordinated behave exactly as before.
+//
+// We can't see what's actually in the TUI's input field (Claude Code, etc.
+// run in their own process), so this is an approximation: we count printable
+// bytes and backspaces, treat Enter / Esc / Ctrl+C / Ctrl+U as buffer-clear,
+// and skip CSI escape sequences (cursor moves, mode toggles).
+interface InputGate {
+  buffer: string
+  lastUserInputAt: number
+  // Queue of harness turn TEXTS (no closures): we decide at flush time
+  // whether to append them as a fresh user turn (text + Enter) or paste
+  // them into the user's existing draft (text only, no Enter).
+  pendingHarness: string[]
+  flushTimer: NodeJS.Timeout | null
+  // Set true while we're inside a bracketed-paste block (\x1b[200~ to
+  // \x1b[201~). Inside a paste, \r and \n are content, not submit.
+  inPaste: boolean
+  // Up/Down arrow recall history into the TUI's input field. We can't see
+  // the recalled text, but we know the field is no longer empty even
+  // though our shadow buffer didn't grow. Cleared on any explicit cancel
+  // or submit.
+  presumedNonEmpty: boolean
+  // The user submitted a line starting with `/`, which in Claude Code (and
+  // similar TUIs) often opens a multi-step interactive mode (model picker,
+  // confirmation prompt, etc.). Once latched, harness flushes are held
+  // until the user explicitly releases (Release Now button) or interrupts
+  // (Ctrl+C). Esc and Ctrl+U don't clear it — slash command UIs commonly
+  // consume Esc for their own dismissals.
+  latchedSlash: boolean
+  // Captured at submit time: the command word ("/model", "/clear", etc.)
+  // so the renderer can show *which* slash command is holding the queue
+  // even after the user's draft buffer has been cleared.
+  latchedSlashLabel: string | null
+}
+
+// True whenever the gate should hold harness writes due to slash-command
+// activity. Combines two signals:
+//   1. buffer.startsWith('/') — user is currently typing a slash command,
+//      autocomplete dropdown is up, harness writes would land mid-compose.
+//   2. latchedSlash — user already submitted a slash command and may still
+//      be in its follow-up input flow.
+function isCurrentlyInSlashCommand(gate: InputGate): boolean {
+  return gate.buffer.startsWith('/') || gate.latchedSlash
+}
+
+// Pulls the command word (e.g. "/model") out of the buffer or — if the
+// user already submitted and the buffer is now cleared — from the latched
+// label captured at submit time. Returns null if there's no slash activity
+// or only the bare "/" without a name yet.
+function currentSlashLabel(gate: InputGate): string | null {
+  if (gate.buffer.startsWith('/')) {
+    const m = /^(\/[A-Za-z0-9_-]+)/.exec(gate.buffer)
+    if (m) return m[1]
+    return null  // bare "/" with no name yet
+  }
+  return gate.latchedSlashLabel
+}
+
+const inputGates = new Map<string, InputGate>()
+
+// How long the user must stop typing — with an empty buffer — before a
+// queued harness write flushes. Short, just enough to separate "submitted"
+// from "pasted" in burst input.
+const INPUT_GATE_IDLE_WINDOW_MS = 250
+
+// How long the user can be idle with a non-empty buffer ("parked draft")
+// before we force-flush queued harness writes. Resets on every keystroke,
+// so an actively-typing user never trips this regardless of how long the
+// composition takes. Only fires when the user actually walks away.
+const INPUT_GATE_PARKED_TIMEOUT_MS = 60_000
+
+export function enableInputGate(id: string): void {
+  if (inputGates.has(id)) return
+  inputGates.set(id, {
+    buffer: '',
+    lastUserInputAt: 0,
+    pendingHarness: [],
+    flushTimer: null,
+    inPaste: false,
+    presumedNonEmpty: false,
+    latchedSlash: false,
+    latchedSlashLabel: null,
+  })
+}
+
+// Keeps the renderer's banner state in sync with main. Called on every
+// transition that could affect what the banner shows (queue depth change,
+// slash-mode set/clear, slash-label change).
+function broadcastGateState(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) {
+    broadcast('inputGate:queueDepth', { id, depth: 0, slashMode: false, slashLabel: null })
+    return
+  }
+  broadcast('inputGate:queueDepth', {
+    id,
+    depth: gate.pendingHarness.length,
+    slashMode: isCurrentlyInSlashCommand(gate),
+    slashLabel: currentSlashLabel(gate),
+  })
+}
+
+export function disableInputGate(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) return
+  // Drain anything queued so we don't drop harness signals on the floor.
+  // Use the same mode the manual-release helper picks.
+  const fieldEmpty = gate.buffer.length === 0 && !gate.presumedNonEmpty
+  flushAllInputGate(id, fieldEmpty ? 'empty' : 'parked')
+  if (gate.flushTimer) clearTimeout(gate.flushTimer)
+  inputGates.delete(id)
+  broadcastGateState(id)
+}
+
+// xterm dispatches mouse and focus reports through the same onData / IPC
+// path as keyboard input. We don't want any of them to count as "typing"
+// for the parked-timeout countdown — clicking the terminal or refocusing
+// the window shouldn't extend the timer.
+//   - Mouse: \x1b[<…M / \x1b[<…m (SGR), \x1b[M… (X10)
+//   - Focus: \x1b[I (focus-in), \x1b[O (focus-out) — emitted when CSI
+//     ?1004h focus-reporting is enabled by the TUI (Claude Code does this).
+function isNonTypingInput(data: string): boolean {
+  if (data.startsWith('\x1b[<') || data.startsWith('\x1b[M')) return true
+  if (data === '\x1b[I' || data === '\x1b[O') return true
+  return false
+}
+
+function applyBytesToGate(gate: InputGate, data: string): void {
+  if (isNonTypingInput(data)) return
+  gate.lastUserInputAt = Date.now()
+  for (let i = 0; i < data.length; i++) {
+    const ch = data[i]
+
+    // Bracketed paste boundaries — must be detected before the generic CSI
+    // skip below. Inside a paste, \r and \n are content (TUI inserts them
+    // as line breaks in its input field) rather than submit.
+    if (ch === '\x1b' && data[i + 1] === '[') {
+      if (data.slice(i, i + 6) === '\x1b[200~') { gate.inPaste = true; i += 5; continue }
+      if (data.slice(i, i + 6) === '\x1b[201~') { gate.inPaste = false; i += 5; continue }
+      // Up/Down arrow → history recall puts content into the TUI input
+      // field that our shadow can't see. Mark presumed-non-empty so
+      // canFlushInputGate doesn't think the user has nothing typed.
+      const csiFinal = data[i + 2]
+      if (csiFinal === 'A' || csiFinal === 'B') {
+        gate.presumedNonEmpty = true
+        i += 2
+        continue
+      }
+      // Other CSI (cursor moves, mode toggles, etc.): skip to terminator.
+      let j = i + 2
+      while (j < data.length && !/[\x40-\x7e]/.test(data[j])) j++
+      i = j
+      continue
+    }
+
+    if (gate.inPaste) {
+      // Append every byte verbatim — including \r / \n / control chars.
+      gate.buffer += ch
+      continue
+    }
+
+    if (ch === '\r') {
+      // Submit. If the buffer starts with `/`, the user just sent a slash
+      // command — latch slash mode (and capture its label) so the gate
+      // doesn't deliver harness turns into the slash command's follow-up
+      // input prompt.
+      if (gate.buffer.startsWith('/')) {
+        gate.latchedSlash = true
+        const m = /^(\/[A-Za-z0-9_-]+)/.exec(gate.buffer)
+        if (m) gate.latchedSlashLabel = m[1]
+      }
+      gate.buffer = ''
+      gate.presumedNonEmpty = false
+      continue
+    }
+    if (ch === '\x03') {
+      // Ctrl+C — interrupt. Universal exit-current-mode gesture; clear
+      // slash mode along with the buffer.
+      gate.buffer = ''
+      gate.presumedNonEmpty = false
+      gate.latchedSlash = false
+      gate.latchedSlashLabel = null
+      continue
+    }
+    if (ch === '\x15') {
+      // Ctrl+U — kill input line. Clears the draft but does NOT exit a
+      // slash command; the command's input prompt is still active.
+      gate.buffer = ''
+      gate.presumedNonEmpty = false
+      continue
+    }
+    if (ch === '\x1b') {
+      // Bare Esc — cancel current input. Slash-command UIs (autocomplete
+      // dropdown, model picker, confirmation prompts) commonly consume
+      // Esc for their own dismissals, so leave the latch alone — only
+      // explicit Ctrl+C or the Release Now button exits slash mode.
+      gate.buffer = ''
+      gate.presumedNonEmpty = false
+      continue
+    }
+    if (ch === '\x7f' || ch === '\b') {
+      gate.buffer = gate.buffer.slice(0, -1)
+      // If the user is editing a recalled-from-history line, keep treating
+      // the field as non-empty until they explicitly clear (Enter/Esc/etc).
+      continue
+    }
+    gate.buffer += ch
+  }
+}
+
+// 'empty'  → user has no draft; submit harness as a clean fresh turn.
+// 'parked' → user has a draft and walked away; append harness text to the
+//            input field without submitting (don't fuse via Enter).
+// null     → can't flush yet, keep waiting.
+type FlushMode = 'empty' | 'parked' | null
+
+function canFlushInputGate(gate: InputGate): FlushMode {
+  // Slash-command interactive mode: never auto-flush. The user must
+  // explicitly Release (or interrupt via Ctrl+C) to drain the queue.
+  // Without this, the parked-timeout flush would feed the harness text
+  // into the slash command's autocomplete or follow-up input prompt.
+  if (isCurrentlyInSlashCommand(gate)) return null
+  const sinceInput = gate.lastUserInputAt === 0
+    ? Number.POSITIVE_INFINITY
+    : Date.now() - gate.lastUserInputAt
+  const fieldEmpty = gate.buffer.length === 0 && !gate.presumedNonEmpty
+  if (fieldEmpty) {
+    return sinceInput >= INPUT_GATE_IDLE_WINDOW_MS ? 'empty' : null
+  }
+  return sinceInput >= INPUT_GATE_PARKED_TIMEOUT_MS ? 'parked' : null
+}
+
+function scheduleInputGateDrain(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate || gate.pendingHarness.length === 0) return
+  if (gate.flushTimer) return
+  gate.flushTimer = setTimeout(() => {
+    gate.flushTimer = null
+    const mode = canFlushInputGate(gate)
+    if (mode) {
+      flushAllInputGate(id, mode)
+    } else {
+      scheduleInputGateDrain(id)
+    }
+  }, INPUT_GATE_IDLE_WINDOW_MS)
+}
+
+function flushAllInputGate(id: string, mode: 'empty' | 'parked'): void {
+  const gate = inputGates.get(id)
+  if (!gate) return
+  if (gate.flushTimer) { clearTimeout(gate.flushTimer); gate.flushTimer = null }
+  const items = gate.pendingHarness.splice(0)
+  if (items.length === 0) {
+    broadcastGateState(id)
+    return
+  }
+  const session = sessions.get(id)
+  if (!session) {
+    broadcastGateState(id)
+    return
+  }
+
+  let delay = 0
+  if (mode === 'parked') {
+    // User has a draft and went idle. Submit their draft as its own turn
+    // FIRST (a bare \r flushes whatever's in the TUI input buffer), then
+    // send each harness text as a separate clean turn. This avoids fusing
+    // the user's words with harness signals.
+    session.pty.write('\r')
+    gate.buffer = ''
+    gate.presumedNonEmpty = false
+    delay = 250  // brief beat for the TUI to process the user's submit
+  }
+  // Each harness item lands as its own turn: text, then \r 120 ms later.
+  // Successive items are spaced 250 ms apart so their \r's don't coalesce.
+  for (const text of items) {
+    const textDelay = delay
+    const enterDelay = delay + 120
+    setTimeout(() => { sessions.get(id)?.pty.write(text) }, textDelay)
+    setTimeout(() => { sessions.get(id)?.pty.write('\r') }, enterDelay)
+    delay += 250
+  }
+  broadcast('inputGate:queueDepth', { id, depth: 0 })
+}
+
+// Manual release used by the renderer's "Release now" affordance. Picks
+// the same mode flushAll would on a force-fire: 'parked' if the user has
+// a draft (submits draft first, then harness), 'empty' otherwise.
+// Also exits slash-command mode — the user has decided they're done with
+// whatever interactive flow was open.
+export function releaseInputGateQueue(id: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) return
+  gate.latchedSlash = false
+  gate.latchedSlashLabel = null
+  const fieldEmpty = gate.buffer.length === 0 && !gate.presumedNonEmpty
+  flushAllInputGate(id, fieldEmpty ? 'empty' : 'parked')
+}
+
 // Per-session capture readiness. 'pending' means a fresh spawn is still polling
 // for its new CLI session id; 'ready' means capture settled (resolved or timed
 // out). Used by the renderer's close-terminal flow to block close until the
@@ -773,15 +1082,34 @@ function hashCwd(cwd: string): string {
 }
 
 export function writeToTerminal(id: string, data: string) {
+  const gate = inputGates.get(id)
+  if (gate) {
+    const slashBefore = isCurrentlyInSlashCommand(gate)
+    const labelBefore = currentSlashLabel(gate)
+    applyBytesToGate(gate, data)
+    if (gate.pendingHarness.length > 0) scheduleInputGateDrain(id)
+    // Re-broadcast if slash-mode or its label changed — the renderer's
+    // banner copy + the displayed command name depend on them. (Queue-
+    // depth changes are already broadcast inline elsewhere.)
+    const slashAfter = isCurrentlyInSlashCommand(gate)
+    const labelAfter = currentSlashLabel(gate)
+    if (slashBefore !== slashAfter || labelBefore !== labelAfter) {
+      broadcastGateState(id)
+    }
+  }
   sessions.get(id)?.pty.write(data)
 }
 
-// Per-PTY coordination state for the scheduler↔user write race. The Conductor
-// (and any zone the user opted into manual control on) is shared between two
-// writers: the scheduler's `submitTurnToTerminal` and the user's keystrokes via
-// `terminal:input`. While the user holds manual control, scheduler turns are
-// queued instead of interleaving. On release, the queue drains sequentially
-// with a gap between turns so paste-detection doesn't coalesce them.
+// Per-PTY coordination state for the scheduler↔user write race in zones.
+// While the user holds manual control of a coordinated zone (via the lock UI
+// in the renderer), scheduler turns are queued instead of interleaving with
+// keystrokes. On release, the queue drains sequentially with a gap between
+// turns so paste-detection doesn't coalesce them.
+//
+// The Conductor uses a different mechanism (the input gate above /
+// writeTurnCoordinated) — it observes user keystrokes directly and queues
+// harness writes by inferring "user is mid-typing" from a shadow buffer,
+// rather than gating on an explicit lock toggle.
 const userControlState = new Map<string, boolean>()
 const turnQueue = new Map<string, string[]>()
 const draining = new Set<string>()
@@ -789,7 +1117,7 @@ const draining = new Set<string>()
 const SUBMIT_BODY_TO_CR_MS = 120  // body→\r gap (Claude paste-detection)
 const INTER_TURN_GAP_MS = 220     // \r→next-body gap (let TUI commit the turn)
 
-// Submit one full turn (body + Enter) to a PTY. Use this instead of two
+// Submit one full turn (body + Enter) to a zone PTY. Use this instead of two
 // separate writeToTerminal calls — the two-step pattern (body, 120ms, CR) is
 // load-bearing because Claude's TUI treats a single burst as paste content
 // and won't interpret an embedded \r as Enter. While `userControlState[id]`
@@ -851,6 +1179,38 @@ function clearCoordinationState(id: string): void {
   userControlState.delete(id)
   turnQueue.delete(id)
   draining.delete(id)
+}
+
+// Delivers a complete user turn to a PTY: the text plus a trailing Enter
+// keystroke separated by a 120ms gap (Claude's TUI treats a single
+// `text + \r` burst as pasted content and never submits — see scheduler.ts
+// for the original commentary). For PTYs with an input gate enabled
+// (currently just the conductor), the submit is queued until the user's
+// own input buffer goes idle.
+export function writeTurnCoordinated(id: string, text: string): void {
+  const gate = inputGates.get(id)
+  if (!gate) {
+    // No-gate path: submit immediately as a fresh turn.
+    const session = sessions.get(id)
+    if (!session) return
+    session.pty.write(text)
+    setTimeout(() => sessions.get(id)?.pty.write('\r'), 120)
+    return
+  }
+
+  // Always queue, then either flush right away (if the gate already allows)
+  // or schedule a drain. Queueing first keeps the dispatch path uniform —
+  // flushAllInputGate handles both 'empty' (clean turn) and 'parked'
+  // (submit user's draft first, then harness) modes.
+  gate.pendingHarness.push(text)
+  broadcastGateState(id)
+
+  const mode = canFlushInputGate(gate)
+  if (mode) {
+    flushAllInputGate(id, mode)
+  } else {
+    scheduleInputGateDrain(id)
+  }
 }
 
 export function resizeTerminal(id: string, cols: number, rows: number) {

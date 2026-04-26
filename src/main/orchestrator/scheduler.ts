@@ -63,8 +63,10 @@ export interface SchedulerConfig {
 
 export interface SchedulerDeps {
   // Submit a full user turn (body + Enter) to the given PTY. The implementor
-  // owns the two-step submit (body → 120ms gap → \r) and any queueing while
-  // the user holds manual control. Scheduler doesn't time the submit itself.
+  // owns the two-step submit (body → 120ms gap → \r) and any queueing —
+  // either the conductor's input gate (queue while user is mid-typing) or
+  // a zone's lock+queue (queue while user holds manual control via the
+  // lock UI). Scheduler hands off the composed turn and forgets it.
   submitTurn(ptyId: string, text: string): void
   broadcastActivity(event: {
     dispatchId: string
@@ -828,8 +830,9 @@ export class Scheduler {
       return
     }
     if (this.stopped) return
-    // Delegates the two-step submit (body → 120ms → Enter) and the
-    // user-manual-control queue to terminals.ts. See submitTurnToTerminal.
+    // Dep handles the two-step submit (body → 120ms → \r) and any queueing
+    // (conductor input gate while user is mid-typing, or zone lock+queue
+    // while user holds manual control). See dispatch.ts for the routing.
     this.deps.submitTurn(ptyId, text)
   }
 }
