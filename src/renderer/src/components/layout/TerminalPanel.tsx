@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, Fragment } from 'react'
 import { Panel, PanelGroup, PanelResizeHandle } from 'react-resizable-panels'
-import { AlertTriangle, ExternalLink, Keyboard, Lock, Plus, RotateCcw, Terminal as TerminalIcon, Unlock, X } from 'lucide-react'
+import { AlertTriangle, ExternalLink, Lock, Plus, RotateCcw, Terminal as TerminalIcon, X } from 'lucide-react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
@@ -60,17 +60,9 @@ const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['cl
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 
-// Lock state shared with the stable `term.onData` closure (attached once per
-// terminal, below). TermTab writes into this on every render; the closure
-// reads it synchronously to decide whether to forward keystrokes to the PTY.
-// When `true`, user input (typing, paste, control bytes) is swallowed.
-const termLockState = new Map<string, boolean>()
-
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
-  const [manualOverride, setManualOverride] = useState(false)
   const isCoordinated = !!info.coordinatedMode
-  const locked = isCoordinated && !manualOverride
   // Plan-mode pill state. The conductor's prompt instructs it to wait for
   // the user to type `GO` on its own line before emitting any assignments.
   // We mirror that locally: while the user hasn't typed GO yet, render a
@@ -79,19 +71,13 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const [planAcknowledged, setPlanAcknowledged] = useState(false)
   const showPlanPill = !!info.planMode && !planAcknowledged
 
-  // Sync the lock bit into the module-level map so the stable `term.onData`
-  // closure (attached once, below) can early-return without re-subscribing.
-  useEffect(() => {
-    termLockState.set(info.id, locked)
-  }, [info.id, locked])
-
-  // Tell main when the user has manual control of a coordinated terminal so
-  // the scheduler queues turns instead of interleaving with user typing.
-  // Releasing control drains the queue.
-  useEffect(() => {
-    if (!isCoordinated) return
-    window.electron.terminal.setUserControl(info.id, manualOverride)
-  }, [info.id, isCoordinated, manualOverride])
+  // Auto-acquired write lock. Coordinated terminals default to unlocked: the
+  // user types freely. Any non-Enter keystroke flips lockHeld → true (which
+  // tells main to queue scheduler writes instead of interleaving). Pressing
+  // Enter (\r) flips it back, draining whatever the scheduler queued. The
+  // ref is read synchronously in the stable onData closure to dedupe IPC.
+  const lockHeldRef = useRef(false)
+  const [lockHeld, setLockHeld] = useState(false)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -114,11 +100,30 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       instance = { term, fit }
       termInstances.set(info.id, instance)
 
+      // Forward EVERYTHING xterm wants to send to the PTY — keystrokes, paste
+      // content, focus reports, mouse reports, DSR/OSC responses. The CLI
+      // depends on those replies; we only stay out of the way here.
       term.onData(data => {
-        // Coordinated zones are conductor-driven; swallow keystrokes/paste/
-        // control bytes unless the user has taken manual control.
-        if (termLockState.get(info.id) === true) return
         window.electron.terminal.input(info.id, data)
+      })
+
+      // Lock detection runs on onKey, NOT onData. onKey fires only for real
+      // keyboard events (DOM keydown), so it ignores all the protocol chatter
+      // (focus tracking, cursor-position replies, mouse motion) that some
+      // CLIs — Codex in particular — emit through onData. Deduped via
+      // lockHeldRef so we only emit IPC + setState on transitions.
+      term.onKey(({ domEvent }) => {
+        if (!info.coordinatedMode) return
+        const isSubmit = domEvent.key === 'Enter'
+        if (isSubmit && lockHeldRef.current) {
+          lockHeldRef.current = false
+          window.electron.terminal.setUserControl(info.id, false)
+          setLockHeld(false)
+        } else if (!isSubmit && !lockHeldRef.current) {
+          lockHeldRef.current = true
+          window.electron.terminal.setUserControl(info.id, true)
+          setLockHeld(true)
+        }
       })
     }
 
@@ -157,9 +162,12 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
 
   useEffect(() => {
     const unsub = window.electron.terminal.onExit(({ id }) => {
-      if (id === info.id) {
-        termInstances.get(info.id)?.term.write('\r\n\x1b[33m[process exited]\x1b[0m\r\n')
-      }
+      if (id !== info.id) return
+      termInstances.get(info.id)?.term.write('\r\n\x1b[33m[process exited]\x1b[0m\r\n')
+      // Main wipes coordination state on exit (clearCoordinationState); keep
+      // the renderer in sync so a re-spawn under the same id starts unlocked.
+      lockHeldRef.current = false
+      setLockHeld(false)
     })
     return unsub
   }, [info.id])
@@ -201,45 +209,16 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
           </span>
         </div>
       )}
-      {isCoordinated && (locked ? (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-slate-800/60 border-b border-white/10 flex-shrink-0">
-          <span className="text-[11px] text-slate-400 flex items-center gap-2">
-            <Lock size={11} /> Scheduler-coordinated — agent communications flowing
+      {isCoordinated && lockHeld && (
+        <div className="flex items-center gap-2 px-3 py-1.5 bg-yellow-500/15 border-b border-yellow-500/50 flex-shrink-0">
+          <AlertTriangle size={12} className="text-yellow-300 flex-shrink-0" />
+          <span className="text-[11px] text-yellow-100">
+            All communication to the CLI is blocked and will be queued. Press <span className="font-mono font-semibold">Enter</span> to unblock.
           </span>
-          <button
-            onClick={() => setManualOverride(true)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded bg-[#58A6FF]/15 text-[#58A6FF] hover:bg-[#58A6FF]/25 hover:text-white border border-[#58A6FF]/40 transition-colors"
-            title="Pause incoming agent messages and type a reply"
-          >
-            <Keyboard size={12} />
-            Take control to type
-          </button>
         </div>
-      ) : (
-        <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-red-500/20 border-b-2 border-red-500/70 flex-shrink-0 animate-pulse-glow">
-          <span className="text-[11px] text-red-200 flex items-center gap-2 font-medium">
-            <AlertTriangle size={12} className="text-red-300" />
-            <span>
-              <span className="font-semibold text-red-100">Incoming agent communications blocked</span>
-              <span className="text-red-300/90"> — they will queue until you re-lock</span>
-            </span>
-          </span>
-          <button
-            onClick={() => setManualOverride(false)}
-            className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-medium rounded bg-slate-700/70 text-slate-100 hover:bg-slate-600 border border-white/20 transition-colors"
-          >
-            <Unlock size={12} />
-            Re-lock
-          </button>
-        </div>
-      ))}
+      )}
       <div className="flex-1 min-h-0 relative">
         <div ref={containerRef} className="w-full h-full" />
-        {locked && (
-          <div className="absolute inset-0 bg-[#58A6FF]/10 flex items-center justify-center pointer-events-none">
-            <Lock size={112} strokeWidth={1.25} className="text-[#58A6FF]/40" />
-          </div>
-        )}
       </div>
     </div>
   )
