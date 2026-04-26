@@ -7,3 +7,4 @@ graphify-out/
 ARCHITECT/mailbox/
 out-tsc/
 test_results/
+*.tsbuildinfo
