@@ -241,7 +241,7 @@ export default function SettingsPanel({
         </Section>
 
         <Section
-          title="Architect assistant"
+          title="ARCHITECT assistant"
           hint="The side-panel assistant that drafts or edits this project's architecture."
         >
           <div className="space-y-3">

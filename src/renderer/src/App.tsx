@@ -231,7 +231,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
           <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Architect</h1>
+          <h1 className="text-2xl font-semibold text-white tracking-tight">ARCHITECT</h1>
           <p className="text-sm text-slate-500 mt-1">Open a project folder to get started</p>
         </div>
       </div>
