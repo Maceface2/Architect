@@ -1,4 +1,4 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -10,14 +10,12 @@ import {
   BackgroundVariant,
   Controls,
   type Connection,
-  type Edge,
   type XYPosition,
 } from '@xyflow/react'
 
 import TopNav from './components/layout/TopNav'
 import AssistantPanel, { type AssistantOrientation } from './components/layout/AssistantPanel'
 import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchModal'
-import Sidebar from './components/layout/Sidebar'
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
@@ -25,22 +23,30 @@ import ResizablePanel from './components/layout/ResizablePanel'
 import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
-import { palette, ZONE_PALETTE_ITEM } from './data/componentPalette'
 import { nodeTypes } from './components/nodes/nodeTypes'
+import ComponentEdge from './components/edges/ComponentEdge'
+import CompactCanvasPalette, {
+  type CanvasPaletteTool,
+  type ComponentCreateConfig,
+  type EdgeCreateConfig,
+  type ZoneCreateConfig,
+} from './components/palette/CompactCanvasPalette'
 import type {
   AssistantMode,
+  CanvasEdge,
   CanvasNode,
+  ComponentEdgeDirection,
   ComponentNodeType,
   ProjectSettings,
   ZoneNodeData,
   ZoneNodeType,
 } from './types'
-import type { PaletteItemConfig } from './data/componentPalette'
 import {
   createDefaultZoneAgentConfig,
   createDefaultProjectSettings,
   migrateCanvasData,
   mintParticipantId,
+  normalizeEdgeData,
 } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
@@ -61,6 +67,19 @@ interface CanvasUpdate {
   edges: unknown[]
 }
 
+type RawCanvasEdge = {
+  id?: string
+  source: string
+  target: string
+  label?: string
+  direction?: ComponentEdgeDirection
+  data?: unknown
+}
+
+type PendingCreate =
+  | { kind: 'component'; config: ComponentCreateConfig }
+  | { kind: 'zone'; config: ZoneCreateConfig }
+
 // Must match the main-process ASSISTANT_ZONES keys (terminals.ts) — those
 // are sanitize('Architecture Assistant Design'|'General') with non-alnum
 // chars replaced by '-'. Used here to route zone:session-captured events
@@ -75,8 +94,32 @@ const ZONE_DEFAULT_HEIGHT = 280
 const COMPONENT_APPROX_W = 180
 const COMPONENT_APPROX_H = 78
 const FIT_VIEW_OPTIONS = { padding: 0.18, duration: 280 }
+const edgeTypes = {
+  'component-edge': ComponentEdge,
+}
 
-function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges: Edge[] } {
+function createEdgeId(): string {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  return uuid ? `edge-${uuid}` : `edge-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function createNodeId(prefix: string): string {
+  const uuid = globalThis.crypto?.randomUUID?.()
+  return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function iconForCategory(category: ComponentNodeType['data']['category']): string {
+  switch (category) {
+    case 'infrastructure': return 'Monitor'
+    case 'storage': return 'Database'
+    case 'custom': return 'Wrench'
+    case 'services':
+    default:
+      return 'Settings2'
+  }
+}
+
+function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
   const zoneX = 120
   const zoneY = 120
   const zone: ZoneNodeType = {
@@ -143,16 +186,16 @@ function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges
       },
     },
   ]
-  const edges: Edge[] = [
-    { id: 'demo-ce-1', source: 'demo-c-1', target: 'demo-c-2' },
-    { id: 'demo-ce-2', source: 'demo-c-1', target: 'demo-c-3' },
+  const edges: CanvasEdge[] = [
+    { id: 'demo-ce-1', type: 'component-edge', source: 'demo-c-1', target: 'demo-c-2', data: { label: 'calls', direction: 'source-to-target' } },
+    { id: 'demo-ce-2', type: 'component-edge', source: 'demo-c-1', target: 'demo-c-3', data: { label: 'persists to', direction: 'source-to-target' } },
   ]
   return { nodes: [zone, ...comps], edges }
 }
 
 function serializeCanvasData(
   nodes: CanvasNode[],
-  edges: Edge[],
+  edges: CanvasEdge[],
   settings: ProjectSettings,
 ): string {
   return JSON.stringify({
@@ -161,34 +204,6 @@ function serializeCanvasData(
     settings,
     savedAt: new Date().toISOString(),
   })
-}
-
-function buildPaletteContext(): string {
-  return JSON.stringify(
-    {
-      zoneTemplate: {
-        id: ZONE_PALETTE_ITEM.id,
-        label: ZONE_PALETTE_ITEM.label,
-        description: ZONE_PALETTE_ITEM.description,
-        defaults: {
-          color: ZONE_PALETTE_ITEM.color,
-          tag: ZONE_PALETTE_ITEM.tag,
-          kind: ZONE_PALETTE_ITEM.kind,
-        },
-      },
-      components: palette.map(item => ({
-        id: item.id,
-        label: item.label,
-        description: item.description,
-        category: item.category,
-        iconName: item.iconName,
-        color: item.color,
-        tag: item.tag,
-      })),
-    },
-    null,
-    2,
-  )
 }
 
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
@@ -298,7 +313,7 @@ function zonesContainingPoint(zones: ZoneNodeType[], point: XYPosition): ZoneNod
 
 function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChangeDir: () => void }) {
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([])
+  const [edges, setEdges, onEdgesChange] = useEdgesState<CanvasEdge>([])
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(createDefaultProjectSettings())
   const [activeTab, setActiveTab] = useState('Canvas')
   const [terminalSessions, setTerminalSessions] = useState<TerminalInfo[]>([])
@@ -313,12 +328,14 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('architect:assistant-orientation') : null
     return raw === 'bottom' ? 'bottom' : 'right'
   })
+  const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
+  const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
-  const edgesRef = useRef<Edge[]>([])
+  const edgesRef = useRef<CanvasEdge[]>([])
   const settingsRef = useRef<ProjectSettings>(projectSettings)
   const isDirtyRef = useRef(false)
   const lastAppliedCanvasRef = useRef('')
@@ -329,7 +346,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   // remove, connect) and at the start of a drag/resize. Data-only edits from
   // node config modals go through setNodes directly and aren't captured — only
   // graph-shape changes are undoable.
-  type CanvasSnapshot = { nodes: CanvasNode[]; edges: Edge[] }
+  type CanvasSnapshot = { nodes: CanvasNode[]; edges: CanvasEdge[] }
   const historyPastRef = useRef<CanvasSnapshot[]>([])
   const historyFutureRef = useRef<CanvasSnapshot[]>([])
   const dragOrResizeInFlightRef = useRef(false)
@@ -566,14 +583,91 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     }
   }, [projectDir, applyRawCanvas])
 
+  const cancelCanvasTool = useCallback(() => {
+    setPendingCreate(null)
+    setPendingEdgeDefaults(null)
+  }, [])
+
   const onConnect = useCallback(
     (connection: Connection) => {
+      if (!connection.source || !connection.target) return
+      const source = nodesRef.current.find(node => node.id === connection.source)
+      const target = nodesRef.current.find(node => node.id === connection.target)
+      if (source?.type !== 'component' || target?.type !== 'component') return
+
       snapshotHistory()
-      setEdges(eds => addEdge(connection, eds))
+      const edgeData = normalizeEdgeData(pendingEdgeDefaults ?? { direction: 'source-to-target' })
+      const edge: CanvasEdge = {
+        id: createEdgeId(),
+        type: 'component-edge',
+        source: connection.source,
+        target: connection.target,
+        sourceHandle: connection.sourceHandle,
+        targetHandle: connection.targetHandle,
+        data: edgeData,
+      }
+      setEdges(eds => addEdge(edge, eds))
+      setPendingEdgeDefaults(null)
       setIsDirty(true)
     },
-    [setEdges, snapshotHistory]
+    [pendingEdgeDefaults, setEdges, snapshotHistory]
   )
+
+  const onPaneClick = useCallback((event: ReactMouseEvent) => {
+    if (!pendingCreate) return
+    const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+
+    snapshotHistory()
+
+    if (pendingCreate.kind === 'zone') {
+      const config = pendingCreate.config
+      setNodes(nds => {
+        const usedParticipantIds = new Set<string>()
+        for (const n of nds) {
+          if (n.type === 'zone') usedParticipantIds.add((n.data as ZoneNodeData).participantId)
+        }
+        const newZone: ZoneNodeType = {
+          id: createNodeId('zone'),
+          type: 'zone',
+          position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
+          width: ZONE_DEFAULT_WIDTH,
+          height: ZONE_DEFAULT_HEIGHT,
+          zIndex: 0,
+          data: {
+            participantId: mintParticipantId(config.label, usedParticipantIds),
+            label: config.label,
+            description: config.description,
+            color: config.color,
+            status: 'idle',
+            systemPrompt: '',
+            ...createDefaultZoneAgentConfig(projectSettings),
+          },
+        }
+        return [...nds, newZone]
+      })
+    } else {
+      const config = pendingCreate.config
+      const newComp: ComponentNodeType = {
+        id: createNodeId('component'),
+        type: 'component',
+        position: { x: flowPoint.x - COMPONENT_APPROX_W / 2, y: flowPoint.y - COMPONENT_APPROX_H / 2 },
+        zIndex: 1,
+        data: {
+          label: config.label,
+          description: config.description,
+          specs: '',
+          category: config.category,
+          iconName: iconForCategory(config.category),
+          color: config.color,
+          tag: config.tag,
+        },
+      }
+      setNodes(nds => [...nds, newComp])
+    }
+
+    setPendingCreate(null)
+    setIsDirty(true)
+  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory])
 
   const onSave = useCallback(async () => {
     const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
@@ -598,71 +692,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setDispatchPrefill(`Pick up these canvas changes — ${parts.join(' · ')}.`)
     setDispatchModalOpen(true)
   }, [persistCanvasRaw, dispatchedGraph])
-
-  const onDragOver = useCallback((event: React.DragEvent<HTMLDivElement>) => {
-    event.preventDefault()
-    event.dataTransfer.dropEffect = 'move'
-  }, [])
-
-  const onDrop = useCallback(
-    (event: React.DragEvent<HTMLDivElement>) => {
-      event.preventDefault()
-      const raw = event.dataTransfer.getData('application/architect-node')
-      if (!raw) return
-      const item: PaletteItemConfig = JSON.parse(raw)
-      const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-
-      snapshotHistory()
-
-      if (item.kind === 'zone') {
-        setNodes(nds => {
-          const usedParticipantIds = new Set<string>()
-          for (const n of nds) {
-            if (n.type === 'zone') usedParticipantIds.add((n.data as ZoneNodeData).participantId)
-          }
-          const newZone: ZoneNodeType = {
-            id: `zone-${Date.now()}`,
-            type: 'zone',
-            position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
-            width: ZONE_DEFAULT_WIDTH,
-            height: ZONE_DEFAULT_HEIGHT,
-            zIndex: 0,
-            data: {
-              participantId: mintParticipantId('New Zone', usedParticipantIds),
-              label: 'New Zone',
-              description: '',
-              color: '#58A6FF',
-              status: 'idle',
-              systemPrompt: '',
-              ...createDefaultZoneAgentConfig(projectSettings),
-            },
-          }
-          return [...nds, newZone]
-        })
-        setIsDirty(true)
-        return
-      }
-
-      const newComp: ComponentNodeType = {
-        id: `${item.id}-${Date.now()}`,
-        type: 'component',
-        position: { x: flowPoint.x - COMPONENT_APPROX_W / 2, y: flowPoint.y - COMPONENT_APPROX_H / 2 },
-        zIndex: 1,
-        data: {
-          label: item.label,
-          description: item.description,
-          specs: '',
-          category: item.category,
-          iconName: item.iconName,
-          color: item.color,
-          tag: item.tag,
-        },
-      }
-      setNodes(nds => [...nds, newComp])
-      setIsDirty(true)
-    },
-    [projectSettings, screenToFlowPosition, setNodes, snapshotHistory]
-  )
 
   const handleNodesChange = useCallback((changes: Parameters<typeof onNodesChange>[0]) => {
     // Snapshot once at the start of a drag/resize (not every frame) and once
@@ -708,6 +737,25 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     onEdgesChange(changes)
     setIsDirty(true)
   }, [onEdgesChange, snapshotHistory])
+
+  useEffect(() => {
+    const onEdgeMutating = () => {
+      snapshotHistory()
+      setIsDirty(true)
+    }
+    // Edge components update through useReactFlow().setEdges, which bypasses
+    // the parent onEdgesChange hook. Snapshot here before those local edits land.
+    window.addEventListener('architect:edge-mutating', onEdgeMutating)
+    return () => window.removeEventListener('architect:edge-mutating', onEdgeMutating)
+  }, [snapshotHistory])
+
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') cancelCanvasTool()
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [cancelCanvasTool])
 
   const onClear = useCallback(() => {
     snapshotHistory()
@@ -820,11 +868,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const buildAssistantContext = useCallback((
     mode: AssistantMode,
     currentNodes: CanvasNode[],
-    currentEdges: Edge[],
+    currentEdges: CanvasEdge[],
   ) => {
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')
     const compList = currentNodes.filter((n): n is ComponentNodeType => n.type === 'component')
-    const paletteJson = buildPaletteContext()
 
     const componentZones = new Map<string, string | null>()
     for (const c of compList) {
@@ -859,7 +906,16 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         position: c.position,
         overlayedBy: componentZones.get(c.id),
       })),
-      edges: currentEdges.map(e => ({ id: e.id, source: e.source, target: e.target })),
+      edges: currentEdges.map(e => {
+        const data = normalizeEdgeData(e.data)
+        return {
+          id: e.id,
+          source: e.source,
+          target: e.target,
+          ...(data.label ? { label: data.label } : {}),
+          direction: data.direction ?? 'source-to-target',
+        }
+      }),
     }, null, 2)
 
     const canvasBlock = zoneList.length === 0 && compList.length === 0
@@ -884,21 +940,83 @@ ${canvasBlock}`
 
 Zone membership is determined purely by geometry: if a component's center falls inside a zone's bounding box, that zone owns it (meaning the zone-agent is the one responsible when a dispatched task touches that component). A component outside all zones is a design artifact only — no agent owns it.
 
-Edges connect any nodes (zones or components) and denote dependencies/data flow.
+Edges are component-level reference links for dependencies/data flow. They may include optional \`label\` text and \`direction\` metadata (\`source-to-target\`, \`bidirectional\`, or \`none\`). They are not used for zone coordination, scheduling, or ownership.
 
 ## Current Canvas
 ${canvasBlock}
 
-## Component Palette
-Use these as the preferred component presets when creating architectures. Match their \`category\`, \`iconName\`, \`color\`, and default \`tag\` unless the user clearly wants a custom component.
-~~~json
-${paletteJson}
-~~~
+## Component Authoring
+Components are user-defined. Create components with a clear \`label\`, short \`description\`, detailed \`specs\`, \`category\`, \`tag\`, \`color\`, and an appropriate \`iconName\`.
 
 ## JSON Example
-Write the canvas directly to \`architect-canvas.json\` using the modern Architect format:
+Write the canvas directly to \`architect-canvas.json\` using the modern Architect format. **Always pretty-print** with 2-space indentation — minified JSON is harder to diff and edit by hand:
 ~~~json
-{"nodes":[{"id":"frontend-zone","type":"zone","position":{"x":80,"y":80},"width":620,"height":360,"zIndex":0,"data":{"label":"Frontend Agent","description":"Owns the user-facing app shell","color":"#58A6FF","status":"idle","systemPrompt":"You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.","agentRuntime":"codex","providerModels":{"codex":"gpt-5.2-codex"},"openSections":[],"skills":[],"tools":{"webSearch":false,"codeExec":false,"fileRead":false,"fileWrite":false,"apiCalls":false,"shell":false},"behavior":{"mode":"sequential","retries":0,"onFailure":"stop","timeoutMs":30000},"permissions":{"readFiles":false,"writeFiles":false,"network":false,"shell":false},"envVars":[]}},{"id":"web-ui","type":"component","position":{"x":120,"y":170},"zIndex":1,"data":{"label":"Frontend","description":"Browser client","specs":"React app with auth, dashboard, and settings screens.","category":"infrastructure","iconName":"Monitor","color":"#f472b6","tag":"UI"}}],"edges":[{"id":"zone-to-component","source":"frontend-zone","target":"web-ui"}],"settings":{"dispatchRuntime":"codex"}}
+{
+  "nodes": [
+    {
+      "id": "frontend-zone",
+      "type": "zone",
+      "position": { "x": 80, "y": 80 },
+      "width": 620,
+      "height": 360,
+      "zIndex": 0,
+      "data": {
+        "label": "Frontend Agent",
+        "description": "Owns the user-facing app shell",
+        "color": "#58A6FF",
+        "status": "idle",
+        "systemPrompt": "You are a senior frontend engineer. Build clean, idiomatic React UIs with proper state management and accessibility.",
+        "agentRuntime": "codex",
+        "providerModels": { "codex": "gpt-5.2-codex" },
+        "openSections": [],
+        "skills": [],
+        "tools": { "webSearch": false, "codeExec": false, "fileRead": false, "fileWrite": false, "apiCalls": false, "shell": false },
+        "behavior": { "mode": "sequential", "retries": 0, "onFailure": "stop", "timeoutMs": 30000 },
+        "permissions": { "readFiles": false, "writeFiles": false, "network": false, "shell": false },
+        "envVars": []
+      }
+    },
+    {
+      "id": "web-ui",
+      "type": "component",
+      "position": { "x": 120, "y": 170 },
+      "zIndex": 1,
+      "data": {
+        "label": "Frontend",
+        "description": "Browser client",
+        "specs": "React app with auth, dashboard, and settings screens.",
+        "category": "infrastructure",
+        "iconName": "Monitor",
+        "color": "#f472b6",
+        "tag": "UI"
+      }
+    },
+    {
+      "id": "api-client",
+      "type": "component",
+      "position": { "x": 340, "y": 170 },
+      "zIndex": 1,
+      "data": {
+        "label": "API Client",
+        "description": "Typed client for backend calls",
+        "specs": "Shared request helpers, response types, and error handling.",
+        "category": "services",
+        "iconName": "Network",
+        "color": "#38bdf8",
+        "tag": "API"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "component-flow",
+      "source": "web-ui",
+      "target": "api-client",
+      "data": { "label": "uses", "direction": "source-to-target" }
+    }
+  ],
+  "settings": { "dispatchRuntime": "codex" }
+}
 ~~~
 
 ## Your Role
@@ -948,7 +1066,7 @@ Only discuss and advise without editing the file when the user is asking for cri
 
     const rawZones = Array.isArray(update.zones) ? (update.zones as Array<Record<string, unknown>>) : []
     const rawComponents = Array.isArray(update.components) ? (update.components as Array<Record<string, unknown>>) : []
-    const rawEdges = (update.edges ?? []) as Array<{ id?: string; source: string; target: string }>
+    const rawEdges = (update.edges ?? []) as RawCanvasEdge[]
 
     const existingZones = nodesRef.current.filter((n): n is ZoneNodeType => n.type === 'zone')
     const existingComps = nodesRef.current.filter((n): n is ComponentNodeType => n.type === 'component')
@@ -1065,10 +1183,12 @@ Only discuss and advise without editing the file when the user is asking for cri
       }
     })
 
-    const newEdges: Edge[] = rawEdges.map((raw, i) => ({
-      id: raw.id ?? `gen-edge-${Date.now()}-${i}`,
+    const newEdges: CanvasEdge[] = rawEdges.map(raw => ({
+      id: raw.id ?? createEdgeId(),
+      type: 'component-edge',
       source: raw.source,
       target: raw.target,
+      data: normalizeEdgeData(raw.data ?? raw),
     }))
 
     if (autoSaveTimerRef.current) {
@@ -1270,6 +1390,12 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
   const isSettings = activeTab === 'Settings'
+  const activePaletteTool: CanvasPaletteTool | null = pendingCreate?.kind ?? (pendingEdgeDefaults ? 'edge' : null)
+  const placementHint = pendingCreate
+    ? `Click canvas to place ${pendingCreate.kind === 'zone' ? 'zone' : 'component'}`
+    : pendingEdgeDefaults
+      ? 'Connect two component handles'
+      : null
 
   const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
     setProjectSettings(current => ({ ...current, ...partial }))
@@ -1314,10 +1440,6 @@ Only discuss and advise without editing the file when the user is asking for cri
           canRedo={canRedo}
         />
         <div className="flex flex-1 overflow-hidden">
-          <ResizablePanel side="left" defaultSize={180}>
-            <Sidebar />
-          </ResizablePanel>
-
           <div
             className="flex-1 flex overflow-hidden"
             style={{ flexDirection: assistantOrientation === 'bottom' ? 'column' : 'row' }}
@@ -1331,16 +1453,34 @@ Only discuss and advise without editing the file when the user is asking for cri
               onNodesChange={handleNodesChange}
               onEdgesChange={handleEdgesChange}
               onConnect={onConnect}
-              onDrop={onDrop}
-              onDragOver={onDragOver}
+              onPaneClick={onPaneClick}
               nodeTypes={nodeTypes}
-              defaultEdgeOptions={{ style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
+              edgeTypes={edgeTypes}
+              defaultEdgeOptions={{ type: 'component-edge', style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
               proOptions={{ hideAttribution: true }}
               fitView
             >
               <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
               <Controls />
             </ReactFlow>
+
+            <CompactCanvasPalette
+              activeTool={activePaletteTool}
+              placementHint={placementHint}
+              onCreateComponent={config => {
+                setPendingEdgeDefaults(null)
+                setPendingCreate({ kind: 'component', config })
+              }}
+              onCreateZone={config => {
+                setPendingEdgeDefaults(null)
+                setPendingCreate({ kind: 'zone', config })
+              }}
+              onCreateEdge={config => {
+                setPendingCreate(null)
+                setPendingEdgeDefaults(config)
+              }}
+              onCancel={cancelCanvasTool}
+            />
 
             {pendingExternalCanvasRaw && (
               <CanvasConflictModal

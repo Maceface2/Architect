@@ -1,5 +1,6 @@
 import { join } from 'path'
 import { activityLogPath } from '../activity'
+import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
 // v5 zone prompt builder. Replaces v4's buildZoneSystemPrompt dispatch-mode
 // block (~90 lines of output, prescribes a bash polling loop) with a
@@ -11,16 +12,12 @@ import { activityLogPath } from '../activity'
 // when each task is done. No mailbox scripts. No jq. No polling.
 
 export interface ZoneComponentSpec {
+  id: string
   label: string
   tag?: string
   category?: string
   description?: string
   specs?: string
-}
-
-export interface ZoneUpstreamRef {
-  label: string
-  participantId: string
 }
 
 export interface ZonePromptInput {
@@ -30,8 +27,7 @@ export interface ZonePromptInput {
   label: string
   description?: string
   components: ZoneComponentSpec[]
-  upstream: ZoneUpstreamRef[]
-  downstreamLabels: string[]
+  componentEdges: ComponentEdgeSpec[]
   // Enabled tool names from zone.data.tools (filtered to truthy).
   toolNames: string[]
   // Already-resolved skill contents. Empty entries filtered out by caller.
@@ -43,7 +39,7 @@ export interface ZonePromptInput {
 function renderComponents(components: ZoneComponentSpec[]): string {
   if (!components.length) return '_(no components were drawn — work from the task alone)_'
   return components.map(c => {
-    const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
+    const head = `- **${c.label}** (\`${c.id}\`)${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
     const specs = (c.specs ?? '').trim()
     return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
   }).join('\n\n')
@@ -57,8 +53,7 @@ export function buildZonePrompt(input: ZonePromptInput): string {
     label,
     description,
     components,
-    upstream,
-    downstreamLabels,
+    componentEdges,
     toolNames,
     skills,
     userSystemPrompt,
@@ -68,14 +63,7 @@ export function buildZonePrompt(input: ZonePromptInput): string {
   const outputLog = join(projectDir, 'ARCHITECT', 'outputs', `${participantId}.md`)
   const architectDir = join(projectDir, 'ARCHITECT')
 
-  const upstreamLine = upstream.length
-    ? `**Upstream zones (read their output logs when referenced in a task):** ${upstream.map(u => `${u.label} \`${join(architectDir, 'outputs', `${u.participantId}.md`)}\``).join(', ')}`
-    : ''
-  const downstreamLine = downstreamLabels.length
-    ? `**Downstream zones (they'll consume your work):** ${downstreamLabels.join(', ')}`
-    : ''
   const toolsLine = toolNames.length ? `**Enabled tools:** ${toolNames.join(', ')}` : ''
-  const contextBlock = [upstreamLine, downstreamLine, toolsLine].filter(Boolean).join('\n')
 
   const skillsBlock = skills.length
     ? `## Skills\n\n${skills.map(s => `### ${s.name}\n${s.content}`).join('\n\n')}\n\n`
@@ -84,13 +72,19 @@ export function buildZonePrompt(input: ZonePromptInput): string {
 
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
-${contextBlock}
+${toolsLine}
 
 ## What you own (reference)
 
 These components live in your zone on the architecture canvas. This is CONTEXT about the parts of the system you're responsible for — NOT a build list. A given task may touch none, some, or all of them.
 
 ${renderComponents(components)}
+
+## Component edges (reference)
+
+These component-level links touch at least one component in your zone. They are context only; the conductor decides task ordering.
+
+${renderComponentEdges(componentEdges)}
 
 ${skillsBlock}${behaviorBlock}## How you receive work
 
@@ -139,8 +133,9 @@ After your final \`done\`/\`failed\`/\`ask\` line, stop and wait for the next us
 
 ## Rules
 
+- **Definition of done.** Emit \`kind:"done"\` only when the task body's acceptance criteria are actually met — code written *and* compiling, tests passing if the body asks for tests, endpoints reachable if the body asks for an integration. Writing a stub that satisfies the words of the task but not its intent counts as \`kind:"failed"\` (or \`kind:"ask"\` if you genuinely don't know which is wanted). When the body is silent on acceptance, default to: code compiles/typechecks, no obvious runtime errors on a smoke check, and any contract you announced in your \`content\` actually holds in the file you wrote.
 - Work autonomously. Don't stop to ask clarifying questions unless the task is genuinely ambiguous — in that case emit \`kind:"ask"\`.
 - Always include the \`taskId\` from the prompt in your activity line. This is how the conductor correlates your result.
-- Include real interfaces (type signatures, function shapes, endpoint specs) in your \`content\` summary when downstream zones will consume your work.
+- Include real interfaces (type signatures, function shapes, endpoint specs) in your \`content\` summary when another zone may need to use your work. If the contract is too long for the 8 KB \`content\` cap, append the full version to \`${outputLog}\` and put a short pointer in \`content\`.
 `
 }

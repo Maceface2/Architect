@@ -1,7 +1,7 @@
-import { join } from 'path'
 import type { AgentRuntime } from '../../../shared/agentRuntimes'
 import { getAgentRuntime } from '../../../shared/agentRuntimes'
 import { activityLogPath } from '../activity'
+import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
 // v5 Conductor prompt builder. Replaces v4's buildArchitectPrompt (~250
 // lines) with a compact, runtime-uniform contract (~60 lines of output).
@@ -27,8 +27,6 @@ export interface ConductorZoneContext {
   runtime: AgentRuntime
   model: string
   componentLabels: string[]
-  upstreamLabels: string[]
-  downstreamLabels: string[]
 }
 
 export interface ConductorPromptInput {
@@ -36,7 +34,7 @@ export interface ConductorPromptInput {
   dispatchId: string
   userPrompt?: string
   zones: ConductorZoneContext[]
-  zoneEdges: Array<{ fromLabel: string; toLabel: string }>
+  componentEdges: ComponentEdgeSpec[]
   unassignedComponents: Array<{ label: string; tag?: string; description?: string }>
 }
 
@@ -50,33 +48,15 @@ export interface ConductorPromptInput {
 //   { "type": "noop",     "reason"?: "..." }
 export type ConductorDecisionType = 'assign' | 'answer' | 'final' | 'noop'
 
-function buildMermaid(zones: ConductorZoneContext[], zoneEdges: Array<{ fromLabel: string; toLabel: string }>): string {
-  const lines: string[] = ['```mermaid', 'graph TD']
-  for (const zone of zones) {
-    lines.push(`  ${zone.participantId}["${zone.label}"]`)
-  }
-  for (const edge of zoneEdges) {
-    lines.push(`  ${edge.fromLabel} --> ${edge.toLabel}`)
-  }
-  lines.push('```')
-  return lines.join('\n')
-}
-
 export function buildConductorPrompt(input: ConductorPromptInput): string {
-  const { projectDir, dispatchId, userPrompt, zones, zoneEdges, unassignedComponents } = input
+  const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
 
   const zoneLines = zones.map(zone => {
-    const upstream = zone.upstreamLabels.length ? ` · upstream: ${zone.upstreamLabels.join(', ')}` : ''
-    const downstream = zone.downstreamLabels.length ? ` · downstream: ${zone.downstreamLabels.join(', ')}` : ''
     const components = zone.componentLabels.length ? ` · components: ${zone.componentLabels.join(', ')}` : ''
     const desc = zone.description ? ` — ${zone.description}` : ''
-    return `- **${zone.label}** (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})${desc}${components}${upstream}${downstream}`
+    return `- **${zone.label}** (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})${desc}${components}`
   }).join('\n')
-
-  const flow = zoneEdges.length
-    ? zoneEdges.map(e => `  ${e.fromLabel} → ${e.toLabel}`).join('\n')
-    : '  (zones are independent — no cross-zone edges)'
 
   const unassigned = unassignedComponents.length
     ? `\n\n## Unassigned components (reference only, no zone owns them)\n${unassignedComponents.map(c => `- ${c.label}${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`).join('\n')}`
@@ -85,6 +65,7 @@ export function buildConductorPrompt(input: ConductorPromptInput): string {
   const task = userPrompt?.trim()
     ? `## Task (from user)\n${userPrompt.trim()}`
     : `## Task (from user)\n(No task yet. The harness will pty-write one when the user provides it.)`
+  const edgeLines = renderComponentEdges(componentEdges, '_(no component edges on the canvas)_')
 
   return `You are the **Conductor** for a multi-agent dispatch. Your participant id is \`conductor\`. Zones are listed below — each is already spawned as an interactive CLI session waiting for work. You decide what task goes to which zone, handle questions from zones, and produce a final summary when work completes.
 
@@ -133,26 +114,22 @@ After writing the activity line, stop and wait for the next user turn. Do not ru
 
 ${task}
 
-## Architecture (reference only — not a build list)
-
-${buildMermaid(zones, zoneEdges)}
-
 ## Zones
 
-${zoneLines}
+${zoneLines}${unassigned}
 
-## Inter-zone flow
+## Component edges (reference only)
 
-${flow}${unassigned}
+${edgeLines}
 
 ## Rules
 
 - Only engage the zones the task requires. Zones you don't assign stay idle — that is correct.
-- Upstream zones go first: if zone B depends on zone A's output, assign A before B.
-- A zone's output file lives at \`${join(projectDir, 'ARCHITECT', 'outputs')}/<participantId>.md\`. Reference these paths in task bodies so zones know where their peers' work is.
+- A zone's output file lives at \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`. Reference these paths in task bodies only when you explicitly want a zone to leave handoff notes.
 - Project source code lives in \`${projectDir}\` — zones write real files there. The \`ARCHITECT/\` directory is coordination-only.
 - Keep task bodies concrete: name the files/endpoints to touch, contract at seams with other zones, acceptance criteria.
 - Trust the harness's user turns as ground truth — you don't need to verify zone state separately.
+- **Failures are auto-retried by the harness** up to each zone's configured retry count. When the user turn says "will retry automatically", emit \`{type:"noop"}\` to acknowledge — do NOT issue a fresh \`{type:"assign"}\` for the same task. Only intervene with a new assignment when the turn says "retries exhausted", or when you want to override the retry by routing the work elsewhere.
 - \`{type:"final"}\` is rejected if any zone is still working on a task. Wait for the explicit "All engaged zones reported done" turn before emitting it. If you emit final too early, the harness will push back with the list of still-running zones and you'll need to acknowledge or reassign before final lands.
 - Empty \`body\` / \`summary\` fields, assignments to unknown zones, and reused \`taskId\` values are rejected at parse time. The harness will tell you what was rejected — fix and re-emit.
 `

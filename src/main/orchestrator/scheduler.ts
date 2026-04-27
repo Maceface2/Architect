@@ -166,8 +166,8 @@ export class Scheduler {
   // ─── public API used by dispatch.ts ──────────────────────────────────────
 
   // Re-deliver an in-flight task on resume. Callers pass the same taskId/
-  // body pinned in DispatchRecord.pendingTasks so downstream correlation
-  // keeps working.
+  // body pinned in DispatchRecord.pendingTasks so task correlation keeps
+  // working.
   redispatchTask(task: PendingTask): void {
     const zone = this.participantById.get(task.participantId)
     if (!zone) {

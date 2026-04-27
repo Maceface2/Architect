@@ -1,4 +1,5 @@
 import { join } from 'path'
+import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
 // Solo-mode zone prompt. Used by runZone for single-zone launches (Play
 // button, or a one-zone startDispatch). There is no Conductor, no activity
@@ -7,6 +8,7 @@ import { join } from 'path'
 // Replaces v4's buildZoneSystemPrompt(..., 'solo') branch.
 
 export interface ZoneComponentSpec {
+  id: string
   label: string
   tag?: string
   category?: string
@@ -20,6 +22,7 @@ export interface SoloZonePromptInput {
   label: string
   description?: string
   components: ZoneComponentSpec[]
+  componentEdges: ComponentEdgeSpec[]
   toolNames: string[]
   skills: Array<{ name: string; content: string }>
   userSystemPrompt: string
@@ -28,14 +31,14 @@ export interface SoloZonePromptInput {
 function renderComponents(components: ZoneComponentSpec[]): string {
   if (!components.length) return '_(no components were drawn — work from the user goal alone)_'
   return components.map(c => {
-    const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
+    const head = `- **${c.label}** (\`${c.id}\`)${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
     const specs = (c.specs ?? '').trim()
     return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
   }).join('\n\n')
 }
 
 export function buildSoloZonePrompt(input: SoloZonePromptInput): string {
-  const { projectDir, participantId, label, description, components, toolNames, skills, userSystemPrompt } = input
+  const { projectDir, participantId, label, description, components, componentEdges, toolNames, skills, userSystemPrompt } = input
   const architectDir = join(projectDir, 'ARCHITECT')
   const outputLog = join(architectDir, 'outputs', `${participantId}.md`)
 
@@ -54,6 +57,12 @@ ${toolsLine}This zone was launched standalone. No conductor is coordinating you.
 These components live in your zone on the architecture canvas. This is CONTEXT — not a build list.
 
 ${renderComponents(components)}
+
+## Component edges (reference)
+
+These component-level links touch at least one component in your zone. They are context only.
+
+${renderComponentEdges(componentEdges)}
 
 ${skillsBlock}${behaviorBlock}## Where to put files
 

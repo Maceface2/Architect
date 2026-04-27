@@ -1,4 +1,5 @@
 import type { ActivityEvent } from './activity'
+import type { AgentRuntime } from '../../shared/agentRuntimes'
 
 // Parser + turn composers for the v5 Conductor flow.
 //
@@ -81,11 +82,21 @@ export function composeInitialTurn(userPrompt: string): string {
 // Plan-mode kick-off. The user wants to think through the plan with the
 // conductor before any zone gets a task. The conductor stays in
 // conversation with the user (its PTY is unlocked) and only emits its
-// first {type:"assign"} once the user has signalled GO — either by
-// approving the plan via the native plan-approval UI (ExitPlanMode), or
-// by typing the literal token GO into the terminal.
-export function composePlanModeInitialTurn(userPrompt: string): string {
+// first {type:"assign"} once the user has signalled GO — either by typing
+// the literal token GO into the terminal, or (Claude only) by approving
+// the plan via the native plan-approval UI (ExitPlanMode).
+//
+// `conductorRuntime` is used to gate runtime-specific tool references:
+// non-Claude runtimes (codex/gemini/opencode) don't have ExitPlanMode and
+// will hallucinate calls to it if it's mentioned in the prompt.
+export function composePlanModeInitialTurn(userPrompt: string, conductorRuntime: AgentRuntime): string {
   const trimmed = userPrompt.trim()
+  const goSignal = conductorRuntime === 'claude'
+    ? `The user signals GO in either of two equivalent ways:
+1. They type the literal token \`GO\` (case-insensitive) on its own line in the terminal.
+2. They approve your plan via the plan-approval UI (ExitPlanMode tool).`
+    : `The user signals GO by typing the literal token \`GO\` (case-insensitive) on its own line in the terminal.`
+
   return `New dispatch in **plan mode**. User task:
 ${trimmed || '(empty — ask the user what they want built)'}
 
@@ -97,19 +108,15 @@ You are paired with the user directly: the user will type into your terminal. Wo
 - acceptance criteria
 - anything ambiguous in the user's task that needs clarifying
 
-**Use the richest interaction available** to make this fast and clear:
-- When you have alternatives the user should choose between (test framework, file layout, library, etc.), surface them as a multi-choice question via your UI/option-panel tool if you have one — don't bury the choice in prose.
-- When you're ready to commit to a plan, present it via the plan-approval UI (ExitPlanMode) so the user can accept it with one click instead of retyping. Plain prose is fine when the question is open-ended.
+When you have alternatives the user should choose between (test framework, file layout, library, etc.), surface them as a clear numbered list — don't bury the choice in prose.
 
-**Architecture canvas changes during planning.** The zones, components, and edges shown to you above are a snapshot of the user's canvas taken when this dispatch started — and zones were spawned from that snapshot. If the discussion uncovers a structural change (a zone needs to be added/removed/renamed, a component should move to a different zone, edges between zones need to change), call it out plainly: tell the user what change you'd recommend and why, and ask them to update the canvas in the UI before giving GO. Note that structural changes only take effect on a fresh dispatch — the zones you have right now are fixed for this run. Soft changes that fit the existing zones (reassigning a file, expanding scope within one zone) don't require a canvas edit.
+**Architecture canvas changes during planning.** The zones, components, and edges shown to you above are a snapshot taken when this dispatch started — and zones were spawned from that snapshot. If the discussion uncovers a structural change (a zone needs to be added/removed/renamed, a component should move to a different zone), call it out plainly and ask the user to update the canvas in the UI before giving GO. Structural changes only take effect on a fresh dispatch — the zones you have right now are fixed for this run.
 
 Iterate until the plan is solid. **Do NOT emit any \`{type:"assign"}\` or other structured activity decision yet.** Activity-log lines are reserved for after the user gives GO.
 
-The user signals GO in either of two equivalent ways:
-1. They approve your plan via the plan-approval UI (ExitPlanMode), or
-2. They type the literal token \`GO\` (case-insensitive) on its own line in the terminal.
+${goSignal}
 
-When either happens, emit your first \`{type:"assign"}\` activity line based on the agreed plan and proceed exactly as you would in a normal dispatch. The harness resumes its normal turn-by-turn driving from that point on.`
+When the user gives GO, emit your first \`{type:"assign"}\` activity line based on the agreed plan and proceed exactly as you would in a normal dispatch.`
 }
 
 export function composeZoneDoneTurn(

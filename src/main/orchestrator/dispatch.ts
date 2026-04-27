@@ -30,7 +30,6 @@ import {
   setActiveDispatchCoordinator,
   spawnAgentSession,
   submitTurnToTerminal,
-  topoSort,
   killAll,
   type GraphEdge,
   type GraphNode,
@@ -42,7 +41,9 @@ import { runZone } from '../terminals'
 import { CONDUCTOR_PARTICIPANT_ID, Scheduler, type SchedulerZone } from './scheduler'
 import { composeInitialTurn, composePlanModeInitialTurn } from './conductor'
 import { setupWorkspaceV5, type WorkspaceInput, type WorkspaceZoneInput } from './workspace'
-import type { ZoneComponentSpec, ZoneUpstreamRef } from './prompts/zone'
+import { buildComponentEdgeSpecs } from './componentEdges'
+import type { ComponentEdgeSpec } from './prompts/componentEdges'
+import type { ZoneComponentSpec } from './prompts/zone'
 
 // Minimal bootstrap prompt delivered to every fresh-spawned zone as its
 // first user turn. Purpose: force the CLI to create an on-disk session
@@ -145,35 +146,25 @@ function buildWorkspaceZoneInput(
   zone: ZoneGraphNode,
   identities: Map<string, ZoneIdentity>,
   componentsByZone: Map<string, ComponentGraphNode[]>,
-  allZones: ZoneGraphNode[],
-  zoneEdges: GraphEdge[],
+  componentEdges: ComponentEdgeSpec[],
   runtime: AgentRuntime,
   model: string,
 ): WorkspaceZoneInput {
   const identity = identities.get(zone.id)
   if (!identity) throw new Error(`buildWorkspaceZoneInput: missing identity for zone ${zone.id}`)
-  const components: ZoneComponentSpec[] = (componentsByZone.get(zone.id) ?? []).map(c => ({
+  const zoneComponents = componentsByZone.get(zone.id) ?? []
+  const ownedComponentIds = new Set(zoneComponents.map(c => c.id))
+  const components: ZoneComponentSpec[] = zoneComponents.map(c => ({
+    id: c.id,
     label: c.data.label,
     tag: c.data.tag,
     category: c.data.category,
     description: c.data.description,
     specs: c.data.specs,
   }))
-  const upstream: ZoneUpstreamRef[] = zoneEdges
-    .filter(e => e.target === zone.id)
-    .map(e => allZones.find(z => z.id === e.source))
-    .filter((z): z is ZoneGraphNode => !!z)
-    .map(z => {
-      const up = identities.get(z.id)
-      return up
-        ? { label: up.displayLabel, participantId: up.participantId }
-        : { label: z.data.label, participantId: sanitize(z.data.label) }
-    })
-  const downstreamLabels = zoneEdges
-    .filter(e => e.source === zone.id)
-    .map(e => allZones.find(z => z.id === e.target))
-    .filter((z): z is ZoneGraphNode => !!z)
-    .map(z => identities.get(z.id)?.displayLabel ?? z.data.label)
+  const touchingEdges = componentEdges.filter(edge =>
+    ownedComponentIds.has(edge.sourceId) || ownedComponentIds.has(edge.targetId)
+  )
   const enabledTools = Object.entries(zone.data.tools ?? {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key)
@@ -189,8 +180,7 @@ function buildWorkspaceZoneInput(
     runtime,
     model,
     components,
-    upstream,
-    downstreamLabels,
+    componentEdges: touchingEdges,
     enabledTools,
     systemPromptOverride: (zone.data.systemPrompt ?? '').trim(),
     skills,
@@ -207,22 +197,15 @@ function buildWorkspaceInput(
   dispatchRuntime: AgentRuntime,
   rawSettings: unknown,
 ): { input: WorkspaceInput; zones: WorkspaceZoneInput[] } {
-  const { zones: allZones, componentsByZone, unassignedComponents } = indexGraph(nodes)
-  const zoneIdSet = new Set(filteredZones.map(z => z.id))
-  const zoneEdges = edges.filter(e => zoneIdSet.has(e.source) && zoneIdSet.has(e.target))
+  const { componentsByZone, unassignedComponents } = indexGraph(nodes)
+  const componentEdges = buildComponentEdgeSpecs(nodes, edges)
   const identities = assignZoneIdentities(filteredZones)
 
   const zones: WorkspaceZoneInput[] = filteredZones.map(zone => {
     const runtime = getZoneRuntime(zone, normalizeProjectSettings(rawSettings))
     const model = getZoneModel(zone, runtime)
-    return buildWorkspaceZoneInput(zone, identities, componentsByZone, allZones, zoneEdges, runtime, model)
+    return buildWorkspaceZoneInput(zone, identities, componentsByZone, componentEdges, runtime, model)
   })
-
-  const labelByZoneId = new Map(filteredZones.map(z => [z.id, identities.get(z.id)?.displayLabel ?? z.data.label]))
-  const zoneEdgePairs = zoneEdges.map(e => ({
-    fromLabel: labelByZoneId.get(e.source) ?? e.source,
-    toLabel: labelByZoneId.get(e.target) ?? e.target,
-  }))
 
   return {
     input: {
@@ -231,7 +214,7 @@ function buildWorkspaceInput(
       dispatchRuntime,
       userPrompt,
       zones,
-      zoneEdges: zoneEdgePairs,
+      componentEdges,
       unassignedComponents: unassignedComponents.map(c => ({
         id: c.id,
         label: c.data.label,
@@ -290,13 +273,11 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     throw new Error('no zones selected for dispatch')
   }
   const selectedIdSet = new Set(selectedZones.map(z => z.id))
-  const zoneEdges = edges.filter(e => selectedIdSet.has(e.source) && selectedIdSet.has(e.target))
-  const sorted = topoSort(selectedZones, zoneEdges)
 
   // Single-zone dispatch: no conductor needed. runZone handles the solo
   // prompt + direct user-driven interaction path.
-  if (sorted.length === 1) {
-    const zone = sorted[0]
+  if (selectedZones.length === 1) {
+    const zone = selectedZones[0]
     const runtime = getZoneRuntime(zone, settings)
     const result = await runZone(win, {
       projectDir,
@@ -325,7 +306,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     dispatchId,
     filteredNodes,
     edges,
-    sorted,
+    selectedZones,
     userPrompt,
     conductorRuntime,
     rawSettings,
@@ -337,7 +318,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   const wsByZoneId = new Map(workspaceZones.map(w => [w.zoneId, w]))
   const allInfo: TerminalInfo[] = [
     { id: CONDUCTOR_PTY_ID, label: 'Conductor', runtime: conductorRuntime, coordinatedMode: true },
-    ...sorted.map(zone => ({
+    ...selectedZones.map(zone => ({
       id: zone.id,
       label: wsByZoneId.get(zone.id)?.label ?? zone.data.label,
       runtime: getZoneRuntime(zone, settings),
@@ -355,7 +336,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
 
   // Spawn zones serially (same rationale as v4 — serialized capture avoids
   // concurrent polls converging on the earliest-written session file).
-  for (const zone of sorted) {
+  for (const zone of selectedZones) {
     const ws = workspaceZones.find(w => w.zoneId === zone.id)
     if (!ws) continue
     const runtime = ws.runtime
@@ -446,7 +427,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // planMode=true to spawnAgentSession below — agents run with normal
   // permissions and the conductor's planning is enforced by its prompt.
   const conductorInitialTurn = planMode
-    ? composePlanModeInitialTurn(userPrompt)
+    ? composePlanModeInitialTurn(userPrompt, conductorRuntime)
     : composeInitialTurn(userPrompt)
   const conductorComposed = conductorAdapter.composeSystemAndUser(
     conductorPrompt,
@@ -491,8 +472,8 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
           architectSessionId: sessionId,
           architectRuntime: conductorRuntime,
           dispatchId,
-          zoneIds: sorted.map(z => z.id),
-          zoneLabels: sorted.map(z => wsByZoneId.get(z.id)?.label ?? z.data.label),
+          zoneIds: selectedZones.map(z => z.id),
+          zoneLabels: selectedZones.map(z => wsByZoneId.get(z.id)?.label ?? z.data.label),
           zoneSessions: [],
           userPrompt,
           summary: dispatchSummary,
@@ -523,7 +504,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     console.warn('[dispatch-v5] conductor session id was not captured; persistence to DispatchRecord is disabled for this run')
   }
 
-  const schedulerZones = buildSchedulerZones(workspaceZones, sorted)
+  const schedulerZones = buildSchedulerZones(workspaceZones, selectedZones)
   scheduler = new Scheduler(
     {
       projectDir,

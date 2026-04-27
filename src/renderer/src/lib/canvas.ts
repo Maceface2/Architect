@@ -1,4 +1,3 @@
-import type { Edge } from '@xyflow/react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
@@ -9,7 +8,10 @@ import {
 } from '../../../shared/agentRuntimes'
 import type {
   ArchitectCanvasData,
+  CanvasEdge,
   CanvasNode,
+  ComponentEdgeData,
+  ComponentEdgeDirection,
   ComponentNodeData,
   ComponentNodeType,
   HarnessTimeouts,
@@ -26,6 +28,7 @@ export const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
 }
 
 export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
+export const DEFAULT_EDGE_DIRECTION: ComponentEdgeDirection = 'source-to-target'
 
 export const DEFAULT_TOOLS: NodeTools = {
   webSearch: false,
@@ -105,6 +108,21 @@ export function createDefaultZoneData(
     status: 'idle',
     systemPrompt: '',
     ...createDefaultZoneAgentConfig(settings),
+  }
+}
+
+export function normalizeEdgeDirection(raw: unknown): ComponentEdgeDirection {
+  return raw === 'bidirectional' || raw === 'none' || raw === 'source-to-target'
+    ? raw
+    : DEFAULT_EDGE_DIRECTION
+}
+
+export function normalizeEdgeData(raw: unknown): ComponentEdgeData {
+  const rec = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
+  const label = typeof rec.label === 'string' ? rec.label.trim() : ''
+  return {
+    direction: normalizeEdgeDirection(rec.direction),
+    ...(label ? { label } : {}),
   }
 }
 
@@ -417,7 +435,7 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
 
   // Canvas-wide participantId reconciliation: preserve stored ids when
   // present and unique, rename collisions deterministically, mint a fresh
-  // one for zones that arrived without any id (legacy saves, palette drops
+  // one for zones that arrived without any id (legacy saves, assistant patches
   // that forgot, assistant-driven canvas patches).
   const usedParticipantIds = new Set<string>()
   for (const node of nodes) {
@@ -441,10 +459,12 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     }
   }
 
-  const edges: Edge[] = rawEdges.map((edge, index) => ({
+  const edges: CanvasEdge[] = rawEdges.map((edge, index) => ({
     id: typeof edge.id === 'string' ? edge.id : `edge-${index}`,
+    type: 'component-edge',
     source: String(edge.source ?? ''),
     target: String(edge.target ?? ''),
+    data: normalizeEdgeData(edge.data ?? edge),
   }))
 
   return {

@@ -64,7 +64,6 @@ Each zone contributes:
 - env vars
 - embedded skill content
 - component context
-- optional upstream/downstream relationship context
 - a behavior prompt
 
 At dispatch time Architect generates:
@@ -85,9 +84,9 @@ Architect uses two distinct prompt layers.
 Generated from zone configuration and canvas context. It includes:
 
 - zone identity and description
-- upstream (with output file paths) and downstream zone names
 - enabled tool names
 - component list and specs
+- component edge references touching the zone's owned components, including optional labels and directions
 - embedded `SKILL.md` contents
 - the freeform behavior text from the zone editor
 - the instruction to write real code in the project root (`ARCHITECT/` is coordination-only)
@@ -124,7 +123,7 @@ When there are two or more zones, Architect runs the **v5 orchestration protocol
 4. Architect spawns the **Conductor** session (`conductor-agent` PTY id). Its system prompt is `prompts/conductor.md`; its first user turn is `composeInitialTurn(userPrompt)` — the dispatch kick-off — delivered via argv so no post-spawn `pty.write` race exists.
 5. The **Scheduler** (`orchestrator/scheduler.ts`) starts. It attaches narrow per-file `fs.watch`es on each participant's activity log (draining any pre-existing lines on attach), starts a 15 s status tick, and registers its `stop()` with `setActiveDispatchCoordinator` so `killAll()` tears everything down cleanly.
 6. Dispatch is now live. The Conductor emits a `{type:"assign", assignments: […]}` activity-log line; the Scheduler parses it, `pty.write`s `TASK <taskId>: <body>` to each targeted zone's live PTY (two-step submit with 120 ms gap so Claude's TUI recognizes Enter). Zones do the work, emit one `{"kind":"done"|"failed"|"ask", taskId}` activity line when done. Scheduler notifies the Conductor with a compact user-turn summary per event. Repeat.
-7. Dependency ordering lives in the **Conductor's reasoning**, not in spawn order. The Conductor sends upstream-zone tasks first, waits for their `done` events, then fans out downstream tasks using the interfaces reported in the results.
+7. Work ordering lives in the **Conductor's reasoning**, not in spawn order or canvas edges. The Conductor chooses which zones to engage from the user task and zone/component context, then sequences follow-up work from reported results.
 
 ### Completion is an activity line
 

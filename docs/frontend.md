@@ -33,18 +33,17 @@ src/renderer/src/
 ├── context/
 │   ├── ProjectDirContext.tsx           # Active project directory
 │   └── ProjectSettingsContext.tsx      # Default runtime + assistant mode
-├── data/
-│   └── componentPalette.ts             # Built-in component presets
 └── components/
     ├── dispatch/
     │   └── DispatchModal.tsx           # New dispatch / resume previous dispatch
     ├── layout/
     │   ├── TopNav.tsx                  # Header, tabs, dispatch button, assistant controls
-    │   ├── Sidebar.tsx                 # Palette and component browser
     │   ├── FilesPanel.tsx              # Project file browser
     │   ├── TerminalPanel.tsx           # Multi-session terminal workspace
     │   ├── PreviewPanel.tsx            # Per-zone output tail + localhost iframe preview
     │   └── terminalLayout*.ts          # Terminal docking/splitting state
+    ├── palette/
+    │   └── CompactCanvasPalette.tsx    # Floating Edges / Zones / Components creation tools
     └── nodes/
         ├── ZoneNode.tsx                # Resizable zone overlay
         ├── ComponentNode.tsx           # Component card
@@ -103,7 +102,7 @@ These mirror the preload bridge and let the UI render dispatch history, per-zone
 - tracks tabs for Canvas / Files / Terminal / Preview
 - builds assistant context
 - opens `DispatchModal`
-- calls `window.electron.runGraph(...)` for new dispatches
+- calls `window.electron.startDispatch(...)` for new dispatches
 - calls `window.electron.dispatches.resume(...)` for saved multi-zone dispatches
 
 The canvas stays mounted while the user switches tabs so React Flow state, selection, and node geometry do not reset.
@@ -116,12 +115,13 @@ The canvas is a mixed graph of zones and components.
 
 Component ownership is geometric, not edge-based. A component belongs to the smallest zone whose bounding box contains the component's center. This is why the renderer preserves zone position and dimensions carefully and why zone resizing matters at dispatch time.
 
-### Drag/drop and defaults
+### Component edges
 
-The sidebar emits palette payloads through `application/architect-node`. `App.tsx` converts those payloads into either:
+Edges are component-level reference links. Each edge may carry an optional label and a semantic direction (`source-to-target`, `bidirectional`, or `none`). These values are persisted in `architect-canvas.json`, rendered on the canvas, and included in assistant/dispatch context, but they do not affect zone ownership or dispatch scheduling.
 
-- a new zone with default runtime-aware agent config
-- a new component with the selected category/icon/color/tag preset
+### Compact creation palette
+
+The canvas uses a small floating palette with three creation tools: Edges, Zones, and Components. Zone and component tools collect essentials in a compact popup, then the user clicks the canvas to place the configured item. The edge tool collects optional label/direction metadata, then the next component-to-component connection receives those defaults.
 
 `buildDemoGraph()` and the normalization helpers in `lib/canvas.ts` keep legacy or partially missing canvas data usable.
 

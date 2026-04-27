@@ -33,7 +33,9 @@ import {
   upsertDispatchZoneSession,
   type DispatchRecord,
 } from './dispatchCapture'
+import { buildComponentEdgeSpecs } from './orchestrator/componentEdges'
 import { buildSoloZonePrompt } from './orchestrator/prompts/solo'
+import type { ComponentEdgeDirection } from './orchestrator/prompts/componentEdges'
 
 let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
 
@@ -301,6 +303,11 @@ export interface GraphEdge {
   id: string
   source: string
   target: string
+  data?: {
+    label?: string
+    direction?: ComponentEdgeDirection
+    [key: string]: unknown
+  }
 }
 
 // ──────────────────────────────────────────────────────────────────────────
@@ -934,38 +941,6 @@ export function readSkillContent(skillPath: string): string {
   return ''
 }
 
-export function topoSort(nodes: ZoneGraphNode[], edges: GraphEdge[]): ZoneGraphNode[] {
-  const ids = new Set(nodes.map(n => n.id))
-  const zoneEdges = edges.filter(e => ids.has(e.source) && ids.has(e.target))
-  const inDegree = new Map(nodes.map(node => [node.id, 0]))
-  const adj = new Map(nodes.map(node => [node.id, [] as string[]]))
-
-  zoneEdges.forEach(edge => {
-    inDegree.set(edge.target, (inDegree.get(edge.target) ?? 0) + 1)
-    adj.get(edge.source)?.push(edge.target)
-  })
-
-  const queue = nodes.filter(node => inDegree.get(node.id) === 0)
-  const result: ZoneGraphNode[] = []
-
-  while (queue.length) {
-    const node = queue.shift()!
-    result.push(node)
-
-    for (const nextId of adj.get(node.id) ?? []) {
-      const degree = (inDegree.get(nextId) ?? 1) - 1
-      inDegree.set(nextId, degree)
-      if (degree === 0) queue.push(nodes.find(candidate => candidate.id === nextId)!)
-    }
-  }
-
-  nodes.forEach(node => {
-    if (!result.find(candidate => candidate.id === node.id)) result.push(node)
-  })
-
-  return result
-}
-
 export function getZoneRuntime(zone: ZoneGraphNode, settings: ProjectSettings): AgentRuntime {
   // Flat runtime: the zone's stored agentRuntime is the single source of truth.
   // (Legacy `agentRuntimeMode` is normalized away in the renderer's
@@ -1021,23 +996,6 @@ export function indexGraph(nodes: GraphNode[]): ZoneIndex {
   }
 
   return { zones, componentsByZone, unassignedComponents }
-}
-
-function buildMermaidDiagram(zones: ZoneGraphNode[], componentsByZone: Map<string, ComponentGraphNode[]>, zoneEdges: GraphEdge[]): string {
-  const lines: string[] = ['```mermaid', 'graph TD']
-  for (const zone of zones) {
-    lines.push(`  subgraph ${zone.id}["${zone.data.label}"]`)
-    const comps = componentsByZone.get(zone.id) ?? []
-    for (const comp of comps) {
-      lines.push(`    ${comp.id}["${comp.data.label}${comp.data.tag ? ` [${comp.data.tag}]` : ''}"]`)
-    }
-    lines.push('  end')
-  }
-  for (const edge of zoneEdges) {
-    lines.push(`  ${edge.source} --> ${edge.target}`)
-  }
-  lines.push('```')
-  return lines.join('\n')
 }
 
 // Per-zone hard ceiling on serialized session capture during runZone. Session
@@ -1396,6 +1354,9 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   // prompt that just tells the agent its role and wiring; the agent talks
   // directly with the user.
   const comps = componentsByZone.get(zone.id) ?? []
+  const compIds = new Set(comps.map(c => c.id))
+  const componentEdges = buildComponentEdgeSpecs(opts.nodes, opts.edges)
+    .filter(edge => compIds.has(edge.sourceId) || compIds.has(edge.targetId))
   const enabledTools = Object.entries(zone.data.tools ?? {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key)
@@ -1408,12 +1369,14 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
     label: zone.data.label,
     description: zone.data.description,
     components: comps.map(c => ({
+      id: c.id,
       label: c.data.label,
       tag: c.data.tag,
       category: c.data.category,
       description: c.data.description,
       specs: c.data.specs,
     })),
+    componentEdges,
     toolNames: enabledTools,
     skills,
     userSystemPrompt: (zone.data.systemPrompt ?? '').trim(),
