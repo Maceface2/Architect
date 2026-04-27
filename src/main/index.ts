@@ -12,6 +12,7 @@ import {
   setUserControl,
   resizeTerminal,
   killAll,
+  killAllIncludingShells,
   closeTerminal,
   getCaptureState,
   startAssistant,
@@ -34,7 +35,7 @@ import {
   deleteDispatch,
   updateDispatchSummary,
 } from './dispatchCapture'
-import { registerAuthIpc, setAuthMainWindow } from './auth'
+import { registerAuthIpc, setAuthMainWindow, setAuthLogoutHandler } from './auth'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -365,7 +366,20 @@ ipcMain.handle('terminal-layout:save', (_event, projectDir: string, json: unknow
 
 // ── Auth IPC ───────────────────────────────────────────────────────────────
 
+function closeAllPopouts() {
+  for (const win of popouts.values()) {
+    try {
+      if (!win.isDestroyed()) win.close()
+    } catch {}
+  }
+  popouts.clear()
+}
+
 registerAuthIpc()
+setAuthLogoutHandler(() => {
+  killAllIncludingShells()
+  closeAllPopouts()
+})
 
 // ── App lifecycle ──────────────────────────────────────────────────────────
 

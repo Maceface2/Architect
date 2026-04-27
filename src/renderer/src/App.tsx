@@ -1459,17 +1459,6 @@ Only discuss and advise without editing the file when the user is asking for cri
 function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
 
-  // Tear down all PTYs when MainApp unmounts (i.e., the user signs out and
-  // the AuthGate flips back to LoginScreen). On window close the main
-  // process also calls killAll, so this is the logout-only path.
-  useEffect(() => {
-    return () => {
-      try {
-        window.electron.terminal.killAll()
-      } catch {}
-    }
-  }, [])
-
   if (!projectDir) {
     return <DirectoryGate onOpen={setProjectDir} />
   }

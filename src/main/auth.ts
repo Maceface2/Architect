@@ -20,6 +20,7 @@ let supabase: SupabaseClient | null = null
 let configError: string | null = null
 let mainWindow: BrowserWindow | null = null
 let warnedAboutPlaintext = false
+let logoutHandler: (() => void) | null = null
 
 function sessionFilePath(): string {
   return path.join(app.getPath('userData'), SESSION_FILE)
@@ -93,8 +94,15 @@ function ensureClient(): SupabaseClient | null {
     },
   })
 
-  supabase.auth.onAuthStateChange((_event, session) => {
+  supabase.auth.onAuthStateChange((event, session) => {
     const info = sessionToInfo(session)
+    if (event === 'SIGNED_OUT') {
+      try {
+        logoutHandler?.()
+      } catch (err) {
+        console.error('[auth] logout handler failed', err)
+      }
+    }
     if (mainWindow && !mainWindow.isDestroyed()) {
       mainWindow.webContents.send('auth:session-changed', info)
     }
@@ -110,6 +118,14 @@ function sessionToInfo(session: { user?: { id: string; email?: string | null } |
 
 export function setAuthMainWindow(win: BrowserWindow | null): void {
   mainWindow = win
+}
+
+// Registers the cleanup that should run when Supabase emits SIGNED_OUT.
+// Used by the main entry point to tear down PTYs (including user shells)
+// and close any popout terminal windows so prior session state cannot
+// leak across accounts.
+export function setAuthLogoutHandler(fn: (() => void) | null): void {
+  logoutHandler = fn
 }
 
 export function registerAuthIpc(): void {

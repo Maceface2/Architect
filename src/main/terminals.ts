@@ -878,6 +878,21 @@ export function killAll() {
   }
 }
 
+// Kills every session including user shells. Used at the auth boundary on
+// sign-out so a prior account's shell history/process state cannot leak to
+// the next signed-in user.
+export function killAllIncludingShells() {
+  activeDispatchCoordinator?.stop()
+  activeDispatchCoordinator = null
+  for (const [id, session] of sessions) {
+    try { session.pty.kill() } catch {}
+    try { session.term.dispose() } catch {}
+    sessions.delete(id)
+    captureStates.delete(id)
+    clearCoordinationState(id)
+  }
+}
+
 // Registers a dispatch-level stop hook so killAll tears down the scheduler's
 // watchers + status tick. Called by orchestrator/dispatch.ts after it builds
 // a Scheduler; passing null unregisters.
