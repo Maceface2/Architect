@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import {
   BaseEdge,
   EdgeLabelRenderer,
+  Position,
   getBezierPath,
   useReactFlow,
   type EdgeProps,
@@ -21,6 +22,39 @@ function edgeMarkerId(id: string, side: 'start' | 'end'): string {
   return `component-edge-${side}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
+// Component handles sit 5px outside the node body (left:-5 / right:-5 in
+// ComponentNode), so the bezier from handle-center to handle-center leaves a
+// 5px gap between the line and each node. Extend the path with a short
+// straight segment on each end so the line (and arrow) reach the node edge
+// while the dots stay where they are.
+const HANDLE_INSET = 5
+
+function outwardDelta(pos: Position): { x: number; y: number } {
+  switch (pos) {
+    case Position.Left:   return { x: -1, y: 0 }
+    case Position.Right:  return { x:  1, y: 0 }
+    case Position.Top:    return { x:  0, y: -1 }
+    case Position.Bottom: return { x:  0, y: 1 }
+  }
+}
+
+function extendPathToNodeEdges(
+  bezierPath: string,
+  sourceX: number, sourceY: number, sourcePosition: Position,
+  targetX: number, targetY: number, targetPosition: Position,
+): string {
+  const sd = outwardDelta(sourcePosition)
+  const td = outwardDelta(targetPosition)
+  const sourceEdgeX = sourceX - sd.x * HANDLE_INSET
+  const sourceEdgeY = sourceY - sd.y * HANDLE_INSET
+  const targetEdgeX = targetX - td.x * HANDLE_INSET
+  const targetEdgeY = targetY - td.y * HANDLE_INSET
+  const cIdx = bezierPath.indexOf('C')
+  if (cIdx < 0) return bezierPath
+  const curve = bezierPath.slice(cIdx)
+  return `M ${sourceEdgeX},${sourceEdgeY} L ${sourceX},${sourceY} ${curve} L ${targetEdgeX},${targetEdgeY}`
+}
+
 function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const {
     id,
@@ -37,7 +71,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const { setEdges, getNode } = useReactFlow()
   const [editorOpen, setEditorOpen] = useState(false)
 
-  const [edgePath, labelX, labelY] = getBezierPath({
+  const [bezierPath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -45,6 +79,11 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
     targetY,
     targetPosition,
   })
+  const edgePath = extendPathToNodeEdges(
+    bezierPath,
+    sourceX, sourceY, sourcePosition,
+    targetX, targetY, targetPosition,
+  )
   const edgeData = normalizeEdgeData(data)
   const direction = edgeData.direction ?? 'source-to-target'
   const label = edgeData.label ?? ''
