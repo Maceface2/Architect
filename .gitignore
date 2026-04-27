@@ -7,3 +7,5 @@ graphify-out/
 ARCHITECT/mailbox/
 out-tsc/
 test_results/
+.env
+.env.local

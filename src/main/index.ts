@@ -34,6 +34,7 @@ import {
   deleteDispatch,
   updateDispatchSummary,
 } from './dispatchCapture'
+import { registerAuthIpc, setAuthMainWindow } from './auth'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -110,7 +111,9 @@ function createWindow(): void {
   }
 
   mainWindow.on('ready-to-show', () => mainWindow!.show())
-  mainWindow.on('closed', () => { stopCanvasWatcher(); killAll(); mainWindow = null })
+  mainWindow.on('closed', () => { stopCanvasWatcher(); killAll(); setAuthMainWindow(null); mainWindow = null })
+
+  setAuthMainWindow(mainWindow)
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     shell.openExternal(url)
@@ -359,6 +362,10 @@ ipcMain.handle('terminal-layout:save', (_event, projectDir: string, json: unknow
     return { ok: false, error: String(err) }
   }
 })
+
+// ── Auth IPC ───────────────────────────────────────────────────────────────
+
+registerAuthIpc()
 
 // ── App lifecycle ──────────────────────────────────────────────────────────
 

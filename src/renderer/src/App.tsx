@@ -1,4 +1,5 @@
-import { useState, useCallback, useEffect, useRef } from 'react'
+import { useState, useCallback, useEffect, useRef, type ReactNode } from 'react'
+import { Loader2, LogOut } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -14,6 +15,7 @@ import {
   type XYPosition,
 } from '@xyflow/react'
 
+import LoginScreen from './components/auth/LoginScreen'
 import TopNav from './components/layout/TopNav'
 import AssistantPanel, { type AssistantOrientation } from './components/layout/AssistantPanel'
 import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchModal'
@@ -193,6 +195,12 @@ function buildPaletteContext(): string {
 
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   const [loading, setLoading] = useState(false)
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+
+  useEffect(() => {
+    window.electron.auth.getSession().then((s) => setUserEmail(s?.email ?? null))
+    return window.electron.auth.onSessionChanged((s) => setUserEmail(s?.email ?? null))
+  }, [])
 
   const pick = async () => {
     setLoading(true)
@@ -205,7 +213,23 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   }
 
   return (
-    <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+    <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+      {userEmail && (
+        <div className="absolute top-4 right-4 flex items-center gap-2">
+          <span className="text-xs text-slate-500 max-w-[180px] truncate" title={userEmail}>
+            {userEmail}
+          </span>
+          <button
+            onClick={() => void window.electron.auth.logout()}
+            className="flex items-center justify-center w-7 h-7 text-slate-400 border border-node-border rounded hover:bg-node hover:text-slate-200 transition-colors"
+            title="Sign out"
+            aria-label="Sign out"
+          >
+            <LogOut size={12} />
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col items-center gap-4">
         <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
           <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
@@ -1435,6 +1459,17 @@ Only discuss and advise without editing the file when the user is asking for cri
 function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
 
+  // Tear down all PTYs when MainApp unmounts (i.e., the user signs out and
+  // the AuthGate flips back to LoginScreen). On window close the main
+  // process also calls killAll, so this is the logout-only path.
+  useEffect(() => {
+    return () => {
+      try {
+        window.electron.terminal.killAll()
+      } catch {}
+    }
+  }, [])
+
   if (!projectDir) {
     return <DirectoryGate onOpen={setProjectDir} />
   }
@@ -1446,11 +1481,45 @@ function MainApp() {
   )
 }
 
+function AuthGate({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<SessionInfo | null | 'loading'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    window.electron.auth.getSession().then((s) => {
+      if (!cancelled) setSession(s)
+    })
+    const unsubscribe = window.electron.auth.onSessionChanged((s) => {
+      setSession(s)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  if (session === 'loading') {
+    return (
+      <div className="h-screen w-screen bg-canvas flex items-center justify-center">
+        <Loader2 size={20} className="animate-spin text-slate-600" />
+      </div>
+    )
+  }
+  if (session === null) {
+    return <LoginScreen />
+  }
+  return <>{children}</>
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search)
   const popoutId = params.get('popout')
   if (popoutId) {
     return <PopoutTerminalApp id={popoutId} label={params.get('label') ?? popoutId} />
   }
-  return <MainApp />
+  return (
+    <AuthGate>
+      <MainApp />
+    </AuthGate>
+  )
 }

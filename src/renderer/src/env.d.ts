@@ -15,6 +15,12 @@ interface TerminalInfo {
   planMode?: boolean
 }
 
+interface AuthLoginResult {
+  ok: boolean
+  error?: string
+  session?: SessionInfo
+}
+
 interface ElectronAPI {
   platform: string
   readDir: (dirPath: string) => Promise<FileEntry[]>
@@ -26,6 +32,12 @@ interface ElectronAPI {
   watchCanvas: (projectDir: string) => Promise<void>
   unwatchCanvas: () => Promise<void>
   onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => () => void
+  auth: {
+    getSession: () => Promise<SessionInfo | null>
+    login: (email: string, password: string) => Promise<AuthLoginResult>
+    logout: () => Promise<{ ok: boolean }>
+    onSessionChanged: (cb: (session: SessionInfo | null) => void) => () => void
+  }
   scanComponents: (dirPath: string) => Promise<unknown[]>
   startDispatch: (
     nodes: unknown[],
@@ -150,6 +162,10 @@ interface ElectronAPI {
 declare global {
   interface Window {
     electron: ElectronAPI
+  }
+  type SessionInfo = {
+    userId: string
+    email: string
   }
 }
 

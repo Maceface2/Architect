@@ -1,4 +1,5 @@
-import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2 } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, LogOut } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -45,6 +46,16 @@ export default function TopNav({
   onUndo, onRedo, canUndo, canRedo,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
+
+  const [userEmail, setUserEmail] = useState<string | null>(null)
+  useEffect(() => {
+    window.electron.auth.getSession().then((s) => setUserEmail(s?.email ?? null))
+    return window.electron.auth.onSessionChanged((s) => setUserEmail(s?.email ?? null))
+  }, [])
+
+  const handleSignOut = () => {
+    void window.electron.auth.logout()
+  }
 
   return (
     <div className="flex items-center justify-between h-11 px-4 bg-panel border-b border-node-border flex-shrink-0">
@@ -148,6 +159,22 @@ export default function TopNav({
               : `Dispatch${nodeCount > 0 ? ` (${nodeCount})` : ''}`
           }
         </button>
+
+        {userEmail && (
+          <div className="flex items-center gap-2 ml-2 pl-2 border-l border-node-border">
+            <span className="text-xs text-slate-500 max-w-[160px] truncate" title={userEmail}>
+              {userEmail}
+            </span>
+            <button
+              onClick={handleSignOut}
+              className="flex items-center justify-center w-7 h-7 text-slate-400 border border-node-border rounded hover:bg-node hover:text-slate-200 transition-colors"
+              title="Sign out"
+              aria-label="Sign out"
+            >
+              <LogOut size={12} />
+            </button>
+          </div>
+        )}
       </div>
     </div>
   )

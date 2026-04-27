@@ -82,6 +82,22 @@ contextBridge.exposeInMainWorld('electron', {
     return () => ipcRenderer.removeListener('canvas:changed', handler)
   },
 
+  // Supabase auth (main-process owned, safeStorage-backed). Renderer never
+  // sees access tokens — only { userId, email } | null.
+  auth: {
+    getSession: () => ipcRenderer.invoke('auth:get-session'),
+    login: (email: string, password: string) =>
+      ipcRenderer.invoke('auth:login', email, password),
+    logout: () => ipcRenderer.invoke('auth:logout'),
+    onSessionChanged: (
+      cb: (session: { userId: string; email: string } | null) => void,
+    ) => {
+      const handler = (_: unknown, session: { userId: string; email: string } | null) => cb(session)
+      ipcRenderer.on('auth:session-changed', handler)
+      return () => ipcRenderer.removeListener('auth:session-changed', handler)
+    },
+  },
+
   // Terminal I/O
   terminal: {
     spawnShell: (cwd: string, opts?: { force?: boolean }) =>
