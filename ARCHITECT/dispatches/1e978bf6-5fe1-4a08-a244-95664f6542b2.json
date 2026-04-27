@@ -1,0 +1,78 @@
+{
+  "architectSessionId": "1e978bf6-5fe1-4a08-a244-95664f6542b2",
+  "architectRuntime": "claude",
+  "dispatchId": "6f4da17bbe72de52",
+  "zoneIds": [
+    "zone-frontend",
+    "zone-main-process",
+    "zone-pty-orchestrator",
+    "zone-agent-pool",
+    "zone-comm-conductor",
+    "zone-comm-harness",
+    "zone-comm-fleet"
+  ],
+  "zoneLabels": [
+    "Renderer UX",
+    "Electron Platform",
+    "Dispatch Coordination",
+    "Zone Runtime Fleet",
+    "Conductor Agent",
+    "Scheduler Harness",
+    "Zone Fleet"
+  ],
+  "zoneSessions": [
+    {
+      "zoneId": "zone-frontend",
+      "label": "Renderer UX",
+      "runtime": "claude",
+      "sessionId": "1dcb9beb-e224-40ea-9c94-84e32d5de4b1"
+    },
+    {
+      "zoneId": "zone-main-process",
+      "label": "Electron Platform",
+      "runtime": "claude",
+      "sessionId": "8b74c9ee-ea42-4288-a74a-27a841b0da2c"
+    },
+    {
+      "zoneId": "zone-pty-orchestrator",
+      "label": "Dispatch Coordination",
+      "runtime": "claude",
+      "sessionId": "79ce29b1-05da-4f1a-bec5-c2a0454a4922"
+    },
+    {
+      "zoneId": "zone-agent-pool",
+      "label": "Zone Runtime Fleet",
+      "runtime": "claude",
+      "sessionId": "6e936328-e2b1-4ef3-9be4-806212c71a54"
+    },
+    {
+      "zoneId": "zone-comm-conductor",
+      "label": "Conductor Agent",
+      "runtime": "claude",
+      "sessionId": "e8a49d82-8d48-4aa4-a189-b8ae8d9608ad"
+    },
+    {
+      "zoneId": "zone-comm-harness",
+      "label": "Scheduler Harness",
+      "runtime": "claude",
+      "sessionId": "b466b01d-4d2a-4794-8d7e-fecfe17cdc92"
+    },
+    {
+      "zoneId": "zone-comm-fleet",
+      "label": "Zone Fleet",
+      "runtime": "claude",
+      "sessionId": "39485311-4be4-4100-bea9-332d6b527e4e"
+    }
+  ],
+  "userPrompt": "dont send any instructions im just testing",
+  "summary": "dont send any instructions im just testing",
+  "model": "claude-sonnet-4-6",
+  "planMode": false,
+  "timestamp": "2026-04-27T20:01:02.753Z",
+  "protocolVersion": 5,
+  "pendingTasks": [],
+  "conductorDecisions": [
+    "{\"type\":\"noop\",\"reason\":\"User explicitly requested no instructions be sent; this is a test run only.\"}",
+    "{\"type\":\"noop\",\"reason\":\"No work was assigned to Renderer-UX. Test dispatch has no active tasks so the exit has no impact.\"}"
+  ]
+}

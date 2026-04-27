@@ -57,12 +57,6 @@ const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
 const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
 
-// While the user is interacting with a slash-command picker (recent arrow
-// keys or an Enter on a `/<word>` line), defer the auto-unlock for this many
-// ms after the most recent picker keystroke. Arrow navigation refreshes the
-// window; once the user is back to plain typing, plain Enter releases again.
-const PICKER_SUPPRESS_MS = 2500
-
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 
@@ -84,16 +78,11 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   // ref is read synchronously in the stable onData closure to dedupe IPC.
   const lockHeldRef = useRef(false)
   const [lockHeld, setLockHeld] = useState(false)
-  // Picker-activity guard. Slash-command pickers (`/model`, `/agents`, …) are
-  // driven by arrow keys + a final Enter; if we released the lock on the
-  // first Enter, queued scheduler turns would flood into the open picker.
-  // We refresh `pickerActiveUntilRef` on (a) an arrow keypress and (b) an
-  // Enter submitted on a `/<word>` line, so plain Enter only releases once
-  // the user has been arrow-free for PICKER_SUPPRESS_MS. The line-buffer
-  // mirrors what the user has typed since the last Enter (printable chars +
-  // backspace) so we can detect the leading-slash gesture.
-  const pickerActiveUntilRef = useRef(0)
-  const lineBufferRef = useRef('')
+  // One-shot picker guard. A `/` keypress or any arrow key arms this flag so
+  // the very next Enter is absorbed rather than releasing the lock. One event
+  // → one blocked Enter, no accumulation. Pressing Enter twice is the
+  // accepted cost; no line buffer needed.
+  const pendingPickerEnterRef = useRef(false)
 
   useEffect(() => {
     if (!containerRef.current) return
@@ -139,30 +128,17 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
           domEvent.key === 'ArrowDown' ||
           domEvent.key === 'ArrowLeft' ||
           domEvent.key === 'ArrowRight'
-        const isBackspace = domEvent.key === 'Backspace'
-        const isPrintable = key.length === 1 && key >= ' '
-
-        if (isArrow) pickerActiveUntilRef.current = Date.now() + PICKER_SUPPRESS_MS
+        if (isArrow || key === '/') pendingPickerEnterRef.current = true
 
         if (isEnter) {
-          // Any line starting with `/` (after optional leading whitespace)
-          // counts as a slash command, including `/` alone, `/cmd ` with
-          // trailing space(s), or `/cmd  arg`.
-          const isSlashLine = /^\s*\//.test(lineBufferRef.current)
-          if (isSlashLine) pickerActiveUntilRef.current = Date.now() + PICKER_SUPPRESS_MS
-          const pickerHot = Date.now() < pickerActiveUntilRef.current
-          if (lockHeldRef.current && !pickerHot) {
+          if (pendingPickerEnterRef.current) {
+            pendingPickerEnterRef.current = false
+          } else if (lockHeldRef.current) {
             lockHeldRef.current = false
             window.electron.terminal.setUserControl(info.id, false)
             setLockHeld(false)
           }
-          lineBufferRef.current = ''
         } else {
-          if (isBackspace) {
-            lineBufferRef.current = lineBufferRef.current.slice(0, -1)
-          } else if (isPrintable) {
-            lineBufferRef.current += key
-          }
           if (!lockHeldRef.current) {
             lockHeldRef.current = true
             window.electron.terminal.setUserControl(info.id, true)
@@ -213,6 +189,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       // the renderer in sync so a re-spawn under the same id starts unlocked.
       lockHeldRef.current = false
       setLockHeld(false)
+      pendingPickerEnterRef.current = false
     })
     return unsub
   }, [info.id])

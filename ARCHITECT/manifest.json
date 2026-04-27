@@ -1,46 +1,967 @@
 {
-  "generated": "2026-04-08T23:45:44.116Z",
-  "agents": [
+  "generated": "2026-04-27T20:00:52.663Z",
+  "protocolVersion": 5,
+  "dispatchId": "6f4da17bbe72de52",
+  "dispatchRuntime": "claude",
+  "activityDir": "ARCHITECT/runtime/6f4da17bbe72de52/activity",
+  "stateDir": "ARCHITECT/runtime/6f4da17bbe72de52/state",
+  "unassignedComponents": [],
+  "componentEdges": [
     {
-      "label": "Content & Knowledge",
-      "tag": "DATA",
-      "description": "Gathers all portfolio content and builds the knowledge base for the chatbot.",
-      "userPrompt": "You are responsible for all content and knowledge preparation. First, define a schema for project entries (title, description, tech stack, links, images, dates) and write structured JSON data files for each project. Draft bio sections, skills lists, and contact info. Output all content to ARCHITECT/outputs/content.json.\n\nThen, construct a comprehensive knowledge base that the AI chatbot will use to answer questions about the site owner. Write detailed markdown documents covering: professional background, education, each project in depth, technical skills and proficiency levels, work experience, interests and hobbies, and FAQs. Output these to ARCHITECT/outputs/knowledge/. Be thorough — the chatbot's quality depends on this content.",
-      "taskFile": "ARCHITECT/tasks/Content---Knowledge.md",
-      "outputFile": "ARCHITECT/outputs/Content---Knowledge.md",
-      "enabledTools": [],
-      "upstream": [],
-      "downstream": [
-        "Site Builder"
+      "id": "e1",
+      "sourceId": "frontend",
+      "sourceLabel": "Desktop App",
+      "targetId": "ipc-bridge",
+      "targetLabel": "IPC Bridge",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e2",
+      "sourceId": "ipc-bridge",
+      "sourceLabel": "IPC Bridge",
+      "targetId": "main-process",
+      "targetLabel": "Main Process",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e3",
+      "sourceId": "main-process",
+      "sourceLabel": "Main Process",
+      "targetId": "canvas-store",
+      "targetLabel": "Canvas Store",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e4",
+      "sourceId": "main-process",
+      "sourceLabel": "Main Process",
+      "targetId": "pty-orchestrator",
+      "targetLabel": "PTY Orchestrator",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e8",
+      "sourceId": "skills-library",
+      "sourceLabel": "Skills Library",
+      "targetId": "agent-pool",
+      "targetLabel": "Agent Pool",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e9",
+      "sourceId": "agent-pool",
+      "sourceLabel": "Agent Pool",
+      "targetId": "workspace",
+      "targetLabel": "Agent Workspace",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e10",
+      "sourceId": "pty-orchestrator",
+      "sourceLabel": "PTY Orchestrator",
+      "targetId": "conductor",
+      "targetLabel": "Conductor",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e11",
+      "sourceId": "pty-orchestrator",
+      "sourceLabel": "PTY Orchestrator",
+      "targetId": "agent-pool",
+      "targetLabel": "Agent Pool",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e12",
+      "sourceId": "conductor",
+      "sourceLabel": "Conductor",
+      "targetId": "activity-log",
+      "targetLabel": "Activity Log",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e13",
+      "sourceId": "activity-log",
+      "sourceLabel": "Activity Log",
+      "targetId": "scheduler",
+      "targetLabel": "Scheduler",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e14",
+      "sourceId": "scheduler",
+      "sourceLabel": "Scheduler",
+      "targetId": "agent-pool",
+      "targetLabel": "Agent Pool",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e15",
+      "sourceId": "agent-pool",
+      "sourceLabel": "Agent Pool",
+      "targetId": "activity-log",
+      "targetLabel": "Activity Log",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e16",
+      "sourceId": "runtime-adapters",
+      "sourceLabel": "Runtime Adapters",
+      "targetId": "pty-orchestrator",
+      "targetLabel": "PTY Orchestrator",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e17",
+      "sourceId": "dispatch-record",
+      "sourceLabel": "Dispatch Record",
+      "targetId": "scheduler",
+      "targetLabel": "Scheduler",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e18",
+      "sourceId": "session-capture",
+      "sourceLabel": "Session Capture",
+      "targetId": "agent-pool",
+      "targetLabel": "Agent Pool",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e19",
+      "sourceId": "dispatch-modal",
+      "sourceLabel": "Dispatch Modal",
+      "targetId": "ipc-bridge",
+      "targetLabel": "IPC Bridge",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e20",
+      "sourceId": "terminal-panel",
+      "sourceLabel": "Terminal Panel",
+      "targetId": "ipc-bridge",
+      "targetLabel": "IPC Bridge",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "e21",
+      "sourceId": "assistant-panel",
+      "sourceLabel": "Assistant Panel",
+      "targetId": "ipc-bridge",
+      "targetLabel": "IPC Bridge",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e1",
+      "sourceId": "comm-conductor-pty",
+      "sourceLabel": "Conductor PTY",
+      "targetId": "comm-conductor-log",
+      "targetLabel": "Conductor Activity Log",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e2",
+      "sourceId": "comm-conductor-log",
+      "sourceLabel": "Conductor Activity Log",
+      "targetId": "comm-fswatch",
+      "targetLabel": "fs.watch",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e3",
+      "sourceId": "comm-fswatch",
+      "sourceLabel": "fs.watch",
+      "targetId": "comm-scheduler",
+      "targetLabel": "Scheduler",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e4",
+      "sourceId": "comm-scheduler",
+      "sourceLabel": "Scheduler",
+      "targetId": "comm-pty-write",
+      "targetLabel": "pty.write Delivery",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e5",
+      "sourceId": "comm-pty-write",
+      "sourceLabel": "pty.write Delivery",
+      "targetId": "comm-zone-a",
+      "targetLabel": "Zone PTY A",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e6",
+      "sourceId": "comm-pty-write",
+      "sourceLabel": "pty.write Delivery",
+      "targetId": "comm-zone-b",
+      "targetLabel": "Zone PTY B",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e7",
+      "sourceId": "comm-zone-a",
+      "sourceLabel": "Zone PTY A",
+      "targetId": "comm-zone-log-a",
+      "targetLabel": "Zone Log A",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e8",
+      "sourceId": "comm-zone-b",
+      "sourceLabel": "Zone PTY B",
+      "targetId": "comm-zone-log-b",
+      "targetLabel": "Zone Log B",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e9",
+      "sourceId": "comm-zone-log-a",
+      "sourceLabel": "Zone Log A",
+      "targetId": "comm-fswatch",
+      "targetLabel": "fs.watch",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e10",
+      "sourceId": "comm-zone-log-b",
+      "sourceLabel": "Zone Log B",
+      "targetId": "comm-fswatch",
+      "targetLabel": "fs.watch",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e11",
+      "sourceId": "comm-scheduler",
+      "sourceLabel": "Scheduler",
+      "targetId": "comm-conductor-pty",
+      "targetLabel": "Conductor PTY",
+      "direction": "source-to-target"
+    },
+    {
+      "id": "comm-e12",
+      "sourceId": "comm-scheduler",
+      "sourceLabel": "Scheduler",
+      "targetId": "comm-state-kv",
+      "targetLabel": "State KV",
+      "direction": "source-to-target"
+    }
+  ],
+  "zones": [
+    {
+      "id": "zone-frontend",
+      "label": "Renderer UX",
+      "participantId": "Renderer-UX",
+      "description": "Owns the React/Electron renderer: ReactFlow canvas, DispatchModal (new + resume + plan-mode), TerminalPanel with auto user-control lock and slash-picker suppression, AssistantPanel (architecture/general modes), Files/Preview, and per-project terminal-layout persistence.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You own the renderer in src/renderer/src/**. Extend and refine the ReactFlow canvas (ZoneNode/ComponentNode), DispatchModal (new + resume tabs, plan mode), TerminalPanel (xterm.js + auto user-control lock with PICKER_SUPPRESS_MS slash-picker suppression), AssistantPanel (architecture vs general), and FilesPanel without breaking the operator workflow. Treat window.electron as the stable boundary and keep Electron or filesystem concerns out of renderer code.",
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Renderer-UX.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Renderer-UX.kv",
+      "outputFile": "ARCHITECT/outputs/Renderer-UX.md",
+      "enabledTools": [
+        "fileRead",
+        "fileWrite",
+        "shell"
+      ],
+      "componentEdges": [
+        {
+          "id": "e1",
+          "sourceId": "frontend",
+          "sourceLabel": "Desktop App",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e19",
+          "sourceId": "dispatch-modal",
+          "sourceLabel": "Dispatch Modal",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e20",
+          "sourceId": "terminal-panel",
+          "sourceLabel": "Terminal Panel",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e21",
+          "sourceId": "assistant-panel",
+          "sourceLabel": "Assistant Panel",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "frontend",
+          "label": "Desktop App",
+          "category": "infrastructure",
+          "tag": "UI",
+          "description": "React renderer shell that operators use to design canvases and manage live agent sessions.",
+          "specs": "src/renderer/src/App.tsx → DirectoryGate → ArchitectFlow. Hosts the ReactFlow canvas (ZoneNode/ComponentNode), TopNav, Sidebar, and the tab layout (Canvas / Files / Terminal). All Electron access goes through window.electron — no fs or ipc imports leak into renderer code."
+        },
+        {
+          "id": "dispatch-modal",
+          "label": "Dispatch Modal",
+          "category": "infrastructure",
+          "tag": "DLG",
+          "description": "Tabbed entry point for multi-zone dispatches: New (prompt + model + plan mode + zone subset) and Resume (history picker over DispatchRecord entries).",
+          "specs": "src/renderer/src/components/dispatch/DispatchModal.tsx. New tab calls window.electron.startDispatch(...) — the only entry for v5 multi-zone runs. Resume tab calls window.electron.dispatches.resume({ dispatchId }) which replays the conductor + every pinned zone session and re-delivers DispatchRecord.pendingTasks. Plan-mode toggle gates the conductor on user approval before any zone work begins."
+        },
+        {
+          "id": "terminal-panel",
+          "label": "Terminal Panel",
+          "category": "infrastructure",
+          "tag": "TTY",
+          "description": "Per-PTY xterm.js renderer with auto-managed user-control lock. Detects slash-command pickers so scheduler writes never interrupt user-initiated /commands.",
+          "specs": "src/renderer/src/components/layout/TerminalPanel.tsx. Auto-acquires the user-control lock on any non-Enter, non-Arrow keystroke into a coordinated terminal. Auto-releases on Enter unless the user is inside a slash-command picker (PICKER_SUPPRESS_MS = 2.5s suppression triggered by Enter on /-prefixed lines or arrow-key navigation). Uses term.onKey, not term.onData, so CLI protocol chatter (Codex focus reports, etc.) doesn't trip detection."
+        },
+        {
+          "id": "assistant-panel",
+          "label": "Assistant Panel",
+          "category": "services",
+          "tag": "AI",
+          "description": "Side-panel embedded coding assistant. Two modes: 'architecture' (edits architect-canvas.json via ARCHITECT_CANVAS_UPDATE blocks) and 'general' (plain coding assistant with the canvas as read-only context).",
+          "specs": "src/renderer/src/components/layout/AssistantPanel.tsx + AssistantLaunchModal.tsx. Each mode has its own sanitized zone key and PTY id so session history and resume points are independent per mode. Spawned via window.electron.assistant.start(projectDir, contextMd, runtime, mode). Decoupled from the dispatch scheduler — does not use activity logs."
+        }
       ]
     },
     {
-      "label": "Site Builder",
-      "tag": "BUILD",
-      "description": "Builds the complete Next.js portfolio site with frontend pages and AI chat widget.",
-      "userPrompt": "You are responsible for building the entire portfolio website. Using Next.js and Tailwind CSS, create: a hero landing page with bio and CTA, a projects gallery page with filterable cards, an about page with skills and experience timeline, and a contact section. Consume content from ARCHITECT/outputs/content.json. Use clean, modern design with smooth animations.\n\nAlso implement the AI chatbot feature. Using the Anthropic Claude API, build a React chat widget (floating button, slide-out panel, message history) that answers questions about the site owner. Read the knowledge base from ARCHITECT/outputs/knowledge/ and embed it as context in the system prompt. Implement a Next.js API route at /api/chat that calls Claude with the knowledge base context and the user's question. Keep responses friendly, concise, and accurate.\n\nOutput the complete Next.js project to ARCHITECT/outputs/frontend/, with the chatbot at ARCHITECT/outputs/frontend/components/ChatBot and ARCHITECT/outputs/frontend/pages/api/chat.ts.",
-      "taskFile": "ARCHITECT/tasks/Site-Builder.md",
-      "outputFile": "ARCHITECT/outputs/Site-Builder.md",
-      "enabledTools": [],
-      "upstream": [
-        "Content & Knowledge"
+      "id": "zone-main-process",
+      "label": "Electron Platform",
+      "participantId": "Electron-Platform",
+      "description": "Owns the existing preload bridge, BrowserWindow lifecycle, filesystem IPC, canvas persistence, and local watcher plumbing.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You own the current Electron platform layer in src/preload/index.ts and src/main/index.ts. Evolve the contextBridge API carefully, preserve contextIsolation semantics, and keep canvas or filesystem concerns centralized in the main process instead of leaking them into the renderer.",
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Electron-Platform.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Electron-Platform.kv",
+      "outputFile": "ARCHITECT/outputs/Electron-Platform.md",
+      "enabledTools": [
+        "fileRead",
+        "fileWrite",
+        "shell"
       ],
-      "downstream": [
-        "Deploy"
+      "componentEdges": [
+        {
+          "id": "e1",
+          "sourceId": "frontend",
+          "sourceLabel": "Desktop App",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e2",
+          "sourceId": "ipc-bridge",
+          "sourceLabel": "IPC Bridge",
+          "targetId": "main-process",
+          "targetLabel": "Main Process",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e3",
+          "sourceId": "main-process",
+          "sourceLabel": "Main Process",
+          "targetId": "canvas-store",
+          "targetLabel": "Canvas Store",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e4",
+          "sourceId": "main-process",
+          "sourceLabel": "Main Process",
+          "targetId": "pty-orchestrator",
+          "targetLabel": "PTY Orchestrator",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e19",
+          "sourceId": "dispatch-modal",
+          "sourceLabel": "Dispatch Modal",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e20",
+          "sourceId": "terminal-panel",
+          "sourceLabel": "Terminal Panel",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e21",
+          "sourceId": "assistant-panel",
+          "sourceLabel": "Assistant Panel",
+          "targetId": "ipc-bridge",
+          "targetLabel": "IPC Bridge",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "ipc-bridge",
+          "label": "IPC Bridge",
+          "category": "infrastructure",
+          "tag": "PROXY",
+          "description": "Preload contextBridge that exposes the allowed Electron surface as window.electron — the renderer's only doorway into Electron.",
+          "specs": "src/preload/index.ts. Exposes namespaces: terminal.* (spawnShell/input/setUserControl/resize/onData/onExit/popout), zone.* (launch/listSessions/onSessionCaptured), dispatches.* (list/resume/delete), activity.* (onEvent/onState/onDispatchComplete — v5 observability), assistant.* (start/stop/listSessions), plus readDir/readFile/saveCanvas/loadCanvas/watchCanvas/startDispatch/terminal-layout. Keep the contract typed and never leak raw Node or Electron primitives into renderer code."
+        },
+        {
+          "id": "main-process",
+          "label": "Main Process",
+          "category": "infrastructure",
+          "tag": "API",
+          "description": "Electron shell that owns window lifecycle, IPC registration, and routing into the dispatch + terminal subsystems.",
+          "specs": "src/main/index.ts. Creates the BrowserWindow, registers all filesystem and canvas IPC handlers, manages popout terminal windows, starts/stops the architect-canvas.json watcher, and forwards dispatch + zone + assistant operations into src/main/terminals.ts. Preserves contextIsolation and the typed window.electron contract."
+        },
+        {
+          "id": "canvas-store",
+          "label": "Canvas Store",
+          "category": "storage",
+          "tag": "DB",
+          "description": "architect-canvas.json + the file-watch path that keeps the renderer in sync. Source of truth for nodes/edges/settings.",
+          "specs": "Project-root architect-canvas.json. Main process watches the file and emits canvas:changed back to the renderer for live reload (so the assistant can edit the canvas and the UI updates without a save). Save preserves layout + ids; the assistant always replaces the full document."
+        }
       ]
     },
     {
-      "label": "Deploy",
-      "tag": "INFRA",
-      "description": "Configures environment variables, deployment config, and CI/CD for Vercel.",
-      "userPrompt": "You are responsible for final integration and deployment configuration. Set up: environment variable templates (.env.example with ANTHROPIC_API_KEY), Next.js API route middleware for rate limiting the chat endpoint, a vercel.json deployment config, a README with setup instructions, and a GitHub Actions CI workflow. Audit the full project output in ARCHITECT/outputs/frontend/ and fix any integration issues between the chatbot API route and the frontend component. Ensure the project builds cleanly with `next build`.",
-      "taskFile": "ARCHITECT/tasks/Deploy.md",
-      "outputFile": "ARCHITECT/outputs/Deploy.md",
-      "enabledTools": [],
-      "upstream": [
-        "Site Builder"
+      "id": "zone-pty-orchestrator",
+      "label": "Dispatch Coordination",
+      "participantId": "Dispatch-Coordination",
+      "description": "Owns the v5 dispatch pipeline in src/main/terminals.ts + src/main/orchestrator/. Coordinates the conductor agent, scheduler harness, per-runtime adapters, dispatch records, and the activity-log + pty.write protocol that replaced the v4 file-mailbox.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You own src/main/terminals.ts and src/main/orchestrator/*. Maintain the v5 flow: setupWorkspaceV5, conductor + zone PTY spawn (serialized capture), scheduler activity-watch loop, parseDecision execution, pty.write task delivery with the user-control lock + turn queue, and the 15s status tick for staleness. The activity-log + pty.write protocol is the cross-runtime coordination primitive — do not regress to a file-mailbox, blocking listen loops, or screen-grid sigil detection.",
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Dispatch-Coordination.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Dispatch-Coordination.kv",
+      "outputFile": "ARCHITECT/outputs/Dispatch-Coordination.md",
+      "enabledTools": [
+        "fileRead",
+        "fileWrite",
+        "shell"
       ],
-      "downstream": []
+      "componentEdges": [
+        {
+          "id": "e4",
+          "sourceId": "main-process",
+          "sourceLabel": "Main Process",
+          "targetId": "pty-orchestrator",
+          "targetLabel": "PTY Orchestrator",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e10",
+          "sourceId": "pty-orchestrator",
+          "sourceLabel": "PTY Orchestrator",
+          "targetId": "conductor",
+          "targetLabel": "Conductor",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e11",
+          "sourceId": "pty-orchestrator",
+          "sourceLabel": "PTY Orchestrator",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e12",
+          "sourceId": "conductor",
+          "sourceLabel": "Conductor",
+          "targetId": "activity-log",
+          "targetLabel": "Activity Log",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e13",
+          "sourceId": "activity-log",
+          "sourceLabel": "Activity Log",
+          "targetId": "scheduler",
+          "targetLabel": "Scheduler",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e14",
+          "sourceId": "scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e15",
+          "sourceId": "agent-pool",
+          "sourceLabel": "Agent Pool",
+          "targetId": "activity-log",
+          "targetLabel": "Activity Log",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e16",
+          "sourceId": "runtime-adapters",
+          "sourceLabel": "Runtime Adapters",
+          "targetId": "pty-orchestrator",
+          "targetLabel": "PTY Orchestrator",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e17",
+          "sourceId": "dispatch-record",
+          "sourceLabel": "Dispatch Record",
+          "targetId": "scheduler",
+          "targetLabel": "Scheduler",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "pty-orchestrator",
+          "label": "PTY Orchestrator",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "Spawns and supervises every node-pty process. Owns the user-control lock + turn queue that lets scheduler writes coexist with user keystrokes on the same PTY.",
+          "specs": "src/main/terminals.ts. Resolves runtime binaries via the adapter registry, builds runtime-specific argv, spawns node-pty sessions with VS-Code-style shell-env resolution, broadcasts terminal:data/exit/status to renderer + popouts. Per-PTY userControlState + turnQueue: while the user has control, scheduler writes are queued; release drains sequentially with a 220ms inter-turn gap. Two-step submit (body + 120ms + bare \\r) prevents Ink CLIs from treating Enter as a literal char inside pasted content."
+        },
+        {
+          "id": "conductor",
+          "label": "Conductor",
+          "category": "services",
+          "tag": "AI",
+          "description": "v5 coordinator agent. Plans and routes work across zones by emitting one decision JSON line per turn to its activity log. Harness-driven — no drain loop.",
+          "specs": "Spawned by orchestrator/dispatch.ts with the conductor.md prompt (~60 lines, src/main/orchestrator/prompts/conductor.ts). Initial user turn: composeInitialTurn(userPrompt) for normal dispatches, composePlanModeInitialTurn(userPrompt) for plan-mode (gates on user approval before first assign). Decisions: {type:'assign'|'answer'|'final'|'noop'}, parsed by orchestrator/conductor.ts → parseDecision and executed by the scheduler."
+        },
+        {
+          "id": "scheduler",
+          "label": "Scheduler",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "v5 harness state machine. Watches every participant's activity log via fs.watch, executes conductor decisions (pty.write to zones), routes zone events back to the conductor, and tracks per-task lifecycle for crash-safe resume.",
+          "specs": "src/main/orchestrator/scheduler.ts. Per-task state: pending → dispatched → in-progress → {done | failed | blocked}. 15s status tick computes ParticipantStatus from PTY-alive + last-activity-kind + dual-gate idle threshold. Persists pendingTasks[] to DispatchRecord on every transition; on resume calls redispatchTask with the same taskId so correlations hold. Never spawns PTYs directly — receives writeToPty + getPtyLastActivityMs + broadcast as deps from dispatch.ts."
+        },
+        {
+          "id": "activity-log",
+          "label": "Activity Log",
+          "category": "storage",
+          "tag": "OBS",
+          "description": "Append-only JSONL transport: one file per participant, watched by the scheduler. The single coordination primitive that works identically across Claude, Codex, OpenCode, and Gemini.",
+          "specs": "ARCHITECT/runtime/<dispatchId>/activity/<participantId>.jsonl. Each line is an ActivityEvent: kind ∈ {task-received, progress, ask, answer, done, failed, note}. Agents append via cat heredoc — no jq, no polling loop. orchestrator/activity.ts → watchActivity tracks per-file byte offset + partial-line buffer, drains pre-existing bytes on attach (race safety), fires one parsed event per newline. Malformed lines are logged and skipped."
+        },
+        {
+          "id": "runtime-adapters",
+          "label": "Runtime Adapters",
+          "category": "infrastructure",
+          "tag": "ADPT",
+          "description": "Per-CLI adapter layer behind one RuntimeAdapter interface. Absorbs every 'if runtime === claude' branch so terminals.ts and dispatch.ts stay runtime-agnostic.",
+          "specs": "src/main/runtimes/{claude,codex,gemini,opencode}.ts behind types.ts. Each adapter implements buildSpawnArgs, buildResumeArgs, composeSystemAndUser (Claude: --append-system-prompt; others: <<SYSTEM>>…<<END>> inline fold via fold.ts), snapshotSessions, captureNewSession, and revalidateSession. Registry: getRuntimeAdapter(runtime) in src/main/runtimes/index.ts."
+        },
+        {
+          "id": "dispatch-record",
+          "label": "Dispatch Record",
+          "category": "storage",
+          "tag": "REC",
+          "description": "Per-dispatch durable persistence. v5 protocolVersion, pinned zone sessionIds, pendingTasks for crash-safe resume, append-only conductorDecisions audit log.",
+          "specs": "src/main/dispatchCapture.ts. ARCHITECT/dispatches/<architectSessionId>.json. Schema: architectSessionId, dispatchId, zoneSessions[], userPrompt, model, planMode, protocolVersion=5, pendingTasks[], conductorDecisions[]. Resume rejects records with protocolVersion < 5 (legacy-protocol). Read by resumeDispatchV5 to re-spawn pinned zones and re-deliver in-flight tasks."
+        }
+      ]
+    },
+    {
+      "id": "zone-agent-pool",
+      "label": "Zone Runtime Fleet",
+      "participantId": "Zone-Runtime-Fleet",
+      "description": "Owns per-zone CLI sessions across all runtimes, session-id capture, skill ingestion, and the ARCHITECT/ workspace artifacts (durable + ephemeral) that live agents read and write while working.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You own the per-zone execution surface in src/main/sessionCapture.ts, src/main/runtimes/*, the skill ingestion path, and the ARCHITECT/ workspace layout (durable sessions/dispatches/outputs vs ephemeral runtime/<dispatchId>/). Preserve resume semantics, runtime adapter contracts, and v5 protocol versioning while improving reliability and observability.",
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Zone-Runtime-Fleet.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Zone-Runtime-Fleet.kv",
+      "outputFile": "ARCHITECT/outputs/Zone-Runtime-Fleet.md",
+      "enabledTools": [
+        "fileRead",
+        "fileWrite",
+        "shell"
+      ],
+      "componentEdges": [
+        {
+          "id": "e8",
+          "sourceId": "skills-library",
+          "sourceLabel": "Skills Library",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e9",
+          "sourceId": "agent-pool",
+          "sourceLabel": "Agent Pool",
+          "targetId": "workspace",
+          "targetLabel": "Agent Workspace",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e11",
+          "sourceId": "pty-orchestrator",
+          "sourceLabel": "PTY Orchestrator",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e14",
+          "sourceId": "scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e15",
+          "sourceId": "agent-pool",
+          "sourceLabel": "Agent Pool",
+          "targetId": "activity-log",
+          "targetLabel": "Activity Log",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "e18",
+          "sourceId": "session-capture",
+          "sourceLabel": "Session Capture",
+          "targetId": "agent-pool",
+          "targetLabel": "Agent Pool",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "agent-pool",
+          "label": "Agent Pool",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "Live per-zone CLI sessions across Claude, Codex, Gemini, and OpenCode. Each zone keeps a stable id; sessions resume across launches.",
+          "specs": "Spawned by orchestrator/dispatch.ts (multi-zone) or terminals.ts → runZone (solo). Each zone PTY receives its system prompt via the runtime adapter (Claude --append-system-prompt; others fold inline) and a short bootstrap user turn ('Acknowledge with Ready. Do NOT append an activity-log line yet') so the CLI materializes a session file on disk for capture polling."
+        },
+        {
+          "id": "session-capture",
+          "label": "Session Capture",
+          "category": "services",
+          "tag": "CAP",
+          "description": "Per-runtime CLI session-id capture + durable per-zone session history. Lets the UI resume long-lived agents across launches.",
+          "specs": "src/main/sessionCapture.ts. Snapshots the runtime's session store pre-spawn (claude: ~/.claude/projects/<cwd>/, codex: ~/.codex/sessions/, gemini: ~/.gemini/tmp/, opencode: opencode session list), polls post-spawn via adapter.captureNewSession to find the new session id. Persists ARCHITECT/sessions/<zoneKey>/<sessionId>.json (max 20, oldest pruned). Feeds the ZoneLaunchModal history picker."
+        },
+        {
+          "id": "skills-library",
+          "label": "Skills Library",
+          "category": "storage",
+          "tag": "VEC",
+          "description": "Builtin and custom SKILL.md sources inlined into zone prompts at spawn time.",
+          "specs": "Repo-root skills/ folder for builtin: references and arbitrary file paths for custom: references. Zone prompt builders (orchestrator/prompts/zone.ts, prompts/solo.ts) inline skill content verbatim into the system prompt. Extend by improving discovery, resolution, or guardrails — keep compatibility with the builtin: and custom: scheme."
+        },
+        {
+          "id": "workspace",
+          "label": "Agent Workspace",
+          "category": "storage",
+          "tag": "S3",
+          "description": "ARCHITECT/ coordination directory. Holds durable artifacts (sessions, dispatches, outputs, terminal-layout) and ephemeral per-dispatch runtime state (activity logs, state KV, prompts) that's wiped each dispatch entry.",
+          "specs": "Durable: sessions/<zoneKey>/<sessionId>.json, dispatches/<sessionId>.json (DispatchRecord), outputs/<safe>.md (narrative scratchpad), terminal-layout.json. Ephemeral (wiped on every dispatch entry): runtime/<dispatchId>/{activity,state,tasks,index.json}, prompts/conductor.md, prompts/<safe>.md. Legacy v4 mailbox/ + scripts/ are rm -rf'd on first v5 entry and never recreated."
+        }
+      ]
+    },
+    {
+      "id": "zone-comm-conductor",
+      "label": "Conductor Agent",
+      "participantId": "Conductor-Agent",
+      "description": "The conductor PTY that plans and coordinates the dispatch. Emits one decision JSON line per turn to its activity log; the harness drives all turn-taking.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": "You are the conductor. Between turns emit exactly one ActivityEvent line (kind:note, structured.type in {assign,answer,final,noop}) to your activity log using the cat heredoc. You do not run a loop — the harness writes your next turn after each material zone event.",
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Conductor-Agent.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Conductor-Agent.kv",
+      "outputFile": "ARCHITECT/outputs/Conductor-Agent.md",
+      "enabledTools": [
+        "fileRead",
+        "fileWrite",
+        "shell"
+      ],
+      "componentEdges": [
+        {
+          "id": "comm-e1",
+          "sourceId": "comm-conductor-pty",
+          "sourceLabel": "Conductor PTY",
+          "targetId": "comm-conductor-log",
+          "targetLabel": "Conductor Activity Log",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e2",
+          "sourceId": "comm-conductor-log",
+          "sourceLabel": "Conductor Activity Log",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e11",
+          "sourceId": "comm-scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "comm-conductor-pty",
+          "targetLabel": "Conductor PTY",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "comm-conductor-pty",
+          "label": "Conductor PTY",
+          "category": "services",
+          "tag": "AI",
+          "description": "Live CLI session for the conductor agent. Receives harness-synthesized user turns via pty.write.",
+          "specs": "Spawned by dispatch.ts. First user turn is composeInitialTurn(userPrompt): 'New dispatch. User task: <prompt>. Emit one {type:assign} decision line'. Subsequent turns written by the scheduler on every material zone event: done, failed, ask, stale, pty-exit, all-done. Conductor must respond with exactly one activity-log line per turn — no drain loop, no polling."
+        },
+        {
+          "id": "comm-conductor-log",
+          "label": "Conductor Activity Log",
+          "category": "storage",
+          "tag": "DB",
+          "description": "Append-only JSONL file. The conductor's sole output channel to the harness.",
+          "specs": "Path: ARCHITECT/runtime/<dispatchId>/activity/conductor.jsonl. Conductor appends via cat heredoc. Each line is an ActivityEvent with kind:note and structured typed as ConductorDecision: {type:'assign', assignments:[…]} | {type:'answer',…} | {type:'final', summary} | {type:'noop'}. Harness watches this file with a per-file fs.watch and parses each new line."
+        }
+      ]
+    },
+    {
+      "id": "zone-comm-harness",
+      "label": "Scheduler Harness",
+      "participantId": "Scheduler-Harness",
+      "description": "Node.js harness layer. Watches all activity logs, executes conductor decisions, delivers task turns to zones, and manages per-task state transitions. Not an agent — pure orchestration code in src/main/orchestrator/.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": null,
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Scheduler-Harness.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Scheduler-Harness.kv",
+      "outputFile": "ARCHITECT/outputs/Scheduler-Harness.md",
+      "enabledTools": [],
+      "componentEdges": [
+        {
+          "id": "comm-e2",
+          "sourceId": "comm-conductor-log",
+          "sourceLabel": "Conductor Activity Log",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e3",
+          "sourceId": "comm-fswatch",
+          "sourceLabel": "fs.watch",
+          "targetId": "comm-scheduler",
+          "targetLabel": "Scheduler",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e4",
+          "sourceId": "comm-scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "comm-pty-write",
+          "targetLabel": "pty.write Delivery",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e5",
+          "sourceId": "comm-pty-write",
+          "sourceLabel": "pty.write Delivery",
+          "targetId": "comm-zone-a",
+          "targetLabel": "Zone PTY A",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e6",
+          "sourceId": "comm-pty-write",
+          "sourceLabel": "pty.write Delivery",
+          "targetId": "comm-zone-b",
+          "targetLabel": "Zone PTY B",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e9",
+          "sourceId": "comm-zone-log-a",
+          "sourceLabel": "Zone Log A",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e10",
+          "sourceId": "comm-zone-log-b",
+          "sourceLabel": "Zone Log B",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e11",
+          "sourceId": "comm-scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "comm-conductor-pty",
+          "targetLabel": "Conductor PTY",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e12",
+          "sourceId": "comm-scheduler",
+          "sourceLabel": "Scheduler",
+          "targetId": "comm-state-kv",
+          "targetLabel": "State KV",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "comm-scheduler",
+          "label": "Scheduler",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "Per-task state machine. Routes zone activity events to the conductor and executes conductor decisions.",
+          "specs": "orchestrator/scheduler.ts. State per task: pending→dispatched→in-progress→{done|failed|blocked}. On conductor assign: call writeToParticipant for each target zone. On zone done/failed/ask: synthesize a conductor turn and call writeToParticipant(conductor). Runs a 15s status tick for staleness detection. Persists pendingTasks[] to DispatchRecord on every transition for crash-safe resume."
+        },
+        {
+          "id": "comm-fswatch",
+          "label": "fs.watch",
+          "category": "services",
+          "tag": "OBS",
+          "description": "Per-file activity log watcher. Drains pre-existing bytes on attach, fires one parsed ActivityEvent per newline.",
+          "specs": "orchestrator/activity.ts → watchActivity. Tracks byte offset + partial-line buffer per participant. Pre-existing bytes drained on attach to handle races where a zone writes before the watcher binds. Each complete newline-terminated line is JSON.parsed and emitted as ActivityEvent. Malformed lines are logged and skipped."
+        },
+        {
+          "id": "comm-pty-write",
+          "label": "pty.write Delivery",
+          "category": "infrastructure",
+          "tag": "PROXY",
+          "description": "Two-step turn submission: write body, wait 120 ms, write bare \\r as Enter. Queued while user has control of the terminal.",
+          "specs": "scheduler.writeToParticipant(pid, text). The 120 ms gap separates the paste-burst from the Enter keystroke so Ink CLIs treat Enter as distinct rather than a literal char inside pasted content. While userControlState[id]=true the write is queued; releasing drains sequentially with 220 ms inter-turn gap. Single-burst text+\\r leaves the turn typed but unsubmitted."
+        },
+        {
+          "id": "comm-state-kv",
+          "label": "State KV",
+          "category": "storage",
+          "tag": "CACHE",
+          "description": "Per-participant flat key=value snapshot. Atomic mktemp+rename writes. Ephemeral — wiped on every dispatch entry.",
+          "specs": "ARCHITECT/runtime/<dispatchId>/state/<participantId>.kv. Fields: role, label, runtime, sessionId, lastTaskId, lastTaskStatus, lastTaskStartedAt, lastActivityTs, ptyAlive, staleEscalations, staleAt. Reconstructable from activity log + DispatchRecord. Updated by the scheduler on every task transition and 15s status tick."
+        }
+      ]
+    },
+    {
+      "id": "zone-comm-fleet",
+      "label": "Zone Fleet",
+      "participantId": "Zone-Fleet",
+      "description": "The live agent PTYs. Each zone runs its own CLI session, receives task turns via pty.write, and communicates back exclusively through JSONL activity log appends.",
+      "runtime": "claude",
+      "runtimeLabel": "Claude Code",
+      "model": "claude-sonnet-4-6",
+      "systemPrompt": null,
+      "activityLog": "ARCHITECT/runtime/6f4da17bbe72de52/activity/Zone-Fleet.jsonl",
+      "stateFile": "ARCHITECT/runtime/6f4da17bbe72de52/state/Zone-Fleet.kv",
+      "outputFile": "ARCHITECT/outputs/Zone-Fleet.md",
+      "enabledTools": [],
+      "componentEdges": [
+        {
+          "id": "comm-e5",
+          "sourceId": "comm-pty-write",
+          "sourceLabel": "pty.write Delivery",
+          "targetId": "comm-zone-a",
+          "targetLabel": "Zone PTY A",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e6",
+          "sourceId": "comm-pty-write",
+          "sourceLabel": "pty.write Delivery",
+          "targetId": "comm-zone-b",
+          "targetLabel": "Zone PTY B",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e7",
+          "sourceId": "comm-zone-a",
+          "sourceLabel": "Zone PTY A",
+          "targetId": "comm-zone-log-a",
+          "targetLabel": "Zone Log A",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e8",
+          "sourceId": "comm-zone-b",
+          "sourceLabel": "Zone PTY B",
+          "targetId": "comm-zone-log-b",
+          "targetLabel": "Zone Log B",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e9",
+          "sourceId": "comm-zone-log-a",
+          "sourceLabel": "Zone Log A",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        },
+        {
+          "id": "comm-e10",
+          "sourceId": "comm-zone-log-b",
+          "sourceLabel": "Zone Log B",
+          "targetId": "comm-fswatch",
+          "targetLabel": "fs.watch",
+          "direction": "source-to-target"
+        }
+      ],
+      "components": [
+        {
+          "id": "comm-zone-a",
+          "label": "Zone PTY A",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "First live zone agent CLI session. Receives TASK turns via pty.write and emits ActivityEvents to its JSONL log.",
+          "specs": "On TASK <taskId>: <body> turn: append task-received, do the work, append progress lines as needed, then append done, failed, or ask. Uses cat heredoc — no jq, no polling loop. Bootstrap prompt on first spawn: 'Acknowledge with Ready. Do NOT append an activity-log line yet.' — forces session file materialization so capture polling succeeds."
+        },
+        {
+          "id": "comm-zone-b",
+          "label": "Zone PTY B",
+          "category": "services",
+          "tag": "WORKER",
+          "description": "Second live zone agent CLI session. Works in parallel with Zone A once all zones are spawned.",
+          "specs": "Zones are spawned serially (serialized capture avoids diff-races in shared ~/.claude/projects/ etc.), but work in parallel after all bootstrap turns complete. Same activity-log protocol as Zone A. Each zone log has its own independent fs.watch binding and byte-offset tracker in the scheduler."
+        },
+        {
+          "id": "comm-zone-log-a",
+          "label": "Zone Log A",
+          "category": "storage",
+          "tag": "DB",
+          "description": "Zone A's append-only JSONL activity log. Scheduler fs.watch fires on each new line.",
+          "specs": "Path: ARCHITECT/runtime/<dispatchId>/activity/<safe-a>.jsonl. Zone A appends: task-received (on TASK delivery), progress (mid-work keepalive to reset stale timer), done (success + summary), failed (abort + reason), ask (blocked on a question). Scheduler routes: done/failed/ask → pty.write conductor turn; progress/task-received → reset lastActivityTs only."
+        },
+        {
+          "id": "comm-zone-log-b",
+          "label": "Zone Log B",
+          "category": "storage",
+          "tag": "DB",
+          "description": "Zone B's append-only JSONL activity log. Same structure as Zone Log A, watched independently.",
+          "specs": "Path: ARCHITECT/runtime/<dispatchId>/activity/<safe-b>.jsonl. Each participant log gets its own watchActivity call — independent offset tracker and fs.watch binding. Malformed lines in one log never disrupt another participant's watcher."
+        }
+      ]
     }
   ]
 }
