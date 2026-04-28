@@ -1623,7 +1623,7 @@ function AuthGate({ children }: { children: ReactNode }) {
       </div>
     )
   }
-  if (session === null) {
+  if (session === null && !import.meta.env.RENDERER_VITE_AUTH_BYPASS) {
     return <LoginScreen />
   }
   return <>{children}</>
