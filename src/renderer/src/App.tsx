@@ -1,4 +1,12 @@
-import { useState, useCallback, useEffect, useRef, type MouseEvent as ReactMouseEvent } from 'react'
+import {
+  useState,
+  useCallback,
+  useEffect,
+  useRef,
+  type ReactNode,
+  type MouseEvent as ReactMouseEvent,
+} from 'react'
+import { Loader2 } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -13,6 +21,8 @@ import {
   type XYPosition,
 } from '@xyflow/react'
 
+import LoginScreen from './components/auth/LoginScreen'
+import UserMenu from './components/auth/UserMenu'
 import TopNav from './components/layout/TopNav'
 import AssistantPanel, { type AssistantOrientation } from './components/layout/AssistantPanel'
 import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchModal'
@@ -220,7 +230,9 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   }
 
   return (
-    <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+    <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+      <UserMenu />
+
       <div className="flex flex-col items-center gap-4">
         <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
           <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
@@ -1566,6 +1578,7 @@ Only discuss and advise without editing the file when the user is asking for cri
             </div>
           </div>
         </div>
+        <UserMenu />
       </div>
       </ProjectDirProvider>
     </ProjectSettingsProvider>
@@ -1586,11 +1599,45 @@ function MainApp() {
   )
 }
 
+function AuthGate({ children }: { children: ReactNode }) {
+  const [session, setSession] = useState<SessionInfo | null | 'loading'>('loading')
+
+  useEffect(() => {
+    let cancelled = false
+    window.electron.auth.getSession().then((s) => {
+      if (!cancelled) setSession(s)
+    })
+    const unsubscribe = window.electron.auth.onSessionChanged((s) => {
+      setSession(s)
+    })
+    return () => {
+      cancelled = true
+      unsubscribe()
+    }
+  }, [])
+
+  if (session === 'loading') {
+    return (
+      <div className="h-screen w-screen bg-canvas flex items-center justify-center">
+        <Loader2 size={20} className="animate-spin text-slate-600" />
+      </div>
+    )
+  }
+  if (session === null) {
+    return <LoginScreen />
+  }
+  return <>{children}</>
+}
+
 export default function App() {
   const params = new URLSearchParams(window.location.search)
   const popoutId = params.get('popout')
   if (popoutId) {
     return <PopoutTerminalApp id={popoutId} label={params.get('label') ?? popoutId} />
   }
-  return <MainApp />
+  return (
+    <AuthGate>
+      <MainApp />
+    </AuthGate>
+  )
 }
