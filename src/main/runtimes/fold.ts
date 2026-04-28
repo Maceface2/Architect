@@ -1,3 +1,5 @@
+import type { ComposedPrompt } from './types'
+
 // Shared helper for runtimes that don't support a system-prompt flag. Folds
 // the role prompt into the first-turn user message. Used by codex, gemini,
 // and opencode adapters. Claude uses --append-system-prompt instead and
@@ -10,4 +12,11 @@ ${systemPrompt}
 
 User request:
 ${user}`
+}
+
+// Standard composeSystemAndUser implementation for runtimes without a
+// system-prompt flag. Identical body across codex/gemini/opencode adapters.
+export function foldComposeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt {
+  if (!systemPrompt) return { firstUserPrompt: userPrompt || undefined }
+  return { firstUserPrompt: foldSystemIntoUser(systemPrompt, userPrompt) }
 }

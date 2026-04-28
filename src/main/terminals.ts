@@ -121,8 +121,6 @@ export async function initShellEnv(): Promise<void> {
   }
 }
 
-// v5 harness knobs. v4's deliveryWarningMs + taskTimeoutMs are gone — the
-// mailbox transport those served doesn't exist any more.
 //   idleThresholdMs     — when the scheduler flips a participant to 'stale'
 //                         (both PTY and activity log quiet past threshold).
 //   staleEscalationMs   — how long a stale streak must persist before the
@@ -310,19 +308,11 @@ export interface GraphEdge {
   }
 }
 
-// ──────────────────────────────────────────────────────────────────────────
-// PTY lifecycle state machine.
-//
-//   spawning → running → failed
-//
-// Transitions:
-//   - spawning → running: first PTY output is observed from the spawned CLI
-//   - * → failed:         PTY exits while the session is still live
-//
-// Per-task state is tracked by the v5 scheduler (src/main/orchestrator/
-// scheduler.ts) via activity-log events — the 'finished' state is not used
-// here because a zone's PTY stays alive across tasks.
-// ──────────────────────────────────────────────────────────────────────────
+// PTY lifecycle: spawning → running → failed
+//   - spawning → running: first PTY output observed
+//   - * → failed:         PTY exits while session is live
+// Per-task state is tracked by the v5 scheduler via activity-log events —
+// a zone's PTY stays alive across tasks.
 
 export type ZoneLifecycleState = 'spawning' | 'running' | 'failed'
 
@@ -334,26 +324,14 @@ export interface ZoneFailure {
   ts: number
 }
 
-export interface ZoneEvent {
-  seq: number
-  kind: string            // 'spawn' | 'running' | 'fail' | …
-  state: ZoneLifecycleState
-  message?: string
-  ts: number
-}
-
 interface Session {
   pty: pty.IPty
   term: HeadlessTerminal
   lifecycle: ZoneLifecycleState
-  events: ZoneEvent[]
-  eventSeq: number
   kind: 'agent' | 'shell'
   runtime: AgentRuntime | 'shell'
   createdAt: number
   lastError?: ZoneFailure
-  // Recent PTY output tail — fed to `_index.json.tail` for debugger views.
-  tail: string
   lastActivityMs: number
 }
 
@@ -467,33 +445,9 @@ function buildRuntimeArgs(
     : adapter.buildSpawnArgs(common)
 }
 
-function pushEvent(
-  session: Session,
-  kind: string,
-  message?: string,
-): void {
-  session.eventSeq += 1
-  session.events.push({
-    seq: session.eventSeq,
-    kind,
-    state: session.lifecycle,
-    message,
-    ts: Date.now(),
-  })
-  // Cap the log; state-timeline UI only needs recent history.
-  if (session.events.length > 200) session.events.splice(0, session.events.length - 200)
-}
-
-function setLifecycle(
-  id: string,
-  session: Session,
-  next: ZoneLifecycleState,
-  kind: string,
-  message?: string,
-): void {
+function setLifecycle(id: string, session: Session, next: ZoneLifecycleState): void {
   if (session.lifecycle === next) return
   session.lifecycle = next
-  pushEvent(session, kind, message)
   broadcast('terminal:status', {
     id,
     status: next,
@@ -509,10 +463,8 @@ function failSession(
 ): void {
   if (session.lifecycle === 'failed') return
   session.lastError = { kind, message, ts: Date.now() }
-  setLifecycle(id, session, 'failed', 'fail', `${kind}: ${message}`)
+  setLifecycle(id, session, 'failed')
 }
-
-const TAIL_MAX_BYTES = 4_000
 
 function createSession(
   win: BrowserWindow,
@@ -533,26 +485,19 @@ function createSession(
     pty: ptyProcess,
     term,
     lifecycle: 'spawning',
-    events: [],
-    eventSeq: 0,
     kind,
     runtime,
     createdAt: Date.now(),
-    tail: '',
     lastActivityMs: Date.now(),
   }
   sessions.set(id, session)
-  pushEvent(session, 'spawn', `pty spawned (${runtime})`)
 
   ptyProcess.onData(data => {
-    // Always broadcast the raw stream so the renderer's xterm instance
-    // sees the exact same bytes.
     if (kind === 'agent' && session.lifecycle === 'spawning') {
-      setLifecycle(id, session, 'running', 'running', 'PTY output observed')
+      setLifecycle(id, session, 'running')
     }
     broadcast('terminal:data', { id, data })
     session.lastActivityMs = Date.now()
-    session.tail = (session.tail + data).slice(-TAIL_MAX_BYTES)
   })
 
   ptyProcess.onExit(({ exitCode }) => {
@@ -1038,10 +983,11 @@ export async function startDispatch(
   projectDir: string,
   rawSettings: unknown,
   dispatch: StartDispatchOptions,
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
+  // dispatchContext: accepted for IPC backwards-compat but unused by v5.
+  _dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   const { startDispatchV5 } = await import('./orchestrator/dispatch')
-  return startDispatchV5({ win, nodes, edges, projectDir, rawSettings, dispatch, dispatchContext })
+  return startDispatchV5({ win, nodes, edges, projectDir, rawSettings, dispatch })
 }
 
 const ASSISTANT_ZONES: Record<AssistantMode, string> = {

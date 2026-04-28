@@ -5,8 +5,6 @@ contextBridge.exposeInMainWorld('electron', {
 
   // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('read-dir', dirPath),
-  readFile: (filePath: string) => ipcRenderer.invoke('read-file', filePath),
-  getHomeDir: () => ipcRenderer.invoke('get-home-dir'),
   openDirectory: () => ipcRenderer.invoke('open-directory'),
 
   // Canvas persistence

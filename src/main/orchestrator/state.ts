@@ -9,7 +9,7 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 // and is wiped on every fresh dispatch entry (ephemeral by design — it's
 // always reconstructable from the activity log + DispatchRecord).
 
-export type ParticipantRole = 'conductor' | 'zone' | 'harness'
+export type ParticipantRole = 'conductor' | 'zone'
 
 export type TaskStatus =
   | 'none'              // no task assigned yet
@@ -19,7 +19,6 @@ export type TaskStatus =
   | 'blocked'           // agent emitted 'ask', waiting on answer
   | 'done'              // agent emitted 'done'
   | 'failed'            // agent emitted 'failed' or retries exhausted
-  | 'resumed'           // re-hydrated at resume before first event
 
 export interface ParticipantState {
   role: ParticipantRole
@@ -93,20 +92,16 @@ function serialize(state: ParticipantState): string {
   return lines.join('\n') + '\n'
 }
 
-function parseValue(raw: string): string {
-  return raw
-}
-
 function isTaskStatus(value: string): value is TaskStatus {
   return (
     value === 'none' || value === 'pending' || value === 'dispatched' ||
     value === 'in-progress' || value === 'blocked' || value === 'done' ||
-    value === 'failed' || value === 'resumed'
+    value === 'failed'
   )
 }
 
 function isParticipantRole(value: string): value is ParticipantRole {
-  return value === 'conductor' || value === 'zone' || value === 'harness'
+  return value === 'conductor' || value === 'zone'
 }
 
 // Parses a k=v file into a ParticipantState. Missing / malformed required
@@ -118,9 +113,7 @@ function deserialize(raw: string): ParticipantState {
     if (!trimmed) continue
     const eq = trimmed.indexOf('=')
     if (eq < 0) continue
-    const key = trimmed.slice(0, eq)
-    const value = parseValue(trimmed.slice(eq + 1))
-    map.set(key, value)
+    map.set(trimmed.slice(0, eq), trimmed.slice(eq + 1))
   }
   const role = map.get('role')
   const label = map.get('label')

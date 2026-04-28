@@ -130,12 +130,6 @@ function createWindow(): void {
 
 // ── File system IPC ────────────────────────────────────────────────────────
 
-ipcMain.handle('get-home-dir', () => app.getPath('home'))
-
-ipcMain.handle('read-file', (_event, filePath: string) => {
-  try { return fs.readFileSync(filePath, 'utf-8') } catch { return null }
-})
-
 ipcMain.handle('read-dir', (_event, dirPath: string) => {
   try {
     const entries = fs.readdirSync(dirPath, { withFileTypes: true })

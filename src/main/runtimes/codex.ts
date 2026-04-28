@@ -4,8 +4,8 @@ import {
   isCodexSessionIdForCwd,
   snapshotCodexSessions,
 } from '../sessionCapture'
-import { foldSystemIntoUser } from './fold'
-import type { ComposedPrompt, ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
+import { foldComposeSystemAndUser } from './fold'
+import type { ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
 
 const id: AgentRuntime = 'codex'
 
@@ -31,17 +31,12 @@ function buildResumeArgs(opts: ResumeArgs): string[] {
   return args
 }
 
-function composeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt {
-  if (!systemPrompt) return { firstUserPrompt: userPrompt || undefined }
-  return { firstUserPrompt: foldSystemIntoUser(systemPrompt, userPrompt) }
-}
-
 export const codexAdapter: RuntimeAdapter = {
   id,
   supportsSystemPromptFlag: false,
   buildSpawnArgs,
   buildResumeArgs,
-  composeSystemAndUser,
+  composeSystemAndUser: foldComposeSystemAndUser,
   snapshotSessions: (cwd) => snapshotCodexSessions(cwd),
   captureNewSession: (cwd, before, timeoutMs) =>
     captureNewCodexSession(cwd, before, timeoutMs),

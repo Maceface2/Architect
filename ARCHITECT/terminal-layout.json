@@ -1,11 +1,19 @@
 {
   "root": {
     "kind": "pane",
-    "id": "pane-mohmvijj-z",
+    "id": "pane-moi5lzbb-6",
     "tabs": [
-      "shell-1777319243508-brc5-h857u5"
+      "shell-1777352200952-z9lw-bwqfd8",
+      "zone-frontend",
+      "zone-main-process",
+      "zone-pty-orchestrator",
+      "zone-agent-pool",
+      "zone-comm-conductor",
+      "zone-comm-harness",
+      "zone-comm-fleet",
+      "conductor-agent"
     ],
-    "activeTab": "shell-1777319243508-brc5-h857u5"
+    "activeTab": "conductor-agent"
   },
   "poppedOut": []
 }

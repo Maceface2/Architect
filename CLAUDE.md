@@ -80,7 +80,6 @@ The canvas exposes two launch flows, both binary-choice (start new vs. resume pr
     - `ARCHITECT/prompts/<safe>.md` — compact per-zone prompt (~40 lines)
     - `ARCHITECT/runtime/<dispatchId>/` (ephemeral) — `activity/`, `state/`, `tasks/`, `index.json`
     - `ARCHITECT/outputs/<safe>.md` — progress scratchpad dirs ensured (contents preserved across dispatches)
-    - Legacy `ARCHITECT/mailbox/` + `ARCHITECT/scripts/` (v4 leftovers) are `rm -rf`'d on entry.
 5. Spawn each zone PTY serially (serialized capture avoids diff-races in the shared `~/.claude/projects/<cwd>/` etc.). Each zone spawn passes its full role prompt via `adapter.composeSystemAndUser` — Claude gets `--append-system-prompt`; codex/opencode/gemini fold it into the first user prompt via `<<SYSTEM>>…<<END>>`. Each zone also receives a short **bootstrap user prompt** as its first turn (`"Acknowledge with 'Ready'. Do NOT append an activity-log line yet…"`) so the CLI materializes a session file on disk — without it, capture polling times out.
 6. Spawn the Conductor PTY. Its system prompt is `conductor.md`; its **initial user turn is the dispatch kick-off** (`composeInitialTurn(userPrompt)` = `"New dispatch. User task: <prompt>. Emit one {type:'assign'} decision line"`). Delivered via argv, same spawn-time mechanism as the zone bootstrap — no post-spawn pty.write needed.
 7. Build and start the `Scheduler`. It attaches a per-file `fs.watch` on every participant's activity log (drains any pre-existing lines on attach to handle races), runs a 15 s status tick for staleness detection, and registers its `stop()` with `setActiveDispatchCoordinator` so `killAll()` tears everything down.
@@ -92,7 +91,7 @@ The canvas exposes two launch flows, both binary-choice (start new vs. resume pr
 
 Coordination between zones and the Conductor is **file-based activity logs + pty.write task delivery**. No shell scripts, no mailbox files, no polling loops inside agents. `DISPATCH_PROTOCOL_VERSION = 5` (in `dispatchCapture.ts`); v4 and older resumes are rejected with `legacy-protocol`.
 
-The design goal: one coordination primitive that works identically across Claude, Codex, OpenCode, and Gemini — so no Claude-only flags (`--append-system-prompt` is absorbed by the adapter, not prescribed), no bash-tool-semantics assumptions (v4's `mailbox-listen.sh` blocking loop didn't work on Codex's TUI), no screen-scrape cue detection.
+The design goal: one coordination primitive that works identically across Claude, Codex, OpenCode, and Gemini — so no Claude-only flags (`--append-system-prompt` is absorbed by the adapter, not prescribed) and no screen-scrape cue detection.
 
 #### Participants
 
@@ -191,7 +190,7 @@ type ConductorDecision =
 
 The scheduler's activity watcher parses each conductor line via `parseDecision`, executes it (pty.write to zones, mark task done, emit `dispatch:complete`, etc.), and appends the decision JSON to `DispatchRecord.conductorDecisions[]` for audit + resume.
 
-**No drain loop** is prescribed. No `mailbox-listen.sh`. The Conductor's prompt explicitly says: *"You do not run a loop. The harness drives your turn-taking."*
+**No drain loop** is prescribed. The Conductor's prompt explicitly says: *"You do not run a loop. The harness drives your turn-taking."*
 
 #### Scheduler responsibilities
 
@@ -249,11 +248,11 @@ Ephemeral. Reconstructable from the activity log + DispatchRecord, so it's wiped
 - `idleThresholdMs` (default 3 min) — when both the PTY and the activity log go quiet past this threshold, the participant flips to `stale`.
 - `staleEscalationMs` (default 10 min) — how long a stale streak must persist before the scheduler invokes the conductor for recovery.
 
-Exposed in the Settings panel. v4's `deliveryWarningMs` + `taskTimeoutMs` are gone — the mailbox transport they served doesn't exist.
+Exposed in the Settings panel.
 
 #### Lifecycle state machine
 
-`spawning → running → failed`. v4's `finished` is unused — zones stay alive across tasks and only exit via PTY close. Per-task state lives in `state.kv` + the activity log, not the session lifecycle. Broadcast via `terminal:status` IPC.
+`spawning → running → failed`. Zones stay alive across tasks and only exit via PTY close. Per-task state lives in `state.kv` + the activity log, not the session lifecycle. Broadcast via `terminal:status` IPC.
 
 ### Runtime adapters
 
@@ -315,7 +314,6 @@ Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral:
 
 - `ARCHITECT/runtime/<dispatchId>/` — entire subtree (`activity/`, `state/`, `tasks/`, `index.json`). Per-dispatch subdirectory means concurrent/historical dispatches never overwrite each other. Resume wipes only its own subtree.
 - `ARCHITECT/prompts/conductor.md` + `<safe>.md` — regenerated per dispatch.
-- Legacy `ARCHITECT/mailbox/` + `ARCHITECT/scripts/` — `rm -rf`'d on first v5 entry; never recreated.
 
 **Resume flow** (`resumeDispatchV5`):
 
@@ -336,7 +334,7 @@ Durable conversation for every runtime lives in its CLI-native session store —
 
 All renderer ↔ main communication goes through `window.electron` (defined in preload):
 
-- `readDir / readFile / getHomeDir / openDirectory` — file system ops
+- `readDir / openDirectory` — file system ops
 - `saveCanvas / loadCanvas / watchCanvas / unwatchCanvas / onCanvasChanged` — canvas persistence + external-edit watcher
 - `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]` (each `{id, label, runtime, coordinatedMode?}`; `coordinatedMode: true` on zones spawned inside a dispatch so the renderer auto-acquires the user-control lock when the user types — see "User-control lock" below)
 - `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll / terminal.setUserControl` — PTY control. `setUserControl(id, hasControl)` is the renderer's hook into the per-PTY scheduler-write queue (see "User-control lock"); the user only invokes it through normal typing (auto-acquire on keystroke, auto-release on a non-slash, non-picker Enter).
@@ -368,4 +366,4 @@ Architect is an Electron app and shares many low-level concerns with VS Code (sh
 
 Before implementing anything related to: shell spawning, PATH resolution, PTY management, app packaging, IPC design, or file watching — check the VS Code source for a proven approach.
 
-VS Code also uses `@xterm/headless` for server-side terminal state. Architect keeps each PTY's `@xterm/headless` `Terminal` instance fed with raw bytes for the `session.tail` buffer (last N bytes — used by debug views), but all per-task coordination in v5 flows through activity-log JSONL files and `pty.write`-delivered user turns. Screen-grid scanning / sigil regex was removed entirely. If you ever reintroduce screen-based detection, reference `src/vs/platform/terminal/node/terminalProcess.ts` for prior art.
+VS Code uses `@xterm/headless` for server-side terminal state. Per-task coordination in v5 flows through activity-log JSONL files and `pty.write`-delivered user turns — no buffered screen scraping. If you ever introduce screen-based detection, reference `src/vs/platform/terminal/node/terminalProcess.ts` for prior art.

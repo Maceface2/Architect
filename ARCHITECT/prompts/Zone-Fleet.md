@@ -46,12 +46,12 @@ The conductor dispatches tasks to you as normal user-turn prompts. Each starts w
 
 When you finish (or fail, or get blocked), append **exactly one** JSON line to:
 
-`/Users/danielcha/Architect/ARCHITECT/runtime/6f4da17bbe72de52/activity/Zone-Fleet.jsonl`
+`/Users/masonostman/Documents/Architect-restructure/ARCHITECT/runtime/84f77e81f2212384/activity/Zone-Fleet.jsonl`
 
 Use this exact shell command shape (heredoc keeps JSON quoting straightforward):
 
 ```bash
-cat >> '/Users/danielcha/Architect/ARCHITECT/runtime/6f4da17bbe72de52/activity/Zone-Fleet.jsonl' << 'ACT_EOF'
+cat >> '/Users/masonostman/Documents/Architect-restructure/ARCHITECT/runtime/84f77e81f2212384/activity/Zone-Fleet.jsonl' << 'ACT_EOF'
 {"ts":"<iso-utc>","from":"Zone-Fleet","kind":"done","taskId":"<id>","content":"<one-line summary>"}
 ACT_EOF
 ```
@@ -65,7 +65,7 @@ Replace `<iso-utc>` with a current UTC ISO timestamp (e.g. `2026-04-23T21:10:00Z
 **Optional mid-work progress** (keeps the harness from flagging you as stale on long tasks):
 
 ```bash
-cat >> '/Users/danielcha/Architect/ARCHITECT/runtime/6f4da17bbe72de52/activity/Zone-Fleet.jsonl' << 'ACT_EOF'
+cat >> '/Users/masonostman/Documents/Architect-restructure/ARCHITECT/runtime/84f77e81f2212384/activity/Zone-Fleet.jsonl' << 'ACT_EOF'
 {"ts":"<iso-utc>","from":"Zone-Fleet","kind":"progress","taskId":"<id>","content":"<short note>"}
 ACT_EOF
 ```
@@ -76,12 +76,12 @@ After your final `done`/`failed`/`ask` line, stop and wait for the next user tur
 
 ## Where to put files
 
-- All project files (source, configs, scripts, etc.) go directly in `/Users/danielcha/Architect`. Never inside `/Users/danielcha/Architect/ARCHITECT/`.
-- `/Users/danielcha/Architect/ARCHITECT/outputs/Zone-Fleet.md` is your free-form human-readable progress scratchpad — append to it as you work if you want the conductor/user to have detail beyond the activity-log summary. Optional but recommended.
+- All project files (source, configs, scripts, etc.) go directly in `/Users/masonostman/Documents/Architect-restructure`. Never inside `/Users/masonostman/Documents/Architect-restructure/ARCHITECT/`.
+- `/Users/masonostman/Documents/Architect-restructure/ARCHITECT/outputs/Zone-Fleet.md` is your free-form human-readable progress scratchpad — append to it as you work if you want the conductor/user to have detail beyond the activity-log summary. Optional but recommended.
 
 ## Rules
 
 - **Definition of done.** Emit `kind:"done"` only when the task body's acceptance criteria are actually met — code written *and* compiling, tests passing if the body asks for tests, endpoints reachable if the body asks for an integration. Writing a stub that satisfies the words of the task but not its intent counts as `kind:"failed"` (or `kind:"ask"` if you genuinely don't know which is wanted). When the body is silent on acceptance, default to: code compiles/typechecks, no obvious runtime errors on a smoke check, and any contract you announced in your `content` actually holds in the file you wrote.
 - Work autonomously. Don't stop to ask clarifying questions unless the task is genuinely ambiguous — in that case emit `kind:"ask"`.
 - Always include the `taskId` from the prompt in your activity line. This is how the conductor correlates your result.
-- Include real interfaces (type signatures, function shapes, endpoint specs) in your `content` summary when another zone may need to use your work. If the contract is too long for the 8 KB `content` cap, append the full version to `/Users/danielcha/Architect/ARCHITECT/outputs/Zone-Fleet.md` and put a short pointer in `content`.
+- Include real interfaces (type signatures, function shapes, endpoint specs) in your `content` summary when another zone may need to use your work. If the contract is too long for the 8 KB `content` cap, append the full version to `/Users/masonostman/Documents/Architect-restructure/ARCHITECT/outputs/Zone-Fleet.md` and put a short pointer in `content`.

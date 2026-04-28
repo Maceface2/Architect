@@ -191,17 +191,17 @@ Runtime-specific sources:
 
 For fresh sessions:
 
-1. Architect snapshots the runtime's existing sessions before spawn.
+1. Architect snapshots the runtime's existing session ids before spawn (via the adapter's `snapshotSessions(cwd)`).
 2. It spawns the new PTY.
-3. It polls for a newly created session that matches the current project.
-4. It saves the discovered `sessionId` into `ARCHITECT/sessions/<zone>.json`.
+3. It polls (`adapter.captureNewSession(cwd, snapshot)`) for a newly created session that matches the current project.
+4. It saves the discovered `ZoneSessionRecord` (runtime, sessionId, capturedAt, summary, model?, dispatchId?) to `ARCHITECT/sessions/<zoneKey>/<sessionId>.json`. The directory holds up to `MAX_ZONE_SESSIONS = 20` entries; oldest are pruned.
 
 For resume:
 
-- Architect reads the saved session file
-- checks that the runtime-specific session is still reachable on disk
-- launches the runtime-specific resume form (`claude --resume`, `codex resume`, `gemini --resume`, `opencode --continue --session`)
-- optionally writes the next user prompt after spawn if needed
+- Architect reads the saved record by sessionId
+- calls `adapter.revalidateSession(cwd, sessionId)` to fail fast on stale ids (Codex / Gemini implement a cheap on-disk check; Claude / OpenCode return `true` and let the CLI surface failures)
+- launches the runtime-specific resume form (`claude --resume <id>`, `codex resume <id>`, `gemini --resume <id>`, `opencode --session <id>`)
+- the user's next prompt, if any, is delivered as the first turn via the adapter's normal prompt-arg shape
 
 ### Where Resume Is Used
 
@@ -244,10 +244,10 @@ Spawn args: `--approval-mode yolo --model <m> [effort] --prompt-interactive <use
 
 ### OpenCode (`runtimes/opencode.ts`)
 
-Spawn args: `--model <m> --prompt <user>`. Resume args: `--session <id> --model <m> --prompt <user?>`.
+Spawn args: `--prompt <user> --model <m>`. Resume args: `--session <id> --prompt <user?> --model <m>`.
 
 - `supportsSystemPromptFlag: false` — inline fold
-- **Always `--session <id>`, never `--continue` alone.** `--continue` loads the most-recent OpenCode session globally and silently hijacked resumes when Architect had spawned multiple opencode instances.
+- **Always `--session <id>`, never bare `--continue`.** `--continue` loads the most-recent OpenCode session globally and silently hijacked resumes when Architect had spawned multiple opencode instances. Architect never passes `--continue`.
 - Session capture spawns `opencode session list --format json` under a PTY (the CLI requires TTY for stdout flush)
 - `revalidateSession` is a no-op that returns true (no cheap on-disk reachability check)
 
