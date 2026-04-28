@@ -6,7 +6,8 @@ import { DISPATCH_PROTOCOL_VERSION } from '../dispatchCapture'
 import { activityDir, activityLogPath, ensureActivityLog } from './activity'
 import { initialState, stateDir, stateFilePath, writeState } from './state'
 import { buildConductorPrompt, type ConductorZoneContext } from './prompts/conductor'
-import { buildZonePrompt, type ZoneComponentSpec, type ZoneUpstreamRef } from './prompts/zone'
+import { buildZonePrompt, type ZoneComponentSpec } from './prompts/zone'
+import type { ComponentEdgeSpec } from './prompts/componentEdges'
 
 // v5 workspace setup. Writes everything the dispatch needs on disk before
 // any PTY is spawned: manifest, conductor + zone prompts, per-participant
@@ -24,8 +25,7 @@ export interface WorkspaceZoneInput {
   runtime: AgentRuntime
   model: string
   components: ZoneComponentSpec[]
-  upstream: ZoneUpstreamRef[]
-  downstreamLabels: string[]
+  componentEdges: ComponentEdgeSpec[]
   enabledTools: string[]
   systemPromptOverride: string
   skills: Array<{ name: string; content: string }>
@@ -37,7 +37,7 @@ export interface WorkspaceInput {
   dispatchRuntime: AgentRuntime
   userPrompt?: string
   zones: WorkspaceZoneInput[]
-  zoneEdges: Array<{ fromLabel: string; toLabel: string }>
+  componentEdges: ComponentEdgeSpec[]
   unassignedComponents: Array<{
     id: string
     label: string
@@ -100,6 +100,7 @@ function writeManifest(input: WorkspaceInput): void {
       description: c.description ?? '',
       specs: c.specs ?? '',
     })),
+    componentEdges: input.componentEdges,
     zones: zones.map(zone => ({
       id: zone.zoneId,
       label: zone.label,
@@ -113,10 +114,9 @@ function writeManifest(input: WorkspaceInput): void {
       stateFile: relative(projectDir, stateFilePath(projectDir, dispatchId, zone.participantId)),
       outputFile: `ARCHITECT/outputs/${zone.participantId}.md`,
       enabledTools: zone.enabledTools,
-      upstream: zone.upstream.map(u => u.label),
-      downstream: zone.downstreamLabels,
-      components: zone.components.map((c, idx) => ({
-        id: `${zone.zoneId}-comp-${idx}`,
+      componentEdges: zone.componentEdges,
+      components: zone.components.map(c => ({
+        id: c.id,
         label: c.label,
         category: c.category ?? null,
         tag: c.tag ?? null,
@@ -129,7 +129,7 @@ function writeManifest(input: WorkspaceInput): void {
 }
 
 function writePrompts(input: WorkspaceInput): WorkspaceOutput {
-  const { projectDir, dispatchId, userPrompt, zones, zoneEdges, unassignedComponents } = input
+  const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
 
   const conductorContext: ConductorZoneContext[] = zones.map(zone => ({
@@ -140,8 +140,6 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
     runtime: zone.runtime,
     model: zone.model,
     componentLabels: zone.components.map(c => c.label),
-    upstreamLabels: zone.upstream.map(u => u.label),
-    downstreamLabels: zone.downstreamLabels,
   }))
 
   const conductorPrompt = buildConductorPrompt({
@@ -149,7 +147,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
     dispatchId,
     userPrompt,
     zones: conductorContext,
-    zoneEdges,
+    componentEdges,
     unassignedComponents: unassignedComponents.map(c => ({
       label: c.label,
       tag: c.tag,
@@ -167,8 +165,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
       label: zone.label,
       description: zone.description,
       components: zone.components,
-      upstream: zone.upstream,
-      downstreamLabels: zone.downstreamLabels,
+      componentEdges: zone.componentEdges,
       toolNames: zone.enabledTools,
       skills: zone.skills,
       userSystemPrompt: zone.systemPromptOverride,

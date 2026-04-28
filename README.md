@@ -6,7 +6,7 @@ Instead of treating an architecture diagram as static documentation, Architect t
 
 - Components describe parts of the system to build.
 - Zones define agent ownership over groups of components.
-- Edges define dependency and handoff flow.
+- Component edges describe dependency/data-flow references with optional labels and direction metadata.
 - Dispatch turns the canvas into live CLI sessions coordinated through files in `ARCHITECT/`.
 
 ## What The App Does
@@ -91,18 +91,16 @@ When you dispatch a graph, Architect translates the canvas into a filesystem-bas
 
 ### Multi-Zone Dispatch
 
-If the canvas has two or more zones, Architect uses the **mailbox protocol (v4)** — peer-to-peer message passing through per-participant inboxes, inspired by [`claude-code-session-bridge`](https://github.com/PatilShreyas/claude-code-session-bridge).
+If the canvas has two or more selected zones, Architect uses the **v5 Conductor protocol** — live PTYs coordinated by append-only activity logs and scheduler-delivered user turns.
 
-1. Architect wipes any prior mailbox transport state, then writes `ARCHITECT/manifest.json`, prompt files, the five mailbox shell scripts, per-participant mailbox directories, and a Mermaid diagram.
-2. It spawns one coordinator session called `Architect` (the Overseer) plus one PTY per zone — all concurrent, no dependency-gated launching.
-3. Each agent boots with a short bootstrap prompt telling it to read its role prompt and enter its mailbox loop:
-   - **Zones** block on `mailbox-listen.sh <zone>` — one task at a time, respond with a `result` message, immediately re-listen
-   - **Overseer** cycles `mailbox-listen.sh overseer 30` then `mailbox-drain.sh overseer` — batched reasoning over accumulated results, plan next round, dispatch new `task` messages
-4. The Overseer sends `task` messages to zones and receives `result` / `question` messages back. Zones can ask clarifying questions; the Overseer can send `answer` or `cancel` messages. All messages are atomic JSON files with `inReplyTo` correlation.
-5. The harness is a passive observer + synthetic-event injector — it watches `ARCHITECT/mailbox/**` via `fs.watch`, refreshes `ARCHITECT/mailbox/_index.json`, emits renderer activity events, and injects `harness.*` messages when zones stall (`pty-exit`, `delivery-warning`, `heartbeat-missed`, `timeout`, `wake`). The harness does NOT type into PTYs after bootstrap and does NOT scrape terminal output for sentinels.
-6. Each zone's narrative progress goes into `ARCHITECT/outputs/<zone>.md` as a human-readable scratchpad consumed by the preview/status UI. Completion is the `result` message itself, not a string sentinel.
+1. Architect writes a v5 workspace: `ARCHITECT/manifest.json`, `ARCHITECT/prompts/conductor.md`, one prompt per zone, and `ARCHITECT/runtime/<dispatchId>/` activity/state/task directories.
+2. Legacy v4 artifacts (`ARCHITECT/mailbox/` and `ARCHITECT/scripts/`) are removed on entry and are not recreated.
+3. It spawns each zone PTY serially so runtime session capture cannot collide. Each zone receives its role prompt and a tiny bootstrap turn that makes the CLI materialize a resumable session.
+4. It spawns one `Conductor` PTY. The Conductor receives the user task and emits one structured decision line, usually `{type:"assign"}`.
+5. The Scheduler watches each participant's JSONL activity log with `fs.watch`. When the Conductor assigns work, the Scheduler writes `TASK <taskId>: <body>` directly into the target zone PTY. Zones report back by appending `done`, `failed`, or `ask` activity lines.
+6. The Conductor decides follow-up work from the user task, zone/component context, component-edge reference context, and reported results. Canvas edges do not order zones or schedule work.
 
-This gives Architect a **mailbox-mediated orchestration model** — inspectable (every message is a file), testable (no PTY required for coordinator logic), and robust against broken listen loops (the harness injects `harness.wake` if a zone goes quiet with pending work). See [docs/agent-behavior.md](docs/agent-behavior.md) and `CLAUDE.md` for the full protocol spec.
+This gives Architect a coordination model that works across Claude, Codex, Gemini, and OpenCode without mailbox polling loops or terminal-screen sentinels. See [docs/orchestration.md](docs/orchestration.md), [docs/agent-behavior.md](docs/agent-behavior.md), and `CLAUDE.md` for the full protocol spec.
 
 ### Single-Zone Dispatch
 
@@ -118,21 +116,20 @@ If the canvas has exactly one zone:
 For each zone, Architect generates a system prompt that includes:
 
 - the zone label and description
-- upstream and downstream zone references
 - enabled tools
 - the list of owned components
 - component specs
-- relevant component-to-component edges
+- component-level reference edges, including optional labels and directions, as context only; they do not drive zone scheduling
 - embedded skill file contents
 - the zone behavior text from the UI
 - instructions about the project root and `ARCHITECT/` coordination artifacts
 
-Zone system prompts and zone tasks are separate layers:
+Zone prompts and zone tasks are separate layers:
 
-- **System prompt**: who the agent is and how it should behave — zone identity, components, skills, and (in dispatch mode) the listen-and-respond loop semantics. Baked in at spawn.
-- **Task message**: what this specific dispatch wants built right now — delivered as a `task` message in the zone's mailbox inbox, not a file.
+- **Role prompt**: who the agent is and how it should behave — zone identity, components, component-edge context, skills, and, in dispatch mode, the activity-log reporting contract. Baked in at spawn through the runtime adapter.
+- **Task turn**: what this specific dispatch wants built right now — delivered as a normal PTY user turn formatted as `TASK <taskId>: <body>`.
 
-The same zone prompt generator emits two variants (`buildZoneSystemPrompt(..., mode: 'dispatch' | 'solo')`): `dispatch` mode teaches the mailbox listen loop for multi-zone coordination; `solo` mode omits mailbox references for single-zone launches where the user prompts the agent directly.
+The prompt builders emit two variants: `buildZonePrompt` for multi-zone dispatches and `buildSoloZonePrompt` for single-zone launches where the user prompts the agent directly.
 
 ## `ARCHITECT/` Workspace Layout
 
@@ -140,22 +137,19 @@ Each dispatch uses a project-local coordination directory:
 
 **Generated per dispatch** (regenerated on every `startDispatch` / `resumeDispatch`):
 - `ARCHITECT/manifest.json`: normalized dispatch description
-- `ARCHITECT/diagram.md`: Mermaid view of the zone graph
-- `ARCHITECT/prompts/architect.md`: Overseer's drain-and-plan loop instructions
-- `ARCHITECT/prompts/<zone>.md`: per-zone listen-and-respond loop instructions
-- `ARCHITECT/scripts/mailbox-send.sh` + `listen.sh` + `drain.sh` + `status.sh` + `cleanup.sh`: mailbox protocol shell scripts (executable)
-
-**Mailbox (wiped on every dispatch entry point, rebuilt fresh)**:
-- `ARCHITECT/mailbox/_index.json`: harness-owned live snapshot of every participant's state
-- `ARCHITECT/mailbox/overseer/{inbox,outbox,.tmp,manifest.json}`: the Overseer's mailbox
-- `ARCHITECT/mailbox/<zone>/{inbox,outbox,.tmp,manifest.json}`: one per zone
-- Individual messages are `inbox/<iso-ts>-<msg-id>.json`, atomically written via `mktemp` + rename
+- `ARCHITECT/prompts/conductor.md`: Conductor prompt
+- `ARCHITECT/prompts/<zone>.md`: per-zone prompt
+- `ARCHITECT/runtime/<dispatchId>/activity/<participant>.jsonl`: append-only activity logs
+- `ARCHITECT/runtime/<dispatchId>/state/<participant>.kv`: scheduler-maintained participant state
+- `ARCHITECT/runtime/<dispatchId>/tasks/<taskId>.json`: scheduler task snapshots
 
 **Durable (survives dispatches)**:
 - `ARCHITECT/outputs/<zone>.md`: narrative progress scratchpad — zones append as they work
 - `ARCHITECT/sessions/<zoneKey>/<sessionId>.json`: captured CLI session records, feeds the ZoneLaunchModal history picker
 - `ARCHITECT/dispatches/<architectSessionId>.json`: prior multi-zone dispatch records — pins each zone's CLI session id for resume
-- `ARCHITECT/.assistant-context.md`: context file for the architecture assistant
+
+**Legacy cleanup**:
+- `ARCHITECT/mailbox/` and `ARCHITECT/scripts/`: v4 leftovers, removed by v5 dispatch setup
 
 Project code is never meant to be written into `ARCHITECT/`. Agents are told to create actual source files in the project root working directory.
 
@@ -179,7 +173,7 @@ But runtime parity is incomplete:
 The practical consequences:
 
 - session persistence and resume are implemented for Claude, Codex, Gemini, and OpenCode when Architect can locate the saved runtime session
-- zone system prompt injection is Claude-only
+- role prompt delivery works through the runtime adapter: Claude receives `--append-system-prompt`; Codex, Gemini, and OpenCode receive an inline `<<SYSTEM>>…<<END>>` fold in the first prompt
 - plan mode is only wired into Claude CLI arguments
 - approval behavior differs by runtime
 
@@ -201,7 +195,7 @@ The assistant gets a generated context file describing:
 - the current zones
 - the current components
 - overlay membership
-- current edges
+- current component edges with optional labels and directions
 - component palette defaults
 - the expected JSON schema for canvas edits
 
@@ -248,8 +242,7 @@ There are currently no configured lint or test scripts.
 - The docs and UI still carry some Claude-first assumptions.
 - Runtime capabilities are not normalized; the abstraction is ahead of the implementation.
 - "Tools" and "permissions" are stored in zone config and shown in prompts, but they do not map to a unified enforcement layer across runtimes.
-- Multi-zone orchestration uses the v4 mailbox protocol (JSON message files + fs.watch) rather than richer runtime-native lifecycle hooks. Loop discipline is prompt-engineered; if an agent exits its listen loop, the harness injects a `harness.wake` message but can't force a restart.
-- System prompt injection is still Claude-only, even though session capture and resume now span all supported runtimes.
+- Multi-zone orchestration is v5 activity-log + `pty.write` coordination. It is intentionally runtime-uniform, but still depends on agents following the prompt contract and appending valid activity-log lines.
 - The system prompt field is presented as a generic zone feature, but only Claude currently receives it as a first-class CLI argument.
 
 ## Additional Docs

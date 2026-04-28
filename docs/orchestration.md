@@ -42,7 +42,7 @@ The harness, up front, before any PTY spawns.
 1. **Wipes legacy v4 artifacts** — `ARCHITECT/mailbox/` and `ARCHITECT/scripts/` are `rm -rf`'d. Projects previously dispatched under v4 have these directories from prior runs; v5 never recreates them.
 2. **Wipes this dispatch's ephemeral subtree** — `ARCHITECT/runtime/<dispatchId>/` (if it exists from a crashed prior run with the same id, e.g. mid-crash resume).
 3. **Creates dirs** — `ARCHITECT/{outputs,prompts,sessions,dispatches}` + `ARCHITECT/runtime/<dispatchId>/{activity,state,tasks}`.
-4. **Writes the manifest** — `ARCHITECT/manifest.json` with `protocolVersion: 5`, `dispatchId`, per-zone entries (runtime, model, components, upstream/downstream, activity-log path, state-file path, output-file path).
+4. **Writes the manifest** — `ARCHITECT/manifest.json` with `protocolVersion: 5`, `dispatchId`, per-zone entries (runtime, model, components, activity-log path, state-file path, output-file path).
 5. **Writes the prompts** — `ARCHITECT/prompts/conductor.md` + `<safe>.md` per zone. Compact (~60 and ~40 lines of output respectively) — see `orchestrator/prompts/`.
 6. **Writes state skeletons** — `ARCHITECT/runtime/<dispatchId>/state/<participantId>.kv` via `initialState(role, label, runtime)`. One for `conductor` + one per zone.
 7. **Touches activity logs** — empty `.jsonl` files via `ensureActivityLog()` so `fs.watch` can attach before any agent writes.

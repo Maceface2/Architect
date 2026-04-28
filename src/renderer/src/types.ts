@@ -1,4 +1,4 @@
-import type { Node } from '@xyflow/react'
+import type { Edge, Node } from '@xyflow/react'
 import type { AgentRuntime, AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 export type { AssistantMode, EffortLevel } from '../../shared/agentRuntimes'
 
@@ -6,6 +6,12 @@ export type ComponentCategory = 'infrastructure' | 'services' | 'storage' | 'cus
 export type NodeStatus = 'idle' | 'running' | 'done' | 'error'
 export type RunMode = 'sequential' | 'parallel' | 'loop'
 export type OnFailure = 'stop' | 'retry' | 'skip'
+export type ComponentEdgeDirection = 'source-to-target' | 'bidirectional' | 'none'
+
+export interface ComponentEdgeData extends Record<string, unknown> {
+  label?: string
+  direction?: ComponentEdgeDirection
+}
 
 export interface NodeSkillFile {
   id: string
@@ -200,14 +206,11 @@ export interface ComponentNodeData {
 export type ZoneNodeType = Node<ZoneNodeData, 'zone'>
 export type ComponentNodeType = Node<ComponentNodeData, 'component'>
 export type CanvasNode = ZoneNodeType | ComponentNodeType
+export type CanvasEdge = Edge<ComponentEdgeData, 'component-edge'>
 
 export interface ArchitectCanvasData {
   nodes: CanvasNode[]
-  edges: Array<{
-    id: string
-    source: string
-    target: string
-  }>
+  edges: CanvasEdge[]
   settings: ProjectSettings
   savedAt?: string
 }

@@ -38,7 +38,6 @@ interface ElectronAPI {
     logout: () => Promise<{ ok: boolean }>
     onSessionChanged: (cb: (session: SessionInfo | null) => void) => () => void
   }
-  scanComponents: (dirPath: string) => Promise<unknown[]>
   startDispatch: (
     nodes: unknown[],
     edges: unknown[],

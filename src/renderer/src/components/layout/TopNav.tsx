@@ -63,7 +63,7 @@ export default function TopNav({
         {/* Logo */}
         <div className="flex items-center gap-2 select-none">
           <ArchitectLogo />
-          <span className="text-sm font-semibold text-white tracking-tight">architect</span>
+          <span className="text-sm font-semibold text-white tracking-tight">ARCHITECT</span>
         </div>
 
         {/* Project dir badge */}

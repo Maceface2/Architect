@@ -11,6 +11,7 @@ type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 function ComponentNode({ id, data }: ComponentNodeProps) {
   const { setNodes, deleteElements } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
+  const [hovered, setHovered] = useState(false)
 
   const color = data.color
   const tag = data.tag
@@ -29,12 +30,26 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
       )
     )
 
+  const handleBaseStyle = {
+    width: 9,
+    height: 9,
+    background: '#1e1e1e',
+    border: `2px solid ${color}`,
+    zIndex: 10,
+    opacity: hovered ? 1 : 0,
+    transition: 'opacity 150ms ease',
+  } as const
+
   return (
-    <>
+    <div
+      className="relative"
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+    >
       <Handle
         type="target"
         position={Position.Left}
-        style={{ width: 9, height: 9, background: '#1e1e1e', border: `2px solid ${color}`, left: -5, zIndex: 10 }}
+        style={{ ...handleBaseStyle, left: -5 }}
       />
 
       <div
@@ -82,7 +97,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
       <Handle
         type="source"
         position={Position.Right}
-        style={{ width: 9, height: 9, background: '#1e1e1e', border: `2px solid ${color}`, right: -5, zIndex: 10 }}
+        style={{ ...handleBaseStyle, right: -5 }}
       />
 
       {modalOpen && createPortal(
@@ -99,7 +114,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
         />,
         document.body
       )}
-    </>
+    </div>
   )
 }
 

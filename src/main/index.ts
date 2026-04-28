@@ -182,22 +182,6 @@ ipcMain.handle('unwatch-canvas', () => {
   stopCanvasWatcher()
 })
 
-ipcMain.handle('scan-components', (_event, dirPath: string) => {
-  const results: unknown[] = []
-  const walk = (d: string) => {
-    let entries: import('fs').Dirent[]
-    try { entries = fs.readdirSync(d, { withFileTypes: true }) } catch { return }
-    for (const entry of entries) {
-      if (entry.isDirectory()) walk(path.join(d, entry.name))
-      else if (entry.name === 'architect-component.json') {
-        try { results.push(...JSON.parse(fs.readFileSync(path.join(d, entry.name), 'utf-8'))) } catch {}
-      }
-    }
-  }
-  walk(dirPath)
-  return results
-})
-
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
 ipcMain.handle('dispatch:start', (_event, nodes, edges, cwd, settings, dispatch: StartDispatchOptions, dispatchContext) => {

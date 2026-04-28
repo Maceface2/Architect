@@ -15,9 +15,6 @@ contextBridge.exposeInMainWorld('electron', {
   watchCanvas: (projectDir: string) => ipcRenderer.invoke('watch-canvas', projectDir),
   unwatchCanvas: () => ipcRenderer.invoke('unwatch-canvas'),
 
-  // Custom component discovery
-  scanComponents: (dirPath: string) => ipcRenderer.invoke('scan-components', dirPath),
-
   // Start a fresh multi-zone (or single-zone) dispatch. Companion is
   // dispatches.resume for replaying a prior DispatchRecord.
   startDispatch: (

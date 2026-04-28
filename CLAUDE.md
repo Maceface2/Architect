@@ -52,11 +52,10 @@ Preload (src/preload/index.ts)
 Renderer (src/renderer/src/)
   ├── App.tsx        — Root: DirectoryGate → ArchitectFlow (tab layout: Canvas / Files / Terminal)
   ├── types.ts       — Shared types (ZoneNodeData, ZoneSessionRecord, DispatchRecord, HarnessTimeouts, etc.)
-  ├── components/layout/    — TopNav, Sidebar, AgentLog, FilesPanel, TerminalPanel, ResizablePanel
+  ├── components/layout/    — TopNav, AgentLog, FilesPanel, TerminalPanel, ResizablePanel
   ├── components/nodes/     — ZoneNode, ComponentNode, AgentConfigModal, ZoneLaunchModal
   ├── components/dispatch/  — DispatchModal (tabbed: new dispatch / resume previous)
-  ├── components/palette/   — PaletteItem (drag source)
-  └── data/componentPalette.ts — Pre-defined node templates (infrastructure/services/storage)
+  └── components/palette/   — CompactCanvasPalette (Edges / Zones / Components creation tools)
 ```
 
 ### Execution flow
@@ -76,7 +75,7 @@ The canvas exposes two launch flows, both binary-choice (start new vs. resume pr
 2. "Resume previous" tab: scrollable history of prior `DispatchRecord` entries → `dispatches.resume({ dispatchId, nodes, edges, settings })`.
 3. `terminals.ts` forwards to `orchestrator/dispatch.ts` (dynamic import, to avoid a module-load cycle with `spawnAgentSession`). Single-zone dispatches fall through to `runZone` — no conductor needed.
 4. Multi-zone path: mint `dispatchId`, call `setupWorkspaceV5(projectDir, dispatchId, …)` to lay down:
-    - `ARCHITECT/manifest.json` — graph description (protocolVersion: 5, dispatchId, per-zone entries with runtime/model/components/upstream/downstream/paths)
+    - `ARCHITECT/manifest.json` — graph description (protocolVersion: 5, dispatchId, per-zone entries with runtime/model/components/paths)
     - `ARCHITECT/prompts/conductor.md` — compact conductor prompt (~60 lines)
     - `ARCHITECT/prompts/<safe>.md` — compact per-zone prompt (~40 lines)
     - `ARCHITECT/runtime/<dispatchId>/` (ephemeral) — `activity/`, `state/`, `tasks/`, `index.json`
@@ -370,13 +369,3 @@ Architect is an Electron app and shares many low-level concerns with VS Code (sh
 Before implementing anything related to: shell spawning, PATH resolution, PTY management, app packaging, IPC design, or file watching — check the VS Code source for a proven approach.
 
 VS Code also uses `@xterm/headless` for server-side terminal state. Architect keeps each PTY's `@xterm/headless` `Terminal` instance fed with raw bytes for the `session.tail` buffer (last N bytes — used by debug views), but all per-task coordination in v5 flows through activity-log JSONL files and `pty.write`-delivered user turns. Screen-grid scanning / sigil regex was removed entirely. If you ever reintroduce screen-based detection, reference `src/vs/platform/terminal/node/terminalProcess.ts` for prior art.
-
-## graphify
-
-This project has a graphify knowledge graph at graphify-out/.
-
-Rules:
-
-- Before answering architecture or codebase questions, read graphify-out/GRAPH_REPORT.md for god nodes and community structure
-- If graphify-out/wiki/index.md exists, navigate it instead of reading raw files
-- After modifying code files in this session, run `graphify update .` to keep the graph current (AST-only, no API cost)
