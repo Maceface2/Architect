@@ -22,6 +22,15 @@ body {
   background-color: #111111;
 }
 
+/* Keep translucent zones behind components, including while selected/dragged. */
+.react-flow__node-zone {
+  z-index: 0 !important;
+}
+
+.react-flow__node-component {
+  z-index: 1 !important;
+}
+
 /* Controls */
 .react-flow__controls {
   background-color: transparent;

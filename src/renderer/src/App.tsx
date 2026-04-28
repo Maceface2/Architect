@@ -1474,6 +1474,7 @@ Only discuss and advise without editing the file when the user is asking for cri
               nodeTypes={nodeTypes}
               edgeTypes={edgeTypes}
               connectionMode={ConnectionMode.Loose}
+              elevateNodesOnSelect={false}
               defaultEdgeOptions={{ type: 'component-edge', style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
               className={pendingEdgeDefaults ? 'architect-edge-mode' : undefined}
               proOptions={{ hideAttribution: true }}
