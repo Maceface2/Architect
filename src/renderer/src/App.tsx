@@ -6,7 +6,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Loader2, LogOut } from 'lucide-react'
+import { Loader2 } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -22,6 +22,7 @@ import {
 } from '@xyflow/react'
 
 import LoginScreen from './components/auth/LoginScreen'
+import UserMenu from './components/auth/UserMenu'
 import TopNav from './components/layout/TopNav'
 import AssistantPanel, { type AssistantOrientation } from './components/layout/AssistantPanel'
 import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchModal'
@@ -217,12 +218,6 @@ function serializeCanvasData(
 
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   const [loading, setLoading] = useState(false)
-  const [userEmail, setUserEmail] = useState<string | null>(null)
-
-  useEffect(() => {
-    window.electron.auth.getSession().then((s) => setUserEmail(s?.email ?? null))
-    return window.electron.auth.onSessionChanged((s) => setUserEmail(s?.email ?? null))
-  }, [])
 
   const pick = async () => {
     setLoading(true)
@@ -236,21 +231,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 
   return (
     <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
-      {userEmail && (
-        <div className="absolute top-4 right-4 flex items-center gap-2">
-          <span className="text-xs text-slate-500 max-w-[180px] truncate" title={userEmail}>
-            {userEmail}
-          </span>
-          <button
-            onClick={() => void window.electron.auth.logout()}
-            className="flex items-center justify-center w-7 h-7 text-slate-400 border border-node-border rounded hover:bg-node hover:text-slate-200 transition-colors"
-            title="Sign out"
-            aria-label="Sign out"
-          >
-            <LogOut size={12} />
-          </button>
-        </div>
-      )}
+      <UserMenu />
 
       <div className="flex flex-col items-center gap-4">
         <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
@@ -1597,6 +1578,7 @@ Only discuss and advise without editing the file when the user is asking for cri
             </div>
           </div>
         </div>
+        <UserMenu />
       </div>
       </ProjectDirProvider>
     </ProjectSettingsProvider>
