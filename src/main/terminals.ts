@@ -794,7 +794,7 @@ const turnQueue = new Map<string, string[]>()
 const draining = new Set<string>()
 
 const SUBMIT_BODY_TO_CR_MS = 120  // body→\r gap (Claude paste-detection)
-const INTER_TURN_GAP_MS = 220     // \r→next-body gap (let TUI commit the turn)
+const INTER_TURN_GAP_MS = 1500    // \r→next-body gap (let TUI commit the turn)
 
 // Submit one full turn (body + Enter) to a PTY. Use this instead of two
 // separate writeToTerminal calls — the two-step pattern (body, 120ms, CR) is
@@ -849,7 +849,10 @@ function drainTurnQueue(id: string): void {
       setTimeout(next, INTER_TURN_GAP_MS)
     }, SUBMIT_BODY_TO_CR_MS)
   }
-  next()
+  // Same gap on the boundary between the user's release-Enter and the first
+  // queued turn — without it, the user's just-submitted \r and the queued
+  // body land back-to-back and Claude's TUI splices them into one input.
+  setTimeout(next, INTER_TURN_GAP_MS)
 }
 
 // Clear all coordination state for a PTY id. Called when a session ends so a
