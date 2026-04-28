@@ -9,8 +9,10 @@ export interface ComponentEdgeSpec {
   id: string
   sourceId: string
   sourceLabel: string
+  sourceHandle?: string
   targetId: string
   targetLabel: string
+  targetHandle?: string
   label?: string
   direction: ComponentEdgeDirection
 }
@@ -22,6 +24,9 @@ export function renderComponentEdges(
   if (!edges.length) return emptyMessage
   return edges.map(edge => {
     const relation = edge.label ? ` — ${edge.label}` : ''
-    return `- ${edge.sourceLabel} (\`${edge.sourceId}\`) -> ${edge.targetLabel} (\`${edge.targetId}\`) · direction: ${edge.direction}${relation}`
+    const connectors = edge.sourceHandle || edge.targetHandle
+      ? ` · connectors: ${edge.sourceHandle ?? 'source'} -> ${edge.targetHandle ?? 'target'}`
+      : ''
+    return `- ${edge.sourceLabel} (\`${edge.sourceId}\`) -> ${edge.targetLabel} (\`${edge.targetId}\`) · direction: ${edge.direction}${connectors}${relation}`
   }).join('\n')
 }

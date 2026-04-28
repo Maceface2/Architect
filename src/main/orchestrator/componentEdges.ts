@@ -12,6 +12,8 @@ interface EdgeLike {
   id: string
   source: string
   target: string
+  sourceHandle?: string | null
+  targetHandle?: string | null
   data?: {
     label?: string
     direction?: ComponentEdgeDirection
@@ -43,8 +45,10 @@ export function buildComponentEdgeSpecs<NodeLike extends ComponentNodeLike, Edge
         id: edge.id,
         sourceId: source.id,
         sourceLabel: source.data.label,
+        ...(typeof edge.sourceHandle === 'string' && edge.sourceHandle ? { sourceHandle: edge.sourceHandle } : {}),
         targetId: target.id,
         targetLabel: target.data.label,
+        ...(typeof edge.targetHandle === 'string' && edge.targetHandle ? { targetHandle: edge.targetHandle } : {}),
         direction: normalizeComponentEdgeDirection(edge.data?.direction),
         ...(label ? { label } : {}),
       } satisfies ComponentEdgeSpec

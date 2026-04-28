@@ -10,12 +10,9 @@ interface Props {
   iconName: string
   description: string
   specs: string
-  category: ComponentNodeData['category']
   patch: (partial: Partial<ComponentNodeData>) => void
   onClose: () => void
 }
-
-const CATEGORIES: ComponentNodeData['category'][] = ['infrastructure', 'services', 'storage', 'custom']
 
 export default function ComponentConfigModal({
   label,
@@ -24,7 +21,6 @@ export default function ComponentConfigModal({
   iconName,
   description,
   specs,
-  category,
   patch,
   onClose,
 }: Props) {
@@ -120,27 +116,6 @@ export default function ComponentConfigModal({
                   placeholder="TAG"
                 />
                 <p className="text-[10px] text-slate-600 mt-1.5">Up to 8 chars — shown in the corner of the node.</p>
-              </Section>
-
-              <Section title="Category">
-                <div className="grid grid-cols-2 gap-1.5">
-                  {CATEGORIES.map(cat => {
-                    const selected = cat === category
-                    return (
-                      <button
-                        key={cat}
-                        onClick={() => patch({ category: cat })}
-                        className={`px-3 py-2 rounded-lg border text-[11px] capitalize transition-colors ${
-                          selected
-                            ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
-                            : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
-                        }`}
-                      >
-                        {cat}
-                      </button>
-                    )
-                  })}
-                </div>
               </Section>
 
               <Section title="Accent color">

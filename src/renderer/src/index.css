@@ -56,6 +56,33 @@ body {
   stroke: #7c7cf5;
 }
 
+/* Component connection points */
+.architect-component-handle {
+  opacity: 0;
+  transition:
+    opacity 150ms ease,
+    box-shadow 150ms ease;
+}
+
+.architect-component-node:hover .architect-component-handle,
+.architect-edge-mode .architect-component-handle {
+  opacity: 1;
+}
+
+.architect-edge-mode .architect-component-handle {
+  animation: architect-handle-pulse 1.15s ease-in-out infinite;
+  box-shadow: 0 0 0 2px rgba(91, 91, 240, 0.18), 0 0 14px rgba(91, 91, 240, 0.42);
+}
+
+@keyframes architect-handle-pulse {
+  0%, 100% {
+    box-shadow: 0 0 0 2px rgba(91, 91, 240, 0.16), 0 0 10px rgba(91, 91, 240, 0.32);
+  }
+  50% {
+    box-shadow: 0 0 0 5px rgba(91, 91, 240, 0.28), 0 0 18px rgba(91, 91, 240, 0.58);
+  }
+}
+
 /* Selection box */
 .react-flow__selection {
   background: rgba(91, 91, 240, 0.08);

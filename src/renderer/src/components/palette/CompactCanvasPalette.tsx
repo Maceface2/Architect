@@ -1,20 +1,22 @@
 import { useEffect, useState } from 'react'
 import { Box, GitBranch, Layers, MousePointer2, X } from 'lucide-react'
-import type { ComponentCategory, ComponentEdgeDirection } from '../../types'
+import { AGENT_RUNTIMES, DEFAULT_MODEL_BY_RUNTIME, getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import type { ComponentEdgeDirection } from '../../types'
 
 export type CanvasPaletteTool = 'edge' | 'zone' | 'component'
 
 export interface ComponentCreateConfig {
   label: string
-  description: string
+  specs: string
   tag: string
-  category: ComponentCategory
   color: string
 }
 
 export interface ZoneCreateConfig {
   label: string
-  description: string
+  systemPrompt: string
+  runtime: AgentRuntime
+  model: string
   color: string
 }
 
@@ -26,13 +28,14 @@ export interface EdgeCreateConfig {
 interface CompactCanvasPaletteProps {
   activeTool: CanvasPaletteTool | null
   placementHint: string | null
+  defaultZoneRuntime: AgentRuntime
+  defaultZoneModel: string
   onCreateComponent: (config: ComponentCreateConfig) => void
   onCreateZone: (config: ZoneCreateConfig) => void
   onCreateEdge: (config: EdgeCreateConfig) => void
   onCancel: () => void
 }
 
-const categories: ComponentCategory[] = ['infrastructure', 'services', 'storage', 'custom']
 const directions: Array<{ value: ComponentEdgeDirection; label: string }> = [
   { value: 'source-to-target', label: 'One-way' },
   { value: 'bidirectional', label: 'Two-way' },
@@ -42,6 +45,8 @@ const directions: Array<{ value: ComponentEdgeDirection; label: string }> = [
 export default function CompactCanvasPalette({
   activeTool,
   placementHint,
+  defaultZoneRuntime,
+  defaultZoneModel,
   onCreateComponent,
   onCreateZone,
   onCreateEdge,
@@ -121,6 +126,8 @@ export default function CompactCanvasPalette({
       )}
       {dialog === 'zone' && (
         <ZoneCreateDialog
+          defaultRuntime={defaultZoneRuntime}
+          defaultModel={defaultZoneModel}
           onSubmit={config => {
             onCreateZone(config)
             setDialog(null)
@@ -175,44 +182,31 @@ function ComponentCreateDialog({
   onClose: () => void
 }) {
   const [label, setLabel] = useState('Component')
-  const [description, setDescription] = useState('')
+  const [specs, setSpecs] = useState('')
   const [tag, setTag] = useState('NODE')
-  const [category, setCategory] = useState<ComponentCategory>('services')
   const [color, setColor] = useState('#60a5fa')
 
   return (
     <PaletteDialog title="New Component" onClose={onClose}>
       <TextField label="Label" value={label} onChange={setLabel} autoFocus />
-      <TextField label="Description" value={description} onChange={setDescription} />
       <div className="grid grid-cols-2 gap-2">
         <TextField label="Tag" value={tag} onChange={value => setTag(value.toUpperCase().slice(0, 8))} />
         <ColorField label="Color" value={color} onChange={setColor} />
       </div>
-      <div>
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Category</p>
-        <div className="grid grid-cols-2 gap-1">
-          {categories.map(cat => (
-            <button
-              key={cat}
-              type="button"
-              onClick={() => setCategory(cat)}
-              className={`rounded px-2 py-1.5 text-xs capitalize transition-colors ${
-                category === cat ? 'bg-accent text-white' : 'bg-black/30 text-slate-400 hover:bg-white/10 hover:text-white'
-              }`}
-            >
-              {cat}
-            </button>
-          ))}
-        </div>
-      </div>
+      <TextAreaField
+        label="Specs & notes"
+        value={specs}
+        onChange={setSpecs}
+        placeholder="Responsibilities, APIs, schemas, requirements, or implementation notes"
+        rows={5}
+      />
       <DialogActions
         submitLabel="Place component"
         onCancel={onClose}
         onSubmit={() => onSubmit({
           label: label.trim() || 'Component',
-          description: description.trim(),
+          specs: specs.trim(),
           tag: (tag.trim() || 'NODE').toUpperCase().slice(0, 8),
-          category,
           color,
         })}
       />
@@ -221,27 +215,79 @@ function ComponentCreateDialog({
 }
 
 function ZoneCreateDialog({
+  defaultRuntime,
+  defaultModel,
   onSubmit,
   onClose,
 }: {
+  defaultRuntime: AgentRuntime
+  defaultModel: string
   onSubmit: (config: ZoneCreateConfig) => void
   onClose: () => void
 }) {
   const [label, setLabel] = useState('New Zone')
-  const [description, setDescription] = useState('')
+  const [systemPrompt, setSystemPrompt] = useState('')
+  const [runtime, setRuntime] = useState<AgentRuntime>(defaultRuntime)
+  const [model, setModel] = useState(defaultModel || DEFAULT_MODEL_BY_RUNTIME[defaultRuntime])
   const [color, setColor] = useState('#58A6FF')
+  const runtimeDef = getAgentRuntime(runtime)
 
   return (
     <PaletteDialog title="New Zone" onClose={onClose}>
       <TextField label="Label" value={label} onChange={setLabel} autoFocus />
-      <TextField label="Description" value={description} onChange={setDescription} />
+      <TextAreaField
+        label="Optional system prompt"
+        value={systemPrompt}
+        onChange={setSystemPrompt}
+        placeholder="Role, style, constraints, or durable behavior for this zone agent"
+        rows={4}
+      />
+      <div>
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Runtime</p>
+        <div className="grid grid-cols-2 gap-1">
+          {AGENT_RUNTIMES.map(option => (
+            <button
+              key={option.id}
+              type="button"
+              onClick={() => {
+                setRuntime(option.id)
+                setModel(DEFAULT_MODEL_BY_RUNTIME[option.id])
+              }}
+              className={`rounded px-2 py-1.5 text-xs transition-colors ${
+                runtime === option.id ? 'bg-accent text-white' : 'bg-black/30 text-slate-400 hover:bg-white/10 hover:text-white'
+              }`}
+            >
+              {option.shortLabel}
+            </button>
+          ))}
+        </div>
+      </div>
+      <TextField label="Model" value={model} onChange={setModel} />
+      <div className="flex flex-wrap gap-1">
+        {runtimeDef.suggestedModels.map(option => (
+          <button
+            key={option}
+            type="button"
+            onClick={() => setModel(option)}
+            className={`rounded border px-2 py-1 text-[10px] transition-colors ${
+              model === option
+                ? 'border-accent bg-accent/15 text-white'
+                : 'border-white/10 bg-black/20 text-slate-500 hover:border-white/20 hover:text-slate-300'
+            }`}
+          >
+            {option}
+          </button>
+        ))}
+      </div>
       <ColorField label="Color" value={color} onChange={setColor} />
       <DialogActions
         submitLabel="Place zone"
         onCancel={onClose}
         onSubmit={() => onSubmit({
           label: label.trim() || 'New Zone',
-          description: description.trim(),
+          systemPrompt: systemPrompt.trim(),
+          runtime,
+          model: model.trim() || DEFAULT_MODEL_BY_RUNTIME[runtime],
           color,
         })}
       />
@@ -334,6 +380,33 @@ function TextField({
         onChange={event => onChange(event.target.value)}
         autoFocus={autoFocus}
         className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-accent"
+      />
+    </label>
+  )
+}
+
+function TextAreaField({
+  label,
+  value,
+  onChange,
+  placeholder,
+  rows = 3,
+}: {
+  label: string
+  value: string
+  onChange: (value: string) => void
+  placeholder?: string
+  rows?: number
+}) {
+  return (
+    <label className="block">
+      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-slate-500">{label}</span>
+      <textarea
+        value={value}
+        onChange={event => onChange(event.target.value)}
+        placeholder={placeholder}
+        rows={rows}
+        className="w-full resize-none rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-accent"
       />
     </label>
   )

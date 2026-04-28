@@ -1,4 +1,4 @@
-import { memo, useState } from 'react'
+import { memo, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { FileText, Trash2 } from 'lucide-react'
@@ -11,14 +11,12 @@ type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 function ComponentNode({ id, data }: ComponentNodeProps) {
   const { setNodes, deleteElements } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
-  const [hovered, setHovered] = useState(false)
 
   const color = data.color
   const tag = data.tag
   const label = data.label
   const description = data.description
   const specs = data.specs ?? ''
-  const category = data.category
   const iconName = data.iconName
   const Icon = getIcon(iconName)
   const hasSpecs = specs.trim().length > 0
@@ -36,21 +34,35 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
     background: '#1e1e1e',
     border: `2px solid ${color}`,
     zIndex: 10,
-    opacity: hovered ? 1 : 0,
-    transition: 'opacity 150ms ease',
   } as const
 
+  const handlePairs: Array<{ side: 'left' | 'right' | 'top' | 'bottom'; position: Position; style: CSSProperties }> = [
+    { side: 'left', position: Position.Left, style: { left: -5 } },
+    { side: 'right', position: Position.Right, style: { right: -5 } },
+    { side: 'top', position: Position.Top, style: { top: -5 } },
+    { side: 'bottom', position: Position.Bottom, style: { bottom: -5 } },
+  ]
+
   return (
-    <div
-      className="relative"
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}
-    >
-      <Handle
-        type="target"
-        position={Position.Left}
-        style={{ ...handleBaseStyle, left: -5 }}
-      />
+    <div className="relative architect-component-node">
+      {handlePairs.flatMap(({ side, position, style }) => [
+        <Handle
+          key={`target-${side}`}
+          id={`target-${side}`}
+          type="target"
+          position={position}
+          className="architect-component-handle"
+          style={{ ...handleBaseStyle, ...style }}
+        />,
+        <Handle
+          key={`source-${side}`}
+          id={`source-${side}`}
+          type="source"
+          position={position}
+          className="architect-component-handle"
+          style={{ ...handleBaseStyle, ...style }}
+        />,
+      ])}
 
       <div
         className="relative bg-[#1e1e1e] rounded-lg overflow-hidden min-w-[160px] max-w-[200px] border border-white/[0.06] shadow-xl select-none cursor-pointer hover:border-white/20 transition-colors"
@@ -94,12 +106,6 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
         </div>
       </div>
 
-      <Handle
-        type="source"
-        position={Position.Right}
-        style={{ ...handleBaseStyle, right: -5 }}
-      />
-
       {modalOpen && createPortal(
         <ComponentConfigModal
           label={label}
@@ -108,7 +114,6 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           iconName={iconName}
           description={description}
           specs={specs}
-          category={category}
           patch={patch}
           onClose={() => setModalOpen(false)}
         />,

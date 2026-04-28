@@ -350,8 +350,8 @@ function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData
     label: typeof raw.label === 'string' ? raw.label : 'Component',
     description: typeof raw.description === 'string' ? raw.description : '',
     specs: typeof raw.specs === 'string' ? raw.specs : '',
-    category: (raw.category as ComponentNodeData['category']) ?? 'services',
-    iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Settings2',
+    category: (raw.category as ComponentNodeData['category']) ?? 'custom',
+    iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Wrench',
     color: typeof raw.color === 'string' ? raw.color : '#60a5fa',
     tag: typeof raw.tag === 'string' ? raw.tag : 'NODE',
   }
@@ -464,6 +464,8 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     type: 'component-edge',
     source: String(edge.source ?? ''),
     target: String(edge.target ?? ''),
+    sourceHandle: typeof edge.sourceHandle === 'string' ? edge.sourceHandle : null,
+    targetHandle: typeof edge.targetHandle === 'string' ? edge.targetHandle : null,
     data: normalizeEdgeData(edge.data ?? edge),
   }))
 
