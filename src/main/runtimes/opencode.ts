@@ -3,8 +3,8 @@ import {
   captureNewOpencodeSession,
   snapshotOpencodeSessions,
 } from '../sessionCapture'
-import { foldSystemIntoUser } from './fold'
-import type { ComposedPrompt, ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
+import { foldComposeSystemAndUser } from './fold'
+import type { ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
 
 const id: AgentRuntime = 'opencode'
 
@@ -28,17 +28,12 @@ function buildResumeArgs(opts: ResumeArgs): string[] {
   return args
 }
 
-function composeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt {
-  if (!systemPrompt) return { firstUserPrompt: userPrompt || undefined }
-  return { firstUserPrompt: foldSystemIntoUser(systemPrompt, userPrompt) }
-}
-
 export const opencodeAdapter: RuntimeAdapter = {
   id,
   supportsSystemPromptFlag: false,
   buildSpawnArgs,
   buildResumeArgs,
-  composeSystemAndUser,
+  composeSystemAndUser: foldComposeSystemAndUser,
   // opencode's snapshot path does not need the cwd — it lists all sessions
   // globally via the CLI. Keep the signature uniform with the interface.
   snapshotSessions: () => snapshotOpencodeSessions(),

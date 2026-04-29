@@ -80,7 +80,6 @@ export interface StartDispatchV5Input {
     // unaffected — each zone keeps its own agentRuntime.
     conductorRuntime?: AgentRuntime
   }
-  dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] }
 }
 
 export interface ResumeDispatchV5Input {
@@ -241,19 +240,6 @@ function buildSchedulerZones(workspaceZones: WorkspaceZoneInput[], filteredZones
       retriesAllowed: Math.max(0, retries),
     }
   })
-}
-
-function wireScheduler(
-  scheduler: Scheduler,
-  architectSessionId: string,
-  projectDir: string,
-): void {
-  // Nothing needs wiring at construction time — deps are passed in at
-  // construction. This helper is a placeholder for future observability
-  // hooks (e.g. telemetry) the scheduler should emit to.
-  void scheduler
-  void architectSessionId
-  void projectDir
 }
 
 export async function startDispatchV5(input: StartDispatchV5Input): Promise<TerminalInfo[]> {
@@ -530,7 +516,6 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     },
   )
 
-  wireScheduler(scheduler, architectSessionId ?? '', projectDir)
   setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
   scheduler.start()
   // First conductor turn was delivered via argv at spawn (composeInitialTurn

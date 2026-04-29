@@ -31,7 +31,7 @@ Every participant has a stable id used as both activity-log filename prefix and 
 - `conductor` — the planner/coordinator agent. PTY id: `conductor-agent`.
 - `<safe>` — each zone, using `sanitize(zone.data.label)` (same identity convention as v4). PTY id: the zone's React Flow node id.
 
-There is one Conductor per dispatch. No harness participant id — synthetic events don't exist in v5; the harness influences the Conductor by pty-writing user turns, not by injecting messages into its inbox.
+There is one Conductor per dispatch. The harness has no participant id of its own — synthetic events don't exist in v5; the harness influences the Conductor by pty-writing user turns, never by appending events to a log on its behalf. `ParticipantRole` is `'conductor' | 'zone'`.
 
 ## Who lays down the workspace
 
@@ -87,12 +87,15 @@ type ActivityKind =
 
 interface ActivityEvent {
     ts: string // ISO8601 UTC
+    from: string // authorship marker — must equal the participantId that owns the file
     kind: ActivityKind
     taskId?: string
-    content: string // human-readable one-line summary
+    content: string // human-readable one-line summary; rejected past 8 KB (MAX_CONTENT_BYTES)
     structured?: Record<string, unknown> // decision payload (conductor), or extra context
 }
 ```
+
+The `from` field is mandatory. `parseActivityLineDetailed` rejects events whose `from` doesn't match the file's expected owner (`from-mismatch`) — this defends against a confused zone writing into another zone's log and against newline-injection forgery. Other rejection reasons: `empty-line`, `non-json`, `not-object`, `missing-ts`, `missing-or-unknown-kind`, `missing-content`, `oversized-content`, `missing-from`.
 
 ### How agents write lines
 
@@ -100,7 +103,7 @@ Every agent — zone or conductor — uses one POSIX shell command:
 
 ```bash
 cat >> '<abs-activity-path>' << 'ACT_EOF'
-{"ts":"2026-04-23T21:10:00Z","kind":"done","taskId":"t-abc","content":"Implemented GET /users endpoint at src/api/users.ts"}
+{"ts":"2026-04-23T21:10:00Z","from":"<participantId>","kind":"done","taskId":"t-abc","content":"Implemented GET /users endpoint at src/api/users.ts"}
 ACT_EOF
 ```
 
@@ -188,6 +191,20 @@ type ConductorDecision =
 
 `assignments[*].zoneId` is the zone's `participantId` (sanitized label); `taskId` is optional — the scheduler mints one if omitted. `targetZoneId` is also a participantId. One `assign` decision can dispatch work to multiple zones in parallel when their work is independent.
 
+### Plan mode
+
+When the user opens the DispatchModal in plan mode, the Conductor's first user turn is `composePlanModeInitialTurn(userPrompt, conductorRuntime)` instead of `composeInitialTurn`. The Conductor stays in conversation with the user (its PTY is unlocked) and is forbidden from emitting any structured decision until the user signals GO — by typing `GO` on its own line, or (Claude only) by approving via the native plan-approval UI / `ExitPlanMode` tool. The runtime gate exists because non-Claude CLIs would hallucinate `ExitPlanMode` calls if the prompt referenced it.
+
+### Per-task state machine
+
+```
+pending → dispatched → in-progress → done
+                    ↘             ↘ failed (retry → in-progress) | failed (exhausted)
+                    ↘ blocked → in-progress (after ANSWER)
+```
+
+`pending` is reserved for retry re-queueing. Steady-state assignments transition `dispatched → in-progress` on the first validated `task-received` / `progress` line. `blocked` clears back to `in-progress` when a conductor `answer` lands. Reassignment supersedes the prior task as `failed` (`lastError = 'superseded by conductor reassignment'`).
+
 ### Why `structured` instead of `<<<MARKER>>>` blocks
 
 Early plans specified marker-delimited blocks (`<<<ASSIGN>>>...<<<END>>>`) inside the activity line's `content`. Implementation moved to `structured.type` because:
@@ -206,14 +223,15 @@ Early plans specified marker-delimited blocks (`<<<ASSIGN>>>...<<<END>>>`) insid
 2. Maintain per-task state (`InFlightTask`) keyed by `taskId`.
 3. Route zone activity events:
     - `task-received` / `progress` / `note` → update `lastActivityTs`; no conductor turn
-    - `done` (taskId matches current) → mark done, remove from `currentTaskByParticipant`, pty-write `composeZoneDoneTurn` to conductor; if this empties all in-flight tasks, pty-write `composeAllDoneTurn`
-    - `failed` → if `attempts < zone.retriesAllowed`: increment attempts, re-pty-write the same task body with `(retry K/N)` prefix + previous-error hint, pty-write a conductor-retry turn. Else: mark failed, pty-write `composeZoneFailedTurn(... exhausted: true)`
-    - `ask` → set `lastTaskStatus = 'blocked'`, pty-write `composeZoneAskTurn` to conductor
+    - `done` (taskId matches current and assignment guard passes) → mark done, remove from `currentTaskByParticipant`, pty-write `composeZoneDoneTurn` to conductor. If this empties the in-flight set, the all-done signal (`composeAllDoneTurn`) is folded into the SAME conductor turn — two back-to-back `writeToParticipant` calls would coalesce paste before the 120 ms-delayed `\r` fires and submit both as one muddled turn.
+    - `failed` → if `attempts < zone.retriesAllowed`: keep the same `taskId` (so conductor correlation stays stable), increment attempts, re-pty-write the body with `(retry K/N)` prefix + previous-error hint, pty-write a conductor-retry turn. Else: mark failed, pty-write `composeZoneFailedTurn(... exhausted: true)`.
+    - `ask` → set `lastTaskStatus = 'blocked'`, pty-write `composeZoneAskTurn` to conductor. If `event.structured.blockedOn` names another known participant, record the edge and walk for a cycle — a detected cycle pty-writes `composeDeadlockTurn`.
+    - Orphan / cross-zone events (taskId not assigned to this zone) are dropped without mutating state. `lastActivityTs` is only refreshed for validated events so a confused zone can't hide silence behind fake activity.
 4. Execute conductor decisions via `executeDecision`:
-    - `assign` → for each assignment, `dispatchTaskInternal` (mint taskId if absent, write `tasks/<taskId>.json`, pty-write `TASK <id>: <body>` to zone)
-    - `answer` → look up the target zone's current taskId, pty-write `ANSWER <taskId>: <body>`
-    - `final` → broadcast `dispatch:complete { dispatchId, summary }` (once); set `finalEmitted = true`
-    - `noop` → audit-log only
+    - `assign` → for each assignment, validate (`unknown-zone`, `duplicate-task`, `empty-body` are pty-written back to the conductor as `composeAssignRejectedTurn`), then `dispatchTaskInternal` (mint taskId if absent, pty-write `TASK <id>: <body>` to zone). Reassigning a zone before its prior task hit a terminal state marks the prior task `failed` with `lastError = 'superseded by conductor reassignment'` so the all-done check isn't pinned forever.
+    - `answer` → resolve by participantId or zoneId, route to the zone's pending-`ask` task (not the harness's stale notion of current task), pty-write `ANSWER <taskId>: <body>` and clear any `blockedOn` edge.
+    - `final` → premature-final gate: if any task is still in flight, pty-write `composePrematureFinalTurn` listing the still-running zones and DO NOT fire complete. Otherwise broadcast `dispatch:complete { dispatchId, summary }` (once); set `finalEmitted = true`.
+    - `noop` → audit-log only.
 5. Persist `DispatchRecord.conductorDecisions[]` (append-only) via `appendDispatchConductorDecision`.
 6. Persist `DispatchRecord.pendingTasks[]` via `setDispatchPendingTasks` on every task transition — crash-safe resume depends on this.
 7. Run a 15 s status tick: recompute `ParticipantStatus` for every participant; set/clear `staleAt`; escalate to conductor after `staleEscalationMs`.
@@ -221,9 +239,9 @@ Early plans specified marker-delimited blocks (`<<<ASSIGN>>>...<<<END>>>`) insid
 
 ### What the scheduler does NOT do
 
-- **Spawn PTYs directly.** It receives `writeToPty` / `getPtyLastActivityMs` / broadcast functions as deps from `dispatch.ts`.
+- **Spawn PTYs directly.** It receives `submitTurn` / `getPtyLastActivityMs` / broadcast functions as deps from `dispatch.ts`.
 - **Write to agent stdin outside the user-turn channel.** No "control" messages. Everything the agent sees looks like a user prompt.
-- **Parse PTY bytes.** `session.tail` + xterm-headless are read only for debugging surfaces, never for coordination.
+- **Parse PTY bytes.** Raw PTY bytes are broadcast to the renderer's xterm and otherwise ignored by main — nothing on the coordination path reads them.
 
 ## Status machine
 
@@ -277,7 +295,7 @@ staleEscalations=0
 staleAt=2026-04-23T21:14:00Z
 ```
 
-Types: `role ∈ {conductor, zone, harness}`, `lastTaskStatus ∈ {none, pending, dispatched, in-progress, blocked, done, failed, resumed}`.
+Types: `role ∈ {conductor, zone}`, `lastTaskStatus ∈ {none, pending, dispatched, in-progress, blocked, done, failed}`.
 
 The entire state is reconstructable from the activity log + DispatchRecord, so wiping it on every entry is safe.
 
@@ -389,7 +407,7 @@ Resumes reload the agent's full conversation from the CLI-native session store (
 `orchestrator/dispatch.ts → resumeDispatchV5`:
 
 1. Load `DispatchRecord` from `ARCHITECT/dispatches/<architectSessionId>.json`. Reject if `protocolVersion < 5` with `legacy-protocol`. Reject if missing with `not-found`.
-2. `setupWorkspaceV5(..., dispatchId = record.dispatchId)` — wipes + rebuilds the `runtime/<dispatchId>/` subtree, rewrites prompts, initializes state.kv skeletons with `lastTaskStatus=resumed`, touches activity logs.
+2. `setupWorkspaceV5(..., dispatchId = record.dispatchId)` — wipes + rebuilds the `runtime/<dispatchId>/` subtree, rewrites prompts, initializes state.kv skeletons (fresh `lastTaskStatus=none`), touches activity logs.
 3. For each zone: `adapter.revalidateSession(cwd, entry.sessionId)`; stale → skip spawn (scheduler treats as `exited` from turn zero).
 4. Spawn each reachable zone with `adapter.buildResumeArgs(sessionId)`. **No initial prompt** — zones come back idle at their prompt. Capture is NOT armed (resume reuses an existing session id; there's no new file to poll for).
 5. `adapter.revalidateSession(projectDir, record.architectSessionId)`; if unreachable → abort with `not-found`.
@@ -399,16 +417,16 @@ Resumes reload the agent's full conversation from the CLI-native session store (
 
 Completed tasks stay completed. The Conductor waits for the next material event (a re-delivered task finishing, a new question, a stale escalation) before speaking. There is no "resume has happened, speak up" prompt — the Conductor is stateless between turns by design.
 
-## The one remaining screen-grid read
+## No screen-grid coordination
 
-None. v4 had `renderScreenText` matching prompt glyphs (`>` `❯` `›` `>>>` `│ >`) for `spawning → ready` detection. v5 uses `spawning → running` driven by first PTY output — no glyph matching, no screen parse. The `@xterm/headless` `Terminal` instance is still fed PTY bytes (so `session.tail` has a usable last-N-bytes buffer for debugging views) but nothing on the critical path reads from the grid.
+v5 transitions `spawning → running` on the first PTY-output byte — no prompt-glyph regex, no screen scrape. Raw bytes flow PTY → `broadcast('terminal:data', …)` → renderer xterm; main never parses them.
 
 ## What's intentionally NOT in v5
 
-- **No synthetic `harness.*` messages.** v4's `harness.delivery-warning` / `harness.heartbeat-missed` / `harness.timeout` / `harness.wake` / `harness.pty-exit` are all collapsed into: the scheduler either pty-writes a Conductor turn directly, or it doesn't act. If you care about a signal, it flows through a pty-write to the Conductor as a user turn — no side channel.
+- **No synthetic harness events.** The scheduler either pty-writes a Conductor turn directly or it doesn't act. Every signal the Conductor sees arrives as a user turn on its PTY — no side channel, no harness-authored activity-log line.
 - **No per-task cue detection.** Agents reporting `done` / `failed` / `ask` via activity-log lines is the only completion signal. No screen regex, no sentinel echo.
 - **No backpressure messages.** Single zone, one task at a time. If you want a zone to queue work, the Conductor delays its next `assign` for that zone.
-- **No `status.json` / `_index.json` / other harness-owned rolling snapshot.** The renderer subscribes to `activity:event` + `activity:state` IPC; the main process holds scheduler state in memory; `DispatchRecord.pendingTasks` is the only durable snapshot.
+- **No `status.json` / rolling snapshot file.** The renderer subscribes to `activity:event` + `activity:state` IPC; the main process holds scheduler state in memory; `DispatchRecord.pendingTasks` is the only durable in-flight snapshot.
 
 ## Versioning
 

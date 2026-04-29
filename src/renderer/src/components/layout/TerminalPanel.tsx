@@ -269,7 +269,6 @@ function PaneView({
   exitedIds,
   resumableIds,
   resumingIds,
-  capturePendingIds,
   closingIds,
   onActivate,
   onMoveTab,
@@ -279,14 +278,12 @@ function PaneView({
   onClose,
   onResume,
   onNewShell,
-  paneCount,
 }: {
   pane: PaneNode
   sessionsById: Map<string, TerminalInfo>
   exitedIds: Set<string>
   resumableIds: Map<string, string>
   resumingIds: Set<string>
-  capturePendingIds: Set<string>
   closingIds: Set<string>
   onActivate: (paneId: string, tabId: string) => void
   onMoveTab: (tabId: string, targetPaneId: string, idx?: number) => void
@@ -296,7 +293,6 @@ function PaneView({
   onClose: (tabId: string) => void
   onResume: (info: TerminalInfo) => void
   onNewShell: () => void
-  paneCount: number
 }) {
   const [dropHint, setDropHint] = useState<DropEdge | null>(null)
   const [tabDropIdx, setTabDropIdx] = useState<number | null>(null)
@@ -522,22 +518,19 @@ function DropHintOverlay({ edge }: { edge: DropEdge }) {
 function LayoutRenderer({
   node,
   paneProps,
-  paneCount,
   onResize,
 }: {
   node: LayoutNode
-  paneProps: Omit<React.ComponentProps<typeof PaneView>, 'pane' | 'paneCount'>
-  paneCount: number
+  paneProps: Omit<React.ComponentProps<typeof PaneView>, 'pane'>
   onResize: (splitId: string, sizes: number[]) => void
 }) {
   if (node.kind === 'pane') {
-    return <PaneView pane={node} paneCount={paneCount} {...paneProps} />
+    return <PaneView pane={node} {...paneProps} />
   }
   return (
     <PanelGroup
       direction={node.direction === 'row' ? 'horizontal' : 'vertical'}
       onLayout={(sizes) => onResize(node.id, sizes)}
-      autoSaveId={undefined}
     >
       {node.children.map((child, i) => (
         <Fragment key={child.id}>
@@ -554,7 +547,6 @@ function LayoutRenderer({
             <LayoutRenderer
               node={child}
               paneProps={paneProps}
-              paneCount={paneCount}
               onResize={onResize}
             />
           </Panel>
@@ -569,7 +561,6 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
   const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
   const [resumingIds, setResumingIds] = useState<Set<string>>(new Set())
-  const [capturePendingIds, setCapturePendingIds] = useState<Set<string>>(new Set())
   const [closingIds, setClosingIds] = useState<Set<string>>(new Set())
 
   // Track exits.
@@ -596,42 +587,6 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     })
     return unsub
   }, [])
-
-  // Track fresh-spawn capture progress so the close button can disable itself
-  // until the CLI's session id has been persisted.
-  useEffect(() => {
-    const unsub = window.electron.terminal.onCaptureState(({ id, state }) => {
-      setCapturePendingIds(prev => {
-        const next = new Set(prev)
-        if (state === 'pending') next.add(id)
-        else next.delete(id)
-        return next
-      })
-    })
-    return unsub
-  }, [])
-
-  // Backfill capture state for tabs we joined mid-flight (e.g. project reopen
-  // while a prior spawn is still polling).
-  useEffect(() => {
-    let cancelled = false
-    Promise.all(
-      sessions.map(s =>
-        window.electron.terminal.getCaptureState(s.id).then(state => ({ id: s.id, state })),
-      ),
-    ).then(results => {
-      if (cancelled) return
-      setCapturePendingIds(prev => {
-        const next = new Set(prev)
-        for (const { id, state } of results) {
-          if (state === 'pending') next.add(id)
-          else next.delete(id)
-        }
-        return next
-      })
-    })
-    return () => { cancelled = true }
-  }, [sessions.map(s => s.id).join('|')])
 
   // Spawn a default shell once per project. Dedup on the main side keeps this
   // idempotent across re-renders; user-initiated "+" presses use force:true.
@@ -833,12 +788,6 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       next.delete(tabId)
       return next
     })
-    setCapturePendingIds(prev => {
-      if (!prev.has(tabId)) return prev
-      const next = new Set(prev)
-      next.delete(tabId)
-      return next
-    })
 
     if (shellSessions.some(s => s.id === tabId)) {
       setShellSessions(prev => prev.filter(s => s.id !== tabId))
@@ -851,17 +800,11 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     return <div className="h-full bg-[#0d0d0d]" />
   }
 
-  const paneCount = (function count(n: LayoutNode): number {
-    if (n.kind === 'pane') return 1
-    return n.children.reduce((s, c) => s + count(c), 0)
-  })(layout.root)
-
   const paneProps = {
     sessionsById,
     exitedIds,
     resumableIds,
     resumingIds,
-    capturePendingIds,
     closingIds,
     onActivate: (paneId: string, tabId: string) => onLayoutChange(setActiveTab(layout, paneId, tabId)),
     onMoveTab: (tabId: string, targetPaneId: string, idx?: number) =>
@@ -881,7 +824,6 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       <LayoutRenderer
         node={layout.root}
         paneProps={paneProps}
-        paneCount={paneCount}
         onResize={(splitId, sizes) => onLayoutChange(setSplitSizes(layout, splitId, sizes))}
       />
     </div>

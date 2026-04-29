@@ -94,13 +94,12 @@ When you dispatch a graph, Architect translates the canvas into a filesystem-bas
 If the canvas has two or more selected zones, Architect uses the **v5 Conductor protocol** — live PTYs coordinated by append-only activity logs and scheduler-delivered user turns.
 
 1. Architect writes a v5 workspace: `ARCHITECT/manifest.json`, `ARCHITECT/prompts/conductor.md`, one prompt per zone, and `ARCHITECT/runtime/<dispatchId>/` activity/state/task directories.
-2. Legacy v4 artifacts (`ARCHITECT/mailbox/` and `ARCHITECT/scripts/`) are removed on entry and are not recreated.
-3. It spawns each zone PTY serially so runtime session capture cannot collide. Each zone receives its role prompt and a tiny bootstrap turn that makes the CLI materialize a resumable session.
-4. It spawns one `Conductor` PTY. The Conductor receives the user task and emits one structured decision line, usually `{type:"assign"}`.
-5. The Scheduler watches each participant's JSONL activity log with `fs.watch`. When the Conductor assigns work, the Scheduler writes `TASK <taskId>: <body>` directly into the target zone PTY. Zones report back by appending `done`, `failed`, or `ask` activity lines.
-6. The Conductor decides follow-up work from the user task, zone/component context, component-edge reference context, and reported results. Canvas edges do not order zones or schedule work.
+2. It spawns each zone PTY serially so runtime session capture cannot collide. Each zone receives its role prompt and a tiny bootstrap turn that makes the CLI materialize a resumable session.
+3. It spawns one `Conductor` PTY. The Conductor receives the user task and emits one structured decision line, usually `{type:"assign"}`.
+4. The Scheduler watches each participant's JSONL activity log with `fs.watch`. When the Conductor assigns work, the Scheduler writes `TASK <taskId>: <body>` directly into the target zone PTY. Zones report back by appending `done`, `failed`, or `ask` activity lines.
+5. The Conductor decides follow-up work from the user task, zone/component context, component-edge reference context, and reported results. Canvas edges do not order zones or schedule work.
 
-This gives Architect a coordination model that works across Claude, Codex, Gemini, and OpenCode without mailbox polling loops or terminal-screen sentinels. See [docs/orchestration.md](docs/orchestration.md), [docs/agent-behavior.md](docs/agent-behavior.md), and `CLAUDE.md` for the full protocol spec.
+This gives Architect a coordination model that works across Claude, Codex, Gemini, and OpenCode. See [docs/orchestration.md](docs/orchestration.md), [docs/agent-behavior.md](docs/agent-behavior.md), and `CLAUDE.md` for the full protocol spec.
 
 ### Single-Zone Dispatch
 
@@ -148,9 +147,6 @@ Each dispatch uses a project-local coordination directory:
 - `ARCHITECT/sessions/<zoneKey>/<sessionId>.json`: captured CLI session records, feeds the ZoneLaunchModal history picker
 - `ARCHITECT/dispatches/<architectSessionId>.json`: prior multi-zone dispatch records — pins each zone's CLI session id for resume
 
-**Legacy cleanup**:
-- `ARCHITECT/mailbox/` and `ARCHITECT/scripts/`: v4 leftovers, removed by v5 dispatch setup
-
 Project code is never meant to be written into `ARCHITECT/`. Agents are told to create actual source files in the project root working directory.
 
 ## Supported Runtime Features
@@ -181,25 +177,14 @@ See [docs/agent-behavior.md](docs/agent-behavior.md) for a precise matrix.
 
 ## Assistant Panel
 
-Architect also has an interactive "Architecture Assistant" session separate from dispatch.
+Architect has a side-panel embedded coding assistant separate from dispatch. It runs in one of two modes, each with its own PTY and session history:
 
-Its job is to:
+- **Architecture mode**: reasons about the canvas and edits `architect-canvas.json` directly when asked to change the diagram. Preserves ids, settings, and layout where possible.
+- **General mode**: a plain coding assistant with the canvas attached as read-only context. Will not modify `architect-canvas.json`.
 
-- reason about the current canvas
-- discuss design tradeoffs
-- edit `architect-canvas.json` when asked to change the diagram
-- preserve ids, settings, and layout where possible
+The assistant context describes the current zones, components, overlay membership, component edges (with optional labels and directions), and — for architecture mode — the expected JSON schema for canvas edits.
 
-The assistant gets a generated context file describing:
-
-- the current zones
-- the current components
-- overlay membership
-- current component edges with optional labels and directions
-- component palette defaults
-- the expected JSON schema for canvas edits
-
-If a prior assistant session exists for the selected runtime and Architect can still resolve it on disk, Architect resumes it. Otherwise it starts fresh.
+The launcher modal lets you pick CLI + model + new-or-resume per mode. Resuming replays the session under the runtime + model it was originally captured with.
 
 ## IPC Surface
 
@@ -207,11 +192,13 @@ The renderer talks to the main process only through `window.electron` in `src/pr
 
 Main groups:
 
-- filesystem: `readDir`, `readFile`, `openDirectory`, `getHomeDir`
-- canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`
+- filesystem: `readDir`, `openDirectory`
+- canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`, `unwatchCanvas`, `onCanvasChanged`
+- terminal-layout persistence: `loadTerminalLayout`, `saveTerminalLayout`
+- auth: `auth.getSession`, `auth.login`, `auth.logout`, `auth.onSessionChanged`
 - execution: `startDispatch`, `zone.launch`, `zone.listSessions`, `zone.resetSession`, `dispatches.resume`
-- assistant: `assistant.start`, `assistant.stop`
-- terminal control: `terminal.spawnShell`, `terminal.input`, `terminal.resize`, `terminal.killAll`, `terminal.popout`
+- assistant: `assistant.start`, `assistant.stop`, `assistant.stopMode`, `assistant.listSessions`, `assistant.deleteSession`, `assistant.updateSessionSummary`
+- terminal control: `terminal.spawnShell`, `terminal.input`, `terminal.setUserControl`, `terminal.resize`, `terminal.killAll`, `terminal.close`, `terminal.popout`, `terminal.dock`
 - history/session reads: `dispatches.list`, `dispatches.delete`, `dispatches.updateSummary`
 
 ## Development

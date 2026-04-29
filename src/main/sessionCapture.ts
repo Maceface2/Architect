@@ -20,9 +20,6 @@ export interface ZoneSessionRecord {
   dispatchId?: string
 }
 
-// Back-compat alias — older callsites still import this name.
-export type ZoneSession = ZoneSessionRecord
-
 const CLAUDE_PROJECTS_ROOT = join(os.homedir(), '.claude', 'projects')
 const CLAUDE_CONFIG_PATH = join(os.homedir(), '.claude.json')
 const SESSIONS_SUBDIR = 'sessions'
@@ -127,47 +124,51 @@ interface CodexSessionMeta {
   isPrimary: boolean
 }
 
-function listCodexSessionIdsForCwd(cwd: string, primaryOnly = false): Set<string> {
-  const ids = new Set<string>()
+// Walks ~/.codex/sessions/YYYY/MM/DD/ newest-first, invoking fn for each day
+// directory. Return true from fn to stop early. maxDays caps scan depth — the
+// list-on-poll path uses 5 (covers today + a safety margin), the lookup path
+// scans unbounded so a stale id from any date can still revalidate.
+function forEachCodexDayDir(maxDays: number | undefined, fn: (dir: string) => boolean | void): void {
   let years: string[]
   try {
     years = fs.readdirSync(CODEX_SESSIONS_ROOT).filter(n => /^\d{4}$/.test(n)).sort().reverse()
-  } catch {
-    return ids
-  }
-  // Walk newest-first. We only need to scan deep enough to cover anything that
-  // could plausibly have been created during this dispatch (today + yesterday
-  // is always safe, and we cap the day count for safety).
-  let dayBudget = 5
+  } catch { return }
+  let budget = maxDays ?? Infinity
   for (const y of years) {
-    if (dayBudget <= 0) break
+    if (budget <= 0) return
     let months: string[]
     try {
       months = fs.readdirSync(join(CODEX_SESSIONS_ROOT, y)).filter(n => /^\d{2}$/.test(n)).sort().reverse()
     } catch { continue }
     for (const m of months) {
-      if (dayBudget <= 0) break
+      if (budget <= 0) return
       let days: string[]
       try {
         days = fs.readdirSync(join(CODEX_SESSIONS_ROOT, y, m)).filter(n => /^\d{2}$/.test(n)).sort().reverse()
       } catch { continue }
       for (const d of days) {
-        if (dayBudget <= 0) break
-        dayBudget--
-        const dir = join(CODEX_SESSIONS_ROOT, y, m, d)
-        let files: string[]
-        try {
-          files = fs.readdirSync(dir).filter(n => n.startsWith('rollout-') && n.endsWith('.jsonl'))
-        } catch { continue }
-        for (const f of files) {
-          const meta = readCodexSessionMeta(join(dir, f))
-          if (!meta || meta.cwd !== cwd) continue
-          if (primaryOnly && !meta.isPrimary) continue
-          ids.add(meta.id)
-        }
+        if (budget <= 0) return
+        budget--
+        if (fn(join(CODEX_SESSIONS_ROOT, y, m, d)) === true) return
       }
     }
   }
+}
+
+function listCodexSessionIdsForCwd(cwd: string, primaryOnly = false): Set<string> {
+  const ids = new Set<string>()
+  forEachCodexDayDir(5, dir => {
+    let files: string[]
+    try {
+      files = fs.readdirSync(dir).filter(n => n.startsWith('rollout-') && n.endsWith('.jsonl'))
+    } catch { return }
+    for (const f of files) {
+      const meta = readCodexSessionMeta(join(dir, f))
+      if (!meta || meta.cwd !== cwd) continue
+      if (primaryOnly && !meta.isPrimary) continue
+      ids.add(meta.id)
+    }
+  })
   return ids
 }
 
@@ -226,41 +227,21 @@ export async function captureNewCodexSession(
 }
 
 export function isCodexSessionIdForCwd(cwd: string, sessionId: string): boolean {
-  let years: string[]
-  try {
-    years = fs.readdirSync(CODEX_SESSIONS_ROOT).filter(n => /^\d{4}$/.test(n)).sort().reverse()
-  } catch {
-    return false
-  }
-
-  for (const y of years) {
-    let months: string[]
+  let found = false
+  forEachCodexDayDir(undefined, dir => {
+    let files: string[]
     try {
-      months = fs.readdirSync(join(CODEX_SESSIONS_ROOT, y)).filter(n => /^\d{2}$/.test(n)).sort().reverse()
-    } catch { continue }
-
-    for (const m of months) {
-      let days: string[]
-      try {
-        days = fs.readdirSync(join(CODEX_SESSIONS_ROOT, y, m)).filter(n => /^\d{2}$/.test(n)).sort().reverse()
-      } catch { continue }
-
-      for (const d of days) {
-        const dir = join(CODEX_SESSIONS_ROOT, y, m, d)
-        let files: string[]
-        try {
-          files = fs.readdirSync(dir).filter(n => n.endsWith(`${sessionId}.jsonl`))
-        } catch { continue }
-
-        for (const f of files) {
-          const meta = readCodexSessionMeta(join(dir, f))
-          if (meta?.id === sessionId && meta.cwd === cwd && meta.isPrimary) return true
-        }
+      files = fs.readdirSync(dir).filter(n => n.endsWith(`${sessionId}.jsonl`))
+    } catch { return }
+    for (const f of files) {
+      const meta = readCodexSessionMeta(join(dir, f))
+      if (meta?.id === sessionId && meta.cwd === cwd && meta.isPrimary) {
+        found = true
+        return true
       }
     }
-  }
-
-  return false
+  })
+  return found
 }
 
 // --- Gemini ---

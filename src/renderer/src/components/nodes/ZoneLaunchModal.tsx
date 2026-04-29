@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Check, History, Pencil, Play, Rocket, Trash2, X } from 'lucide-react'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { useProjectDir } from '../../context/ProjectDirContext'
@@ -61,11 +61,7 @@ export default function ZoneLaunchModal({
     promptInputRef.current?.focus()
   }, [])
 
-  const latestBySession = useMemo(() => {
-    // sessions arrive sorted newest-first from main — keep that order.
-    return sessions
-  }, [sessions])
-
+  // sessions arrive sorted newest-first from main — keep that order.
   const trimmedPrompt = prompt.trim()
   const canLaunch = trimmedPrompt.length > 0 && !launching
 
@@ -205,13 +201,13 @@ export default function ZoneLaunchModal({
 
             {loading ? (
               <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">Loading…</p>
-            ) : latestBySession.length === 0 ? (
+            ) : sessions.length === 0 ? (
               <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">
                 No previous sessions. Your first launch will appear here.
               </p>
             ) : (
               <ul className="space-y-1 max-h-80 overflow-y-auto pr-1">
-                {latestBySession.map(record => {
+                {sessions.map(record => {
                   const when = new Date(record.capturedAt).toLocaleString()
                   const isEditing = editing?.sessionId === record.sessionId
                   return (

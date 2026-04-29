@@ -34,16 +34,26 @@ src/renderer/src/
 │   ├── ProjectDirContext.tsx           # Active project directory
 │   └── ProjectSettingsContext.tsx      # Default runtime + assistant mode
 └── components/
+    ├── auth/
+    │   ├── LoginScreen.tsx             # Sign-in screen
+    │   └── UserMenu.tsx                # Bottom-right user menu / sign-out
     ├── dispatch/
     │   └── DispatchModal.tsx           # New dispatch / resume previous dispatch
     ├── layout/
-    │   ├── TopNav.tsx                  # Header, tabs, dispatch button, assistant controls
+    │   ├── TopNav.tsx                  # Header, tabs, dispatch + assistant controls
     │   ├── FilesPanel.tsx              # Project file browser
     │   ├── TerminalPanel.tsx           # Multi-session terminal workspace
-    │   ├── PreviewPanel.tsx            # Per-zone output tail + localhost iframe preview
+    │   ├── PopoutTerminalApp.tsx       # Pop-out terminal window root
+    │   ├── AssistantPanel.tsx          # Side-panel assistant (architecture + general)
+    │   ├── AssistantLaunchModal.tsx    # Per-mode CLI / model / session picker
+    │   ├── ResizablePanel.tsx          # Side / bottom resizable container
     │   └── terminalLayout*.ts          # Terminal docking/splitting state
+    ├── edges/
+    │   └── ComponentEdge.tsx           # Bezier component-to-component edge + editor
     ├── palette/
     │   └── CompactCanvasPalette.tsx    # Floating Edges / Zones / Components creation tools
+    ├── settings/
+    │   └── SettingsPanel.tsx           # Project-settings tab (dispatch defaults, harness timeouts)
     └── nodes/
         ├── ZoneNode.tsx                # Resizable zone overlay
         ├── ComponentNode.tsx           # Component card
@@ -61,11 +71,12 @@ src/renderer/src/
 
 Carries the agent-facing configuration for a zone:
 
+- `participantId` (immutable, minted from the initial label, used by the orchestrator for activity-log filenames and decision JSON)
 - label, description, color, status
 - `systemPrompt`
-- runtime selection via `agentRuntimeMode` + `agentRuntime`
+- runtime selection in `agentRuntime` (single source of truth — the legacy `agentRuntimeMode: 'inherit' | 'override'` field is no longer read and is stripped on load)
 - per-runtime model overrides in `providerModels`
-- `skills`, `tools`, `behavior`, `permissions`, `envVars`
+- `skills`, `tools`, `behavior`, `permissions`, `envVars`, `openSections`
 
 `ZoneNodeType` is `Node<ZoneNodeData, 'zone'>`.
 
@@ -97,13 +108,15 @@ These mirror the preload bridge and let the UI render dispatch history, per-zone
 `App.tsx` owns the main renderer orchestration:
 
 - mounts the project directory gate
-- loads/saves `architect-canvas.json`
-- normalizes canvas data
-- tracks tabs for Canvas / Files / Terminal / Preview
-- builds assistant context
+- loads/saves `architect-canvas.json` (with auto-save on non-substantive node changes and a debounced terminal-layout save)
+- normalizes canvas data via `migrateCanvasData`
+- tracks tabs for Canvas / Files / Terminal / Settings
+- maintains a 50-step canvas undo/redo history (Cmd/Ctrl+Z, Cmd/Ctrl+Shift+Z or Cmd/Ctrl+Y)
+- builds the per-mode assistant context (architecture vs. general)
 - opens `DispatchModal`
 - calls `window.electron.startDispatch(...)` for new dispatches
 - calls `window.electron.dispatches.resume(...)` for saved multi-zone dispatches
+- watches `architect-canvas.json` for external edits (assistant writes) and surfaces a `CanvasConflictModal` when the user has unsaved local edits
 
 The canvas stays mounted while the user switches tabs so React Flow state, selection, and node geometry do not reset.
 
@@ -167,44 +180,57 @@ It supports:
 
 ### `TerminalPanel`
 
-`TerminalPanel.tsx` is the live PTY workspace, not a placeholder.
+`TerminalPanel.tsx` is the live PTY workspace.
 
 It provides:
 
-- xterm-backed tabs for spawned sessions
-- docked split panes with persistent layout
-- a project shell tab via `window.electron.terminal.spawnShell(...)`
-- pop-out terminals
+- xterm-backed tabs for spawned sessions, with one xterm instance per terminal id persisted across pane moves and tab switches
+- docked split panes (`react-resizable-panels`) with drag-to-split + drag-to-reorder tabs; layout persists per project via `loadTerminalLayout` / `saveTerminalLayout`
+- a default project shell spawned once per project via `window.electron.terminal.spawnShell(...)` and a `+` button for additional shells
+- pop-out terminals (`terminal.popout` / `terminal.dock`) with auto re-dock on popout-window-close
 - saved-session resume buttons for Claude, Codex, Gemini, and OpenCode
 
-Per-zone resume options are populated from `window.electron.zone.listSessions(...)`.
+For coordinated PTYs (zones in a dispatch + the conductor), `TerminalPanel` auto-drives the user-control lock:
 
-### `PreviewPanel`
+- **Acquire** on any non-Enter, non-Arrow keystroke into the terminal (calls `terminal.setUserControl(id, true)`).
+- **Release** on Enter — *unless* a slash-command picker is active. A `pendingPickerEnterRef` is armed by any `/` keypress or arrow-key event; the next Enter is absorbed instead of releasing the lock.
 
-`PreviewPanel.tsx` reads `ARCHITECT/outputs/<zone>.md` for each zone and shows:
+Detection runs on `term.onKey` (DOM keydown), not `term.onData`, so protocol chatter (focus reports, mouse motion, cursor-position replies) doesn't trip detection.
 
-- the latest tail of zone status/output notes
-- runtime badges per zone
-- a localhost iframe preview when the output contains a preview URL
+Plan-mode dispatches show a "PLAN MODE — waiting for GO" pill in the conductor tab until the user types `GO` on its own line; detection is a second `term.onData` listener with a small line buffer.
 
-This panel is intentionally lightweight: it watches output artifacts, not the full scheduler state. Live per-zone status badges come from the `activity:state` IPC broadcasts emitted by the scheduler's tick loop.
+Per-zone resume options are populated from `window.electron.zone.listSessions(...)` and from `zone.onSessionCaptured` events fired post-spawn.
+
+### `AssistantPanel`
+
+`AssistantPanel.tsx` is the side-panel embedded coding assistant, mounted into a `ResizablePanel` (right or bottom orientation, persisted in `localStorage`).
+
+Two modes share the panel chrome but each owns its own xterm + PTY id:
+
+- `architecture` — edits `architect-canvas.json` via `ARCHITECT_CANVAS_UPDATE` blocks parsed out of the ANSI-stripped data stream.
+- `general` — plain coding assistant with the canvas attached as read-only context; canvas-update parsing is disabled.
+
+Both terminals stay mounted across close / mode-switch / orientation-change, so PTY state and xterm scrollback survive. Resize handling follows the VS Code split (rows broadcast immediately, cols debounced ~100 ms; resizes while hidden are parked and flushed on visibility return).
+
+`AssistantLaunchModal` lets the user pick CLI + model + new-or-resume per mode. Resume replays the session under the runtime + model it was originally captured with — the launcher's pickers only affect "Start new".
 
 ## Preload Contract Used By The Renderer
 
 The renderer talks to Electron main only through `window.electron`.
 
-The frontend depends heavily on these groups:
+The frontend depends on these groups:
 
-- filesystem: `readDir`, `readFile`, `openDirectory`, `getHomeDir`
-- canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`, `unwatchCanvas`
+- filesystem: `readDir`, `openDirectory`
+- canvas persistence: `saveCanvas`, `loadCanvas`, `watchCanvas`, `unwatchCanvas`, `onCanvasChanged`
+- terminal layout: `loadTerminalLayout`, `saveTerminalLayout`
+- auth: `auth.getSession`, `auth.login`, `auth.logout`, `auth.onSessionChanged`
 - dispatches: `startDispatch`, `dispatches.list`, `dispatches.resume`, `dispatches.delete`, `dispatches.updateSummary`
 - zones: `zone.launch`, `zone.listSessions`, `zone.deleteSession`, `zone.updateSessionSummary`, `zone.resetSession`, `zone.onSessionCaptured`
-- terminals: `terminal.spawnShell`, `terminal.input`, `terminal.resize`, `terminal.close`, `terminal.popout`, `terminal.dock`
-- streaming events: `terminal.onData`, `terminal.onExit`, `terminal.onStatus`, `terminal.onCaptureState`, `activity.onEvent`, `activity.onState`, `activity.onDispatchComplete`
+- assistant: `assistant.start`, `assistant.stop`, `assistant.stopMode`, `assistant.listSessions`, `assistant.deleteSession`, `assistant.updateSessionSummary`
+- terminal control: `terminal.spawnShell`, `terminal.input`, `terminal.setUserControl`, `terminal.resize`, `terminal.killAll`, `terminal.close`, `terminal.popout`, `terminal.dock`
+- terminal streaming: `terminal.onData`, `terminal.onExit`, `terminal.onSpawned`, `terminal.onStatus`, `terminal.onPopoutClosed`
 
-`activity.onEvent` fires once per appended activity-log line (zone progress, Conductor decisions, failures). `activity.onState` fires on scheduler-emitted `ParticipantStatus` transitions. `activity.onDispatchComplete` fires once when the Conductor emits a `{type:'final', summary}` decision.
-
-Older names `runGraph`, `zone.run`, `zone.resume`, `zone.getSession`, top-level `listDispatches`, and `mailbox.onActivity` are not part of the current API contract.
+`terminal.setUserControl(id, hasControl)` is the renderer's hook into the per-PTY scheduler-write queue described under `TerminalPanel` above.
 
 ## Runtime-Related UI Caveats
 
@@ -226,4 +252,5 @@ If you need to understand the frontend quickly, read:
 4. `src/renderer/src/components/dispatch/DispatchModal.tsx`
 5. `src/renderer/src/components/nodes/ZoneNode.tsx`
 6. `src/renderer/src/components/layout/TerminalPanel.tsx`
-7. `src/preload/index.ts`
+7. `src/renderer/src/components/layout/AssistantPanel.tsx`
+8. `src/preload/index.ts`

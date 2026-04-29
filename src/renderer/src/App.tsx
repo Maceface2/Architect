@@ -829,10 +829,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         return
       }
 
-      const isRedispatch = dispatchedGraph !== null
-      const dispatchContext = isRedispatch
-        ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
-        : undefined
       // Persist the picked Orchestrator CLI so the next DispatchModal
       // pre-selects it. Keep this write alongside the IPC dispatch — they
       // describe the same user action.
@@ -852,7 +848,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           onlyZoneIds: req.onlyZoneIds,
           conductorRuntime: req.conductorRuntime,
         },
-        dispatchContext,
       )
       setTerminalSessions(sessions)
       setActiveTab('Terminal')
@@ -1316,15 +1311,9 @@ Only discuss and advise without editing the file when the user is asking for cri
     const sessionRuntime = session?.runtime
     setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
     // Persist the per-mode CLI choice + picked model so the launcher pre-fills
-    // them next time.
-    //
-    // NOTE: we store the runtime verbatim. Previously we deleted the entry
-    // when it matched the old `defaultRuntime`, but the assistant is now
-    // Previously we deleted the per-mode entry to avoid redundancy, but that
-    // coupled the assistant to Settings-page changes: user picks claude for
-    // the assistant while Dispatch=claude → no override → later Dispatch
-    // flips to codex → assistant silently retargets to codex. Once the user
-    // explicitly picks an assistant CLI via the modal, it's sticky.
+    // them next time. Store the runtime verbatim — once the user explicitly
+    // picks an assistant CLI via the modal, it's sticky and doesn't follow
+    // Settings-page Dispatch CLI changes.
     //
     // For an explicit resume, stamp assistantLastSessionByMode now — resumes
     // don't trigger a capture event so the zone:session-captured listener

@@ -4,8 +4,8 @@ import {
   isGeminiSessionIdForCwd,
   snapshotGeminiSessions,
 } from '../sessionCapture'
-import { foldSystemIntoUser } from './fold'
-import type { ComposedPrompt, ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
+import { foldComposeSystemAndUser } from './fold'
+import type { ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
 
 const id: AgentRuntime = 'gemini'
 
@@ -30,17 +30,12 @@ function buildResumeArgs(opts: ResumeArgs): string[] {
   return args
 }
 
-function composeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt {
-  if (!systemPrompt) return { firstUserPrompt: userPrompt || undefined }
-  return { firstUserPrompt: foldSystemIntoUser(systemPrompt, userPrompt) }
-}
-
 export const geminiAdapter: RuntimeAdapter = {
   id,
   supportsSystemPromptFlag: false,
   buildSpawnArgs,
   buildResumeArgs,
-  composeSystemAndUser,
+  composeSystemAndUser: foldComposeSystemAndUser,
   snapshotSessions: (cwd) => snapshotGeminiSessions(cwd),
   captureNewSession: (cwd, before, timeoutMs) =>
     captureNewGeminiSession(cwd, before, timeoutMs),

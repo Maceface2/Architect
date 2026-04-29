@@ -3,12 +3,10 @@ import { dirname, join } from 'path'
 
 // v5 coordination transport: each participant owns a single append-only JSONL
 // file under ARCHITECT/runtime/<dispatchId>/activity/<participant>.jsonl.
-// Agents emit one line per meaningful step via a single-shot POSIX command
-// (`printf '%s\n' '<json>' >> <path>`), which every runtime's shell tool
-// supports uniformly. The harness tails the file via narrow per-file
-// fs.watch and broadcasts each parsed line to the renderer + scheduler.
-//
-// No polling loop runs inside the agent. No bash scripts are shipped.
+// Agents emit one line per meaningful step via a `cat << EOF` heredoc append,
+// which every runtime's shell tool supports uniformly. The harness tails the
+// file via narrow per-file fs.watch and broadcasts each parsed line to the
+// renderer + scheduler. No polling loop runs inside the agent.
 
 export type ActivityKind =
   | 'task-received'   // agent confirms receipt of a task prompt
