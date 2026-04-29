@@ -41,8 +41,8 @@ export default function LoginScreen() {
           <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">Architect</h1>
-          <p className="text-sm text-slate-500 mt-1">Sign in to continue</p>
+          <h1 className="text-2xl font-semibold text-fg tracking-tight">Architect</h1>
+          <p className="text-sm text-fg-subtle mt-1">Sign in to continue</p>
         </div>
       </div>
 
@@ -55,7 +55,7 @@ export default function LoginScreen() {
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           disabled={submitting}
-          className="w-full bg-node border border-node-border rounded px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+          className="w-full bg-node border border-node-border rounded px-3 py-2 text-sm text-fg placeholder-fg-subtle focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
         />
         <input
           type="password"
@@ -65,7 +65,7 @@ export default function LoginScreen() {
           value={password}
           onChange={(e) => setPassword(e.target.value)}
           disabled={submitting}
-          className="w-full bg-node border border-node-border rounded px-3 py-2 text-sm text-white placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+          className="w-full bg-node border border-node-border rounded px-3 py-2 text-sm text-fg placeholder-fg-subtle focus:outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
         />
 
         {error && (
@@ -75,20 +75,20 @@ export default function LoginScreen() {
         <button
           type="submit"
           disabled={submitting || !email || !password}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium rounded-lg transition-colors"
+          className="flex items-center justify-center gap-2 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-sm font-medium rounded-lg transition-colors"
         >
           {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
           {submitting ? 'Signing in…' : 'Sign in'}
         </button>
       </form>
 
-      <p className="text-xs text-slate-700">
+      <p className="text-xs text-fg-subtle">
         Don&apos;t have an account?{' '}
         <a
           href={REQUEST_ACCESS_URL}
           target="_blank"
           rel="noreferrer"
-          className="text-slate-500 hover:text-slate-300 underline underline-offset-2"
+          className="text-fg-subtle hover:text-fg-muted underline underline-offset-2"
         >
           Request access
         </a>

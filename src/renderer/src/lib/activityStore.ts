@@ -1,0 +1,272 @@
+// Singleton store for `window.electron.activity.*` events.
+//
+// DispatchView/DispatchSwimlane only mount when the user opens the Dispatch
+// tab. If we let those components own the IPC subscription, every event that
+// fired before the tab opened (including the first task-received batch from a
+// fresh dispatch) is dropped. This module subscribes once at first import and
+// retains everything since, so lane data is available the moment the view
+// renders.
+//
+// Snapshot updates are referentially distinct so React's `useSyncExternalStore`
+// triggers a re-render. State for each dispatch is grouped by participantId →
+// task blocks for the swimlane, plus a flat per-dispatch event log for the
+// raw view.
+
+type ActivityKind = 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+
+export type ParticipantStatus = 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
+
+export type BlockStatus = 'running' | 'done' | 'failed' | 'blocked'
+
+export interface ActivityEventEntry {
+  ts: string
+  kind: ActivityKind
+  taskId?: string
+  content: string
+  structured?: Record<string, unknown>
+}
+
+export interface ActivityEnvelope {
+  dispatchId: string
+  participantId: string
+  event: ActivityEventEntry
+}
+
+export interface TaskBlock {
+  taskId: string
+  participantId: string
+  startedAt: number
+  endedAt: number | null
+  status: BlockStatus
+  summary: string
+  events: ActivityEventEntry[]
+}
+
+export interface DispatchActivityState {
+  dispatchId: string
+  blocks: Map<string, TaskBlock>
+  participantsOrder: string[]
+  participantStatuses: Map<string, ParticipantStatus>
+  log: ActivityEnvelope[]
+  firstTs: number
+  lastEventTs: number
+  completedSummary: string | null
+}
+
+export interface ActivityStoreSnapshot {
+  // Most-recently-active dispatchId — the one whose events arrived last. The
+  // Dispatch tab uses this when the user hasn't pinned a specific dispatch.
+  latestDispatchId: string | null
+  byDispatch: Map<string, DispatchActivityState>
+}
+
+const MAX_LOG_PER_DISPATCH = 1000
+const MAX_DISPATCHES_RETAINED = 12
+
+let snapshot: ActivityStoreSnapshot = {
+  latestDispatchId: null,
+  byDispatch: new Map(),
+}
+
+const listeners = new Set<() => void>()
+let bound = false
+
+function notify() {
+  for (const l of listeners) l()
+}
+
+function ensureBound() {
+  if (bound) return
+  if (typeof window === 'undefined' || !window.electron?.activity) return
+  bound = true
+  window.electron.activity.onEvent((payload: ActivityEnvelope) => {
+    snapshot = applyEvent(snapshot, payload)
+    notify()
+  })
+  window.electron.activity.onState(payload => {
+    snapshot = applyState(snapshot, payload)
+    notify()
+  })
+  window.electron.activity.onDispatchComplete(({ dispatchId, summary }) => {
+    snapshot = applyComplete(snapshot, dispatchId, summary)
+    notify()
+  })
+}
+
+export function subscribeActivityStore(listener: () => void): () => void {
+  ensureBound()
+  listeners.add(listener)
+  return () => { listeners.delete(listener) }
+}
+
+export function getActivityStoreSnapshot(): ActivityStoreSnapshot {
+  ensureBound()
+  return snapshot
+}
+
+// Bulk-apply persisted activity history (read from
+// `ARCHITECT/runtime/<dispatchId>/activity/*.jsonl`) into the store. Used on
+// resume so the swimlane shows the previous session's events — the resume
+// itself wipes the runtime dir, so we have to capture them first.
+export function seedDispatchHistory(
+  dispatchId: string,
+  history: Array<{ participantId: string; event: { ts: string; kind: string; taskId?: string; content: string; structured?: Record<string, unknown> } }>,
+): void {
+  ensureBound()
+  let next = snapshot
+  for (const item of history) {
+    next = applyEvent(next, {
+      dispatchId,
+      participantId: item.participantId,
+      event: {
+        ts: item.event.ts,
+        kind: item.event.kind as ActivityEventEntry['kind'],
+        taskId: item.event.taskId,
+        content: item.event.content,
+        structured: item.event.structured,
+      },
+    })
+  }
+  snapshot = next
+  notify()
+}
+
+// Pre-create a dispatch entry with its known participant list so the
+// swimlane can render columns/lines for every zone before any event has
+// fired. Used by resume (we know the dispatchId up front) and by new
+// dispatches once the dispatchId is known. If the entry already exists
+// (e.g. a late event arrived first), participants are merged into the
+// existing order without disturbing it.
+export function seedDispatch(dispatchId: string, participantIds: string[]): void {
+  ensureBound()
+  const existing = snapshot.byDispatch.get(dispatchId)
+  const order = existing ? [...existing.participantsOrder] : []
+  for (const pid of participantIds) {
+    if (!order.includes(pid)) order.push(pid)
+  }
+  const seeded: DispatchActivityState = existing
+    ? { ...existing, participantsOrder: order }
+    : {
+        dispatchId,
+        blocks: new Map(),
+        participantsOrder: order,
+        participantStatuses: new Map(),
+        log: [],
+        firstTs: 0,
+        lastEventTs: 0,
+        completedSummary: null,
+      }
+  const byDispatch = new Map(snapshot.byDispatch).set(dispatchId, seeded)
+  snapshot = { latestDispatchId: dispatchId, byDispatch }
+  notify()
+}
+
+function ensureDispatch(state: ActivityStoreSnapshot, dispatchId: string): DispatchActivityState {
+  const existing = state.byDispatch.get(dispatchId)
+  if (existing) return existing
+  return {
+    dispatchId,
+    blocks: new Map(),
+    participantsOrder: [],
+    participantStatuses: new Map(),
+    log: [],
+    firstTs: 0,
+    lastEventTs: 0,
+    completedSummary: null,
+  }
+}
+
+function evictOldDispatches(byDispatch: Map<string, DispatchActivityState>): Map<string, DispatchActivityState> {
+  if (byDispatch.size <= MAX_DISPATCHES_RETAINED) return byDispatch
+  // Drop the oldest by lastEventTs. Insertion-order Map iteration would also
+  // work for FIFO, but using lastEventTs is more honest about "least recently
+  // active" than "least recently created."
+  const entries = Array.from(byDispatch.entries()).sort((a, b) => a[1].lastEventTs - b[1].lastEventTs)
+  const next = new Map(byDispatch)
+  while (next.size > MAX_DISPATCHES_RETAINED && entries.length > 0) {
+    const [oldestId] = entries.shift()!
+    next.delete(oldestId)
+  }
+  return next
+}
+
+function statusFromKind(kind: ActivityKind): BlockStatus | null {
+  switch (kind) {
+    case 'task-received':
+    case 'progress':
+    case 'note':
+    case 'answer':
+      return 'running'
+    case 'done': return 'done'
+    case 'failed': return 'failed'
+    case 'ask': return 'blocked'
+  }
+}
+
+function applyEvent(state: ActivityStoreSnapshot, payload: ActivityEnvelope): ActivityStoreSnapshot {
+  const tsRaw = Date.parse(payload.event.ts)
+  const ts = Number.isFinite(tsRaw) ? tsRaw : Date.now()
+  const dispatch = ensureDispatch(state, payload.dispatchId)
+  const log = dispatch.log.length >= MAX_LOG_PER_DISPATCH
+    ? [...dispatch.log.slice(-MAX_LOG_PER_DISPATCH + 1), payload]
+    : [...dispatch.log, payload]
+  const participantsOrder = dispatch.participantsOrder.includes(payload.participantId)
+    ? dispatch.participantsOrder
+    : [...dispatch.participantsOrder, payload.participantId]
+  const firstTs = dispatch.firstTs === 0 ? ts : Math.min(dispatch.firstTs, ts)
+  const lastEventTs = Math.max(dispatch.lastEventTs, ts)
+
+  let blocks = dispatch.blocks
+  const taskId = payload.event.taskId
+  if (taskId) {
+    const key = `${payload.participantId}:${taskId}`
+    const existing = blocks.get(key)
+    const events = existing ? [...existing.events, payload.event] : [payload.event]
+    const incoming = statusFromKind(payload.event.kind)
+    const summary = payload.event.kind === 'task-received'
+      ? payload.event.content
+      : (payload.event.content && payload.event.content.length > 0 ? payload.event.content : existing?.summary ?? '')
+    const isTerminal = payload.event.kind === 'done' || payload.event.kind === 'failed'
+    const block: TaskBlock = {
+      taskId,
+      participantId: payload.participantId,
+      startedAt: existing?.startedAt ?? ts,
+      endedAt: isTerminal ? ts : existing?.endedAt ?? null,
+      status: incoming ?? existing?.status ?? 'running',
+      summary,
+      events,
+    }
+    blocks = new Map(blocks)
+    blocks.set(key, block)
+  }
+
+  const updated: DispatchActivityState = {
+    ...dispatch,
+    blocks,
+    participantsOrder,
+    log,
+    firstTs,
+    lastEventTs,
+  }
+  const byDispatch = evictOldDispatches(new Map(state.byDispatch).set(payload.dispatchId, updated))
+  return { latestDispatchId: payload.dispatchId, byDispatch }
+}
+
+function applyState(
+  state: ActivityStoreSnapshot,
+  payload: { dispatchId: string; participantId: string; status: ParticipantStatus },
+): ActivityStoreSnapshot {
+  const dispatch = ensureDispatch(state, payload.dispatchId)
+  const statuses = new Map(dispatch.participantStatuses)
+  statuses.set(payload.participantId, payload.status)
+  const updated: DispatchActivityState = { ...dispatch, participantStatuses: statuses }
+  const byDispatch = new Map(state.byDispatch).set(payload.dispatchId, updated)
+  return { ...state, byDispatch }
+}
+
+function applyComplete(state: ActivityStoreSnapshot, dispatchId: string, summary: string): ActivityStoreSnapshot {
+  const dispatch = ensureDispatch(state, dispatchId)
+  const updated: DispatchActivityState = { ...dispatch, completedSummary: summary }
+  const byDispatch = new Map(state.byDispatch).set(dispatchId, updated)
+  return { ...state, byDispatch }
+}

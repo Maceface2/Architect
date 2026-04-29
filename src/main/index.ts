@@ -98,6 +98,11 @@ function createWindow(): void {
     backgroundColor: '#111111',
     icon,
     title: 'Architect',
+    // macOS: keep the traffic lights but drop the native title bar strip.
+    // Lights inset over TopNav row 1; the renderer reserves padding-left + a
+    // drag region so the user can grab the bar to move the window.
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -218,6 +223,31 @@ ipcMain.handle('dispatches:update-summary', (_event, projectDir: string, dispatc
 ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
   if (!mainWindow) return { ok: false, error: 'not-found' as const }
   return resumeDispatch(mainWindow, opts)
+})
+
+// Read every persisted activity-log line for a dispatch, oldest first.
+// Used so the swimlane shows the previous session's history when a user
+// resumes a dispatch — without it, the wipe in setupWorkspaceV5 would
+// drop those lines before the new run starts.
+ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, dispatchId: string) => {
+  const fsMod = await import('fs')
+  const pathMod = await import('path')
+  const { activityDir, readAllActivity } = await import('./orchestrator/activity')
+  const dir = activityDir(projectDir, dispatchId)
+  let entries: string[] = []
+  try {
+    entries = fsMod.readdirSync(dir).filter(n => n.endsWith('.jsonl'))
+  } catch {
+    return [] as Array<{ participantId: string; event: unknown }>
+  }
+  const out: Array<{ participantId: string; event: unknown }> = []
+  for (const file of entries) {
+    const participantId = file.replace(/\.jsonl$/, '')
+    const events = readAllActivity(pathMod.join(dir, file), participantId)
+    for (const event of events) out.push({ participantId, event })
+  }
+  out.sort((a, b) => Date.parse((a.event as { ts: string }).ts) - Date.parse((b.event as { ts: string }).ts))
+  return out
 })
 
 ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode, opts?: StartAssistantOpts) => {

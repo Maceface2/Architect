@@ -5,6 +5,7 @@ import { Play, Settings, Trash2 } from 'lucide-react'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
+import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
 import AgentConfigModal from './AgentConfigModal'
 import ZoneLaunchModal from './ZoneLaunchModal'
@@ -37,7 +38,19 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const [modalOpen, setModalOpen] = useState(false)
   const [launchOpen, setLaunchOpen] = useState(false)
   const projectSettings = useProjectSettings()
+  const { zoneTreatment, theme } = useInterfaceSettings()
   const projectDir = useProjectDir()
+  const isArchitectural = zoneTreatment === 'architectural'
+  const isLight = theme === 'light'
+  // In light mode the canvas is near-white. The default treatment's colored
+  // tint overlays canvas, so we need higher alpha to keep the zone visible
+  // and a darker text so labels stay readable on the lighter fill.
+  const fillAlpha = isLight ? 0.18 : 0.08
+  const headerAlpha = isLight ? 0.32 : 0.18
+  const headerBorderAlpha = isLight ? 0.45 : 0.25
+  const labelTextClass = isLight ? 'text-slate-900' : 'text-white'
+  const subtleTextClass = isLight ? 'text-slate-700' : 'text-slate-400'
+  const buttonIdleClass = isLight ? 'text-slate-700 hover:text-slate-900 hover:bg-black/10' : 'text-slate-400 hover:text-white hover:bg-white/10'
 
   const zoneColor = (data.color as string) ?? '#58A6FF'
   const label = (data.label as string) ?? 'Zone'
@@ -77,34 +90,52 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
       />
 
       <div
-        className="relative w-full h-full rounded-2xl"
-        style={{
-          backgroundColor: hexToRgba(zoneColor, 0.08),
-          border: `1.5px ${selected ? 'solid' : 'dashed'} ${hexToRgba(zoneColor, selected ? 0.6 : 0.35)}`,
-          boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.15)}` : 'none',
-        }}
+        className={`relative w-full h-full ${isArchitectural ? 'rounded-[2px]' : 'rounded-2xl'}`}
+        style={
+          isArchitectural
+            ? {
+                backgroundColor: 'transparent',
+                border: `1px solid ${hexToRgba(zoneColor, selected ? 0.55 : 0.3)}`,
+                boxShadow: 'none',
+              }
+            : {
+                backgroundColor: hexToRgba(zoneColor, fillAlpha),
+                border: `1.5px ${selected ? 'solid' : 'dashed'} ${hexToRgba(zoneColor, selected ? 0.6 : 0.35)}`,
+                boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.15)}` : 'none',
+              }
+        }
       >
+        {isArchitectural && <CornerTicks color={zoneColor} />}
         {/* Header strip — shows zone metadata, draggable; gear icon opens modal */}
         <div
-          className="absolute left-0 right-0 top-0 flex items-center justify-between gap-2 px-3 py-2 rounded-t-2xl"
-          style={{
-            backgroundColor: hexToRgba(zoneColor, 0.18),
-            borderBottom: `1px solid ${hexToRgba(zoneColor, 0.25)}`,
-          }}
+          className={`absolute left-0 right-0 top-0 flex items-center justify-between gap-2 px-3 py-2 ${isArchitectural ? '' : 'rounded-t-2xl'}`}
+          style={
+            isArchitectural
+              ? { backgroundColor: 'transparent', borderBottom: 'none' }
+              : {
+                  backgroundColor: hexToRgba(zoneColor, headerAlpha),
+                  borderBottom: `1px solid ${hexToRgba(zoneColor, headerBorderAlpha)}`,
+                }
+          }
         >
           <div className="flex items-center gap-2 min-w-0">
             <span
               className="w-2 h-2 rounded-full flex-shrink-0"
               style={{ backgroundColor: statusColor(status, zoneColor) }}
             />
-            <span className="text-[13px] font-semibold text-white truncate">{label}</span>
+            <span
+              className={`truncate ${isArchitectural ? 'text-[11px] font-medium uppercase tracking-[0.18em]' : `text-[13px] font-semibold ${labelTextClass}`}`}
+              style={isArchitectural ? { color: zoneColor } : undefined}
+            >
+              {label}
+            </span>
             <span
               className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
               style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
             >
               {isOverride ? runtimeMeta.shortLabel : `default:${runtimeMeta.shortLabel}`}
             </span>
-            <span className="text-[10px] text-slate-500 font-mono truncate">{shortModelLabel(effectiveModel)}</span>
+            <span className={`text-[10px] font-mono truncate ${subtleTextClass}`}>{shortModelLabel(effectiveModel)}</span>
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
@@ -114,7 +145,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
                 setLaunchOpen(true)
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10 transition-colors nodrag"
+              className={`w-5 h-5 flex items-center justify-center rounded transition-colors nodrag ${buttonIdleClass}`}
               title="Launch this zone"
               aria-label="Launch this zone"
             >
@@ -123,7 +154,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
             <button
               onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
               onMouseDown={(e) => e.stopPropagation()}
-              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10 transition-colors nodrag"
+              className={`w-5 h-5 flex items-center justify-center rounded transition-colors nodrag ${buttonIdleClass}`}
               title="Configure zone agent"
               aria-label="Configure zone agent"
             >
@@ -137,7 +168,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
                 }
               }}
               onMouseDown={(e) => e.stopPropagation()}
-              className="w-5 h-5 flex items-center justify-center rounded text-slate-500 hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
+              className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
               title="Delete zone"
               aria-label="Delete zone"
             >
@@ -187,6 +218,30 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
 
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
+}
+
+// Architectural treatment: 12px L-shaped marks at every corner, inset 6px,
+// drawn from two perpendicular 1.5px spans in the zone color.
+function CornerTicks({ color }: { color: string }) {
+  const tick = 12
+  const thick = 1.5
+  const inset = 6
+  return (
+    <>
+      {/* top-left */}
+      <span style={{ position: 'absolute', left: inset, top: inset, width: tick, height: thick, backgroundColor: color, pointerEvents: 'none' }} />
+      <span style={{ position: 'absolute', left: inset, top: inset, width: thick, height: tick, backgroundColor: color, pointerEvents: 'none' }} />
+      {/* top-right */}
+      <span style={{ position: 'absolute', right: inset, top: inset, width: tick, height: thick, backgroundColor: color, pointerEvents: 'none' }} />
+      <span style={{ position: 'absolute', right: inset, top: inset, width: thick, height: tick, backgroundColor: color, pointerEvents: 'none' }} />
+      {/* bottom-left */}
+      <span style={{ position: 'absolute', left: inset, bottom: inset, width: tick, height: thick, backgroundColor: color, pointerEvents: 'none' }} />
+      <span style={{ position: 'absolute', left: inset, bottom: inset, width: thick, height: tick, backgroundColor: color, pointerEvents: 'none' }} />
+      {/* bottom-right */}
+      <span style={{ position: 'absolute', right: inset, bottom: inset, width: tick, height: thick, backgroundColor: color, pointerEvents: 'none' }} />
+      <span style={{ position: 'absolute', right: inset, bottom: inset, width: thick, height: tick, backgroundColor: color, pointerEvents: 'none' }} />
+    </>
+  )
 }
 
 function statusColor(status: NodeStatus, defaultColor: string): string {

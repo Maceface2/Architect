@@ -74,12 +74,12 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
             <Icon size={11} style={{ color }} />
             <span className="text-[10px] font-bold tracking-widest" style={{ color }}>{tag}</span>
             {hasSpecs && (
-              <FileText size={9} className="text-slate-500 ml-auto" aria-label="Has specs" />
+              <FileText size={9} className="text-fg-subtle ml-auto" aria-label="Has specs" />
             )}
           </div>
-          <p className="text-[13px] font-semibold text-white leading-snug">{label}</p>
+          <p className="text-[13px] font-semibold text-fg leading-snug">{label}</p>
           {description && (
-            <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">{description}</p>
+            <p className="text-[10px] text-fg-subtle mt-1 line-clamp-2">{description}</p>
           )}
         </div>
 
@@ -88,7 +88,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           <button
             onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
             onMouseDown={(e) => e.stopPropagation()}
-            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-white hover:bg-white/10 transition-colors nodrag"
+            className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-fg hover:bg-white/10 transition-colors nodrag"
             title="Edit component"
             aria-label="Edit component"
           >
@@ -97,7 +97,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           <button
             onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }) }}
             onMouseDown={(e) => e.stopPropagation()}
-            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
+            className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
             title="Delete component"
             aria-label="Delete component"
           >

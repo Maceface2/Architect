@@ -165,9 +165,9 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
           type="button"
           className={`nodrag nopan absolute -translate-x-1/2 -translate-y-1/2 rounded border px-2 py-0.5 text-[10px] font-medium shadow-lg transition-colors ${
             label
-              ? 'border-white/10 bg-[#1e1e1e] text-slate-200'
+              ? 'border-white/10 bg-[#1e1e1e] text-fg'
               : selected && editable
-                ? 'border-white/10 bg-[#1e1e1e]/80 text-slate-500'
+                ? 'border-white/10 bg-[#1e1e1e]/80 text-fg-subtle'
                 : 'pointer-events-none opacity-0'
           }`}
           style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
@@ -220,11 +220,11 @@ function EdgeEditorModal({
     >
       <div className="w-[360px] rounded-lg border border-white/10 bg-[#171717] p-4 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-white">Component Edge</h2>
+          <h2 className="text-sm font-semibold text-fg">Component Edge</h2>
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-white/10 hover:text-white"
+            className="flex h-7 w-7 items-center justify-center rounded text-fg-subtle hover:bg-white/10 hover:text-fg"
             aria-label="Close"
           >
             <X size={15} />
@@ -232,17 +232,17 @@ function EdgeEditorModal({
         </div>
 
         <label className="mb-4 block">
-          <span className="mb-1.5 block text-xs font-medium text-slate-400">Label</span>
+          <span className="mb-1.5 block text-xs font-medium text-fg-muted">Label</span>
           <input
             value={label}
             onChange={event => setLabel(event.target.value)}
             placeholder="e.g. publishes events"
-            className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-accent"
+            className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
           />
         </label>
 
         <div className="mb-5">
-          <span className="mb-1.5 block text-xs font-medium text-slate-400">Direction</span>
+          <span className="mb-1.5 block text-xs font-medium text-fg-muted">Direction</span>
           <div className="grid grid-cols-3 gap-1 rounded bg-black/30 p-1">
             {(Object.keys(DIRECTION_LABELS) as ComponentEdgeDirection[]).map(value => (
               <button
@@ -251,8 +251,8 @@ function EdgeEditorModal({
                 onClick={() => setDirection(value)}
                 className={`rounded px-2 py-1.5 text-xs font-medium transition-colors ${
                   direction === value
-                    ? 'bg-accent text-white'
-                    : 'text-slate-400 hover:bg-white/10 hover:text-white'
+                    ? 'bg-accent text-fg'
+                    : 'text-fg-muted hover:bg-white/10 hover:text-fg'
                 }`}
               >
                 {DIRECTION_LABELS[value]}
@@ -274,14 +274,14 @@ function EdgeEditorModal({
             <button
               type="button"
               onClick={() => setLabel('')}
-              className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-white/10 hover:text-white"
+              className="rounded px-3 py-2 text-xs font-medium text-fg-muted hover:bg-white/10 hover:text-fg"
             >
               Clear Label
             </button>
             <button
               type="button"
               onClick={save}
-              className="rounded bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-[#4a4ad0]"
+              className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-[#4a4ad0]"
             >
               Save
             </button>

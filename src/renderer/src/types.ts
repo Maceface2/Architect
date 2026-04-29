@@ -108,10 +108,26 @@ export interface AssistantSettings {
   assistantLastSessionByMode?: Partial<Record<AssistantMode, { runtime: AgentRuntime; sessionId: string; model?: string }>>
 }
 
+// Pure UI preferences. Distinct from Dispatch / Assistant settings: nothing
+// here changes agent behavior — they only drive the renderer's chrome and
+// how nodes paint on the canvas.
+export type ZoneTreatment = 'default' | 'architectural'
+export type InterfaceTheme = 'dark' | 'light'
+export type CanvasBackground = 'dots' | 'grid'
+
+export interface InterfaceSettings {
+  zoneTreatment: ZoneTreatment
+  theme: InterfaceTheme
+  canvasBackground: CanvasBackground
+}
+
 // Full project settings persisted in architect-canvas.json. Composed of the
-// two scope-specific slices above. Components that only need one side should
-// accept `DispatchSettings` or `AssistantSettings` directly, not this union.
-export interface ProjectSettings extends DispatchSettings, AssistantSettings {}
+// scope-specific slices above. Components that only need one side should
+// accept `DispatchSettings` / `AssistantSettings` / `InterfaceSettings`
+// directly, not this union.
+export interface ProjectSettings extends DispatchSettings, AssistantSettings {
+  interface: InterfaceSettings
+}
 
 export type RuntimeModelMap = Partial<Record<AgentRuntime, string>>
 

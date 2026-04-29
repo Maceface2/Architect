@@ -364,7 +364,7 @@ export default function AssistantPanel({
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] flex-shrink-0 bg-[#111111]">
         <div className="flex items-center gap-2 min-w-0">
           <Bot size={13} className="text-[#c084fc] flex-shrink-0" />
-          <span className="text-xs font-medium text-slate-300 truncate">{headerLabel}</span>
+          <span className="text-xs font-medium text-fg-muted truncate">{headerLabel}</span>
           <span
             className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
             style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
@@ -376,7 +376,7 @@ export default function AssistantPanel({
           {/* Settings — model picker + new/resume for the current mode */}
           <button
             onClick={() => setModalOpen(true)}
-            className="text-slate-600 hover:text-slate-300 transition-colors"
+            className="text-fg-subtle hover:text-fg-muted transition-colors"
             title="Model + session"
           >
             <Settings2 size={13} />
@@ -387,8 +387,8 @@ export default function AssistantPanel({
               onClick={() => onModeChange('architecture')}
               className={
                 mode === 'architecture'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
-                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="Architecture mode — edit the canvas"
             >
@@ -398,8 +398,8 @@ export default function AssistantPanel({
               onClick={() => onModeChange('general')}
               className={
                 mode === 'general'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
-                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="General mode — generic coding assistant"
             >
@@ -408,7 +408,7 @@ export default function AssistantPanel({
           </div>
           <button
             onClick={onClose}
-            className="text-slate-600 hover:text-slate-300 transition-colors"
+            className="text-fg-subtle hover:text-fg-muted transition-colors"
             title="Close assistant"
           >
             <X size={13} />

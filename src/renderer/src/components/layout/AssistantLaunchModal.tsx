@@ -150,10 +150,10 @@ export default function AssistantLaunchModal({
       >
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
           <div className="min-w-0">
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-fg flex items-center gap-2">
               <Settings2 size={16} className="text-[#c084fc]" /> Assistant · {modeLabel}
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-fg-muted mt-1">
               Pick a model, start fresh, or resume a prior session.
               <span className="ml-2 px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wider"
                 style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
@@ -162,14 +162,14 @@ export default function AssistantLaunchModal({
               </span>
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors flex-shrink-0 p-1">
+          <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
             <X size={20} />
           </button>
         </div>
 
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <section>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">CLI</label>
+            <label className="block text-xs font-medium text-fg-muted mb-1.5">CLI</label>
             <div className="grid grid-cols-2 gap-2">
               {AGENT_RUNTIMES.map(rt => {
                 const selected = selectedRuntime === rt.id
@@ -179,8 +179,8 @@ export default function AssistantLaunchModal({
                     onClick={() => handleRuntimeChange(rt.id)}
                     className={`flex items-center justify-between px-3 py-2 rounded-md border text-left transition-colors ${
                       selected
-                        ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
-                        : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                        ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                        : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                     }`}
                   >
                     <span className="text-sm font-medium">{rt.label}</span>
@@ -199,11 +199,11 @@ export default function AssistantLaunchModal({
           </section>
 
           <section>
-            <label className="block text-xs font-medium text-slate-300 mb-1.5">Model ({runtimeMeta.label})</label>
+            <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
             <select
               value={model}
               onChange={e => setModel(e.target.value)}
-              className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-accent"
+              className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
             >
               {runtimeMeta.suggestedModels.map(m => (
                 <option key={m} value={m}>{m}</option>
@@ -212,19 +212,19 @@ export default function AssistantLaunchModal({
                 <option value={model}>{model}</option>
               )}
             </select>
-            <p className="text-[11px] text-slate-500 mt-1">
+            <p className="text-[11px] text-fg-subtle mt-1">
               Selecting a model does nothing until you Start new or Resume — the change applies to whichever session you launch.
             </p>
           </section>
 
           <section className="flex items-center justify-between gap-3">
-            <p className="text-[11px] text-slate-500">
+            <p className="text-[11px] text-fg-subtle">
               Start fresh with the picked model, or resume one below.
             </p>
             <button
               onClick={onClickStartNew}
               disabled={busy}
-              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:bg-white/5 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 flex-shrink-0"
+              className="px-4 py-2 text-sm font-medium rounded-md bg-accent text-fg hover:bg-accent/90 disabled:bg-white/5 disabled:text-fg-subtle disabled:cursor-not-allowed transition-colors flex items-center gap-1.5 flex-shrink-0"
             >
               <Rocket size={14} /> Start new
             </button>
@@ -232,16 +232,16 @@ export default function AssistantLaunchModal({
 
           <section>
             <div className="flex items-center justify-between mb-2">
-              <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+              <label className="text-xs font-medium text-fg-muted flex items-center gap-1.5">
                 <History size={13} /> Previous sessions
               </label>
-              <span className="text-[11px] text-slate-500">{sessions.length} saved</span>
+              <span className="text-[11px] text-fg-subtle">{sessions.length} saved</span>
             </div>
 
             {loading ? (
-              <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">Loading…</p>
+              <p className="text-xs text-fg-subtle bg-canvas border border-white/5 rounded-md px-3 py-3">Loading…</p>
             ) : sessions.length === 0 ? (
-              <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">
+              <p className="text-xs text-fg-subtle bg-canvas border border-white/5 rounded-md px-3 py-3">
                 No previous sessions. Your first Start new will appear here.
               </p>
             ) : (
@@ -270,7 +270,7 @@ export default function AssistantLaunchModal({
                                 if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
                                 if (e.key === 'Escape') { e.preventDefault(); setEditing(null) }
                               }}
-                              className="flex-1 bg-surface border border-white/20 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-accent"
+                              className="flex-1 bg-surface border border-white/20 rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent"
                             />
                             <button
                               onClick={commitRename}
@@ -281,7 +281,7 @@ export default function AssistantLaunchModal({
                             </button>
                             <button
                               onClick={() => setEditing(null)}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:bg-white/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-muted hover:bg-white/10"
                               title="Cancel"
                             >
                               <X size={12} />
@@ -296,35 +296,35 @@ export default function AssistantLaunchModal({
                               title={mismatch ? mismatchTip : 'Resume this session'}
                             >
                               <div className="flex items-center gap-2">
-                                <span className="text-slate-200 font-medium truncate">{record.summary}</span>
+                                <span className="text-fg font-medium truncate">{record.summary}</span>
                                 {record.dispatchId && (
                                   <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-[#c084fc]/20 text-[#c084fc] flex-shrink-0">
                                     from dispatch
                                   </span>
                                 )}
                               </div>
-                              <div className="text-slate-500 mt-0.5 flex items-center gap-2">
+                              <div className="text-fg-subtle mt-0.5 flex items-center gap-2">
                                 <span>{when}</span>
                                 <span>·</span>
                                 <span className="uppercase tracking-wider text-[10px]">{record.runtime}</span>
                                 {record.model && (
                                   <>
                                     <span>·</span>
-                                    <span className="font-mono text-[10px] text-slate-600">{record.model}</span>
+                                    <span className="font-mono text-[10px] text-fg-subtle">{record.model}</span>
                                   </>
                                 )}
                               </div>
                             </button>
                             <button
                               onClick={() => setEditing({ sessionId: record.sessionId, draft: record.summary })}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-subtle hover:text-fg hover:bg-white/10"
                               title="Rename"
                             >
                               <Pencil size={12} />
                             </button>
                             <button
                               onClick={() => remove(record)}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-subtle hover:text-red-400 hover:bg-red-400/10"
                               title="Delete"
                             >
                               <Trash2 size={12} />
@@ -347,7 +347,7 @@ export default function AssistantLaunchModal({
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-white/10">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-sm text-slate-300 hover:text-white transition-colors"
+            className="px-4 py-1.5 text-sm text-fg-muted hover:text-fg transition-colors"
           >
             Close
           </button>
@@ -362,20 +362,20 @@ export default function AssistantLaunchModal({
               className="bg-surface border border-white/10 rounded-lg shadow-2xl max-w-sm p-5"
               onClick={e => e.stopPropagation()}
             >
-              <h3 className="text-sm font-semibold text-white">Interrupt current session?</h3>
-              <p className="text-xs text-slate-400 mt-2 leading-relaxed">
+              <h3 className="text-sm font-semibold text-fg">Interrupt current session?</h3>
+              <p className="text-xs text-fg-muted mt-2 leading-relaxed">
                 The active {modeLabel} assistant session will be killed. In-flight tool calls will be cancelled. The transcript is saved — you can resume it later from Previous sessions.
               </p>
               <div className="flex items-center justify-end gap-2 mt-4">
                 <button
                   onClick={() => setPendingNewConfirm(false)}
-                  className="px-3 py-1.5 text-xs text-slate-300 hover:text-white transition-colors"
+                  className="px-3 py-1.5 text-xs text-fg-muted hover:text-fg transition-colors"
                 >
                   Cancel
                 </button>
                 <button
                   onClick={() => { setPendingNewConfirm(false); void fireNew() }}
-                  className="px-3 py-1.5 text-xs font-medium rounded bg-accent text-white hover:bg-accent/90 transition-colors"
+                  className="px-3 py-1.5 text-xs font-medium rounded bg-accent text-fg hover:bg-accent/90 transition-colors"
                 >
                   Start new
                 </button>

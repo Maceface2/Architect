@@ -70,10 +70,10 @@ export default function ComponentConfigModal({
             onChange={event => setLabelDraft(event.target.value)}
             onBlur={saveLabel}
             onKeyDown={event => { if (event.key === 'Enter') { saveLabel(); labelInputRef.current?.blur() } }}
-            className="text-lg font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/40 focus:outline-none transition-colors flex-1 min-w-0"
+            className="text-lg font-semibold text-fg bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/40 focus:outline-none transition-colors flex-1 min-w-0"
             placeholder="Component name"
           />
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors flex-shrink-0 p-1">
+          <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
             <X size={18} />
           </button>
         </div>
@@ -82,13 +82,13 @@ export default function ComponentConfigModal({
         <div className="flex flex-1 min-h-0 divide-x divide-white/[0.06]">
           {/* Specs pane */}
           <div className="flex flex-col flex-1 min-w-0">
-            <p className="text-[10px] uppercase tracking-widest text-slate-600 px-6 pt-5 pb-2 flex-shrink-0">Specs & notes</p>
+            <p className="text-[10px] uppercase tracking-widest text-fg-subtle px-6 pt-5 pb-2 flex-shrink-0">Specs & notes</p>
             <textarea
               value={specs}
               onChange={event => patch({ specs: event.target.value })}
               placeholder="Describe this component in detail — its responsibilities, API contracts, schemas, ports, interfaces, invariants, anything the zone's agent needs to know when building it."
               autoFocus
-              className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
+              className="flex-1 bg-transparent text-fg text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-fg-subtle font-mono"
             />
           </div>
 
@@ -101,7 +101,7 @@ export default function ComponentConfigModal({
                   onChange={event => patch({ description: event.target.value })}
                   placeholder="One-line summary shown on the node"
                   rows={2}
-                  className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 resize-none"
+                  className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 resize-none"
                 />
               </Section>
 
@@ -112,10 +112,10 @@ export default function ComponentConfigModal({
                   onBlur={saveTag}
                   onKeyDown={event => { if (event.key === 'Enter') saveTag() }}
                   maxLength={8}
-                  className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-white font-mono tracking-widest placeholder-slate-700 focus:outline-none focus:border-white/20 uppercase"
+                  className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg font-mono tracking-widest placeholder-fg-subtle focus:outline-none focus:border-white/20 uppercase"
                   placeholder="TAG"
                 />
-                <p className="text-[10px] text-slate-600 mt-1.5">Up to 8 chars — shown in the corner of the node.</p>
+                <p className="text-[10px] text-fg-subtle mt-1.5">Up to 8 chars — shown in the corner of the node.</p>
               </Section>
 
               <Section title="Accent color">
@@ -129,7 +129,7 @@ export default function ComponentConfigModal({
                   <input
                     value={color}
                     onChange={event => patch({ color: event.target.value })}
-                    className="flex-1 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 font-mono focus:outline-none focus:border-white/20"
+                    className="flex-1 bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted font-mono focus:outline-none focus:border-white/20"
                   />
                 </div>
               </Section>
@@ -144,7 +144,7 @@ export default function ComponentConfigModal({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-widest text-slate-600 mb-2">{title}</p>
+      <p className="text-[10px] uppercase tracking-widest text-fg-subtle mb-2">{title}</p>
       {children}
     </div>
   )

@@ -384,7 +384,7 @@ function PaneView({
                 <button
                   onClick={() => onActivate(pane.id, tabId)}
                   className={`flex items-center gap-2 pl-3 pr-2 py-2 text-xs whitespace-nowrap ${
-                    isActive ? 'text-white' : 'text-slate-500 hover:text-slate-300'
+                    isActive ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
                   }`}
                 >
                   {isShell ? (
@@ -397,7 +397,7 @@ function PaneView({
                     />
                   )}
                   {s.coordinatedMode && !isShell && (
-                    <Lock size={10} className="text-slate-500 flex-shrink-0" aria-label="Scheduler-coordinated" />
+                    <Lock size={10} className="text-fg-subtle flex-shrink-0" aria-label="Scheduler-coordinated" />
                   )}
                   <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
                     {isShell ? (s.label || 'Shell') : isConductor ? '⬡ Conductor' : s.label}
@@ -417,7 +417,7 @@ function PaneView({
                     disabled={isResuming}
                     className={`flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors ${
                       isResuming
-                        ? 'text-slate-600 cursor-wait'
+                        ? 'text-fg-subtle cursor-wait'
                         : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
                     }`}
                     title={isResuming ? 'Resuming…' : resumeLabel}
@@ -428,7 +428,7 @@ function PaneView({
                 )}
                 <button
                   onClick={() => onPopout(s)}
-                  className="flex items-center justify-center w-6 h-6 rounded text-slate-500 hover:text-slate-200 hover:bg-white/[0.06] transition-colors"
+                  className="flex items-center justify-center w-6 h-6 rounded text-fg-subtle hover:text-fg hover:bg-white/[0.06] transition-colors"
                   title="Pop out terminal to new window"
                   aria-label="Pop out terminal"
                 >
@@ -444,8 +444,8 @@ function PaneView({
                       disabled={disabled}
                       className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
                         disabled
-                          ? 'text-slate-700 cursor-not-allowed'
-                          : 'text-slate-500 hover:text-slate-200 hover:bg-white/[0.06]'
+                          ? 'text-fg-subtle cursor-not-allowed'
+                          : 'text-fg-subtle hover:text-fg hover:bg-white/[0.06]'
                       }`}
                       title={title}
                       aria-label="Close terminal"
@@ -463,7 +463,7 @@ function PaneView({
         )}
         <button
           onClick={onNewShell}
-          className="flex items-center justify-center w-7 h-7 ml-1 rounded text-slate-500 hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
+          className="flex items-center justify-center w-7 h-7 ml-1 rounded text-fg-subtle hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
           title="New shell"
           aria-label="New shell"
         >

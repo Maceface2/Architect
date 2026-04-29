@@ -76,7 +76,7 @@ export default function PopoutTerminalApp({ id, label }: Props) {
 
   return (
     <div className="h-screen w-screen bg-[#0d0d0d] flex flex-col">
-      <div className="flex-shrink-0 px-3 py-2 border-b border-white/[0.06] text-xs text-slate-400 font-medium">
+      <div className="flex-shrink-0 px-3 py-2 border-b border-white/[0.06] text-xs text-fg-muted font-medium">
         {label}
       </div>
       <div ref={containerRef} className="flex-1 p-1 overflow-hidden" />

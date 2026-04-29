@@ -99,7 +99,7 @@ export default function CompactCanvasPalette({
           <button
             type="button"
             onClick={onCancel}
-            className="flex h-9 w-9 items-center justify-center rounded text-slate-500 transition-colors hover:bg-white/10 hover:text-white"
+            className="flex h-9 w-9 items-center justify-center rounded text-fg-subtle transition-colors hover:bg-white/10 hover:text-fg"
             aria-label="Cancel tool"
             title="Cancel"
           >
@@ -109,7 +109,7 @@ export default function CompactCanvasPalette({
       </div>
 
       {placementHint && (
-        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#171717]/95 px-3 py-2 text-xs text-slate-300 shadow-2xl backdrop-blur">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#171717]/95 px-3 py-2 text-xs text-fg-muted shadow-2xl backdrop-blur">
           <MousePointer2 size={14} className="text-accent" />
           {placementHint}
         </div>
@@ -164,7 +164,7 @@ function ToolButton({
       type="button"
       onClick={onClick}
       className={`flex h-9 w-9 items-center justify-center rounded transition-colors ${
-        active ? 'bg-accent text-white' : 'text-slate-400 hover:bg-white/10 hover:text-white'
+        active ? 'bg-accent text-fg' : 'text-fg-muted hover:bg-white/10 hover:text-fg'
       }`}
       aria-label={label}
       title={label}
@@ -243,7 +243,7 @@ function ZoneCreateDialog({
         rows={4}
       />
       <div>
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Runtime</p>
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">Runtime</p>
         <div className="grid grid-cols-2 gap-1">
           {AGENT_RUNTIMES.map(option => (
             <button
@@ -254,7 +254,7 @@ function ZoneCreateDialog({
                 setModel(DEFAULT_MODEL_BY_RUNTIME[option.id])
               }}
               className={`rounded px-2 py-1.5 text-xs transition-colors ${
-                runtime === option.id ? 'bg-accent text-white' : 'bg-black/30 text-slate-400 hover:bg-white/10 hover:text-white'
+                runtime === option.id ? 'bg-accent text-fg' : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
               }`}
             >
               {option.shortLabel}
@@ -271,8 +271,8 @@ function ZoneCreateDialog({
             onClick={() => setModel(option)}
             className={`rounded border px-2 py-1 text-[10px] transition-colors ${
               model === option
-                ? 'border-accent bg-accent/15 text-white'
-                : 'border-white/10 bg-black/20 text-slate-500 hover:border-white/20 hover:text-slate-300'
+                ? 'border-accent bg-accent/15 text-fg'
+                : 'border-white/10 bg-black/20 text-fg-subtle hover:border-white/20 hover:text-fg-muted'
             }`}
           >
             {option}
@@ -309,7 +309,7 @@ function EdgeCreateDialog({
     <PaletteDialog title="New Edge" onClose={onClose}>
       <TextField label="Label" value={label} onChange={setLabel} autoFocus />
       <div>
-        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-slate-500">Direction</p>
+        <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">Direction</p>
         <div className="grid grid-cols-3 gap-1">
           {directions.map(option => (
             <button
@@ -317,7 +317,7 @@ function EdgeCreateDialog({
               type="button"
               onClick={() => setDirection(option.value)}
               className={`rounded px-2 py-1.5 text-xs transition-colors ${
-                direction === option.value ? 'bg-accent text-white' : 'bg-black/30 text-slate-400 hover:bg-white/10 hover:text-white'
+                direction === option.value ? 'bg-accent text-fg' : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
               }`}
             >
               {option.label}
@@ -346,11 +346,11 @@ function PaletteDialog({
   return (
     <div className="pointer-events-auto w-[300px] rounded-lg border border-white/10 bg-[#171717]/95 p-4 shadow-2xl backdrop-blur">
       <div className="mb-4 flex items-center justify-between">
-        <h2 className="text-sm font-semibold text-white">{title}</h2>
+        <h2 className="text-sm font-semibold text-fg">{title}</h2>
         <button
           type="button"
           onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded text-slate-500 hover:bg-white/10 hover:text-white"
+          className="flex h-7 w-7 items-center justify-center rounded text-fg-subtle hover:bg-white/10 hover:text-fg"
           aria-label="Close"
         >
           <X size={15} />
@@ -374,12 +374,12 @@ function TextField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-slate-500">{label}</span>
+      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">{label}</span>
       <input
         value={value}
         onChange={event => onChange(event.target.value)}
         autoFocus={autoFocus}
-        className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-accent"
+        className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
       />
     </label>
   )
@@ -400,13 +400,13 @@ function TextAreaField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-slate-500">{label}</span>
+      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">{label}</span>
       <textarea
         value={value}
         onChange={event => onChange(event.target.value)}
         placeholder={placeholder}
         rows={rows}
-        className="w-full resize-none rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-white outline-none transition-colors placeholder:text-slate-600 focus:border-accent"
+        className="w-full resize-none rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
       />
     </label>
   )
@@ -423,7 +423,7 @@ function ColorField({
 }) {
   return (
     <label className="block">
-      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-slate-500">{label}</span>
+      <span className="mb-1.5 block text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">{label}</span>
       <input
         type="color"
         value={value}
@@ -448,14 +448,14 @@ function DialogActions({
       <button
         type="button"
         onClick={onCancel}
-        className="rounded px-3 py-2 text-xs font-medium text-slate-400 hover:bg-white/10 hover:text-white"
+        className="rounded px-3 py-2 text-xs font-medium text-fg-muted hover:bg-white/10 hover:text-fg"
       >
         Cancel
       </button>
       <button
         type="button"
         onClick={onSubmit}
-        className="rounded bg-accent px-3 py-2 text-xs font-semibold text-white hover:bg-[#4a4ad0]"
+        className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-[#4a4ad0]"
       >
         {submitLabel}
       </button>

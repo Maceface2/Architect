@@ -2,7 +2,9 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -60,8 +62,11 @@ import {
   normalizeEdgeData,
 } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
+import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import DispatchModal from './components/dispatch/DispatchModal'
+import DispatchView from './components/dispatch/DispatchView'
+import { getActivityStoreSnapshot, seedDispatch, seedDispatchHistory, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
 
@@ -235,20 +240,20 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
           <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">ARCHITECT</h1>
-          <p className="text-sm text-slate-500 mt-1">Open a project folder to get started</p>
+          <h1 className="text-2xl font-semibold text-fg tracking-tight">ARCHITECT</h1>
+          <p className="text-sm text-fg-subtle mt-1">Open a project folder to get started</p>
         </div>
       </div>
 
       <button
         onClick={pick}
         disabled={loading}
-        className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium rounded-lg transition-colors"
+        className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-sm font-medium rounded-lg transition-colors"
       >
         {loading ? 'Opening…' : 'Open Project Folder'}
       </button>
 
-      <p className="text-xs text-slate-700">
+      <p className="text-xs text-fg-subtle">
         All agents will be scoped to this directory
       </p>
     </div>
@@ -266,14 +271,14 @@ function CanvasConflictModal({
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
         <div className="border-b border-white/[0.06] px-5 py-4">
-          <h2 className="text-sm font-semibold text-white">External canvas changes detected</h2>
-          <p className="mt-1 text-xs leading-5 text-slate-400">
+          <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
             The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
           </p>
         </div>
 
         <div className="px-5 py-4">
-          <p className="text-xs leading-5 text-slate-500">
+          <p className="text-xs leading-5 text-fg-subtle">
             Choose whether to replace the current canvas with the assistant&apos;s version or keep your local edits and ignore this incoming change.
           </p>
         </div>
@@ -281,13 +286,13 @@ function CanvasConflictModal({
         <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
           <button
             onClick={onKeepLocal}
-            className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
+            className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
           >
             Keep local edits
           </button>
           <button
             onClick={onLoadIncoming}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
           >
             Load assistant changes
           </button>
@@ -336,6 +341,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
+  const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
@@ -806,6 +812,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setDispatching(true)
     try {
       if (req.mode === 'resume') {
+        // Capture the persisted activity log BEFORE calling resume — the
+        // resume wipes the runtime/<dispatchId>/ subtree, so any history
+        // we want in the swimlane has to be read first.
+        try {
+          const history = await window.electron.dispatches.loadActivity(projectDir, req.dispatchId)
+          if (history.length > 0) seedDispatchHistory(req.dispatchId, history)
+        } catch {
+          // Best-effort — a missing or malformed log file shouldn't block resume.
+        }
         const result = await window.electron.dispatches.resume({
           projectDir,
           dispatchId: req.dispatchId,
@@ -821,7 +836,12 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           return
         }
         setTerminalSessions(result.info)
-        setActiveTab('Terminal')
+        // Pre-seed the swimlane so every zone column appears immediately,
+        // even before the first activity event from the resumed PTYs lands.
+        const participantIds = ['conductor', ...zones.map(z => (z.data.participantId as string) || z.id)]
+        seedDispatch(req.dispatchId, participantIds)
+        setActiveDispatchId(req.dispatchId)
+        setActiveTab('Dispatch')
         // Mark the full current canvas as "dispatched" — the resumed set covers it.
         const snapshot: Record<string, string> = {}
         for (const n of zones) snapshot[n.id] = zoneHash(n)
@@ -850,7 +870,10 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         },
       )
       setTerminalSessions(sessions)
-      setActiveTab('Terminal')
+      // Land on the Dispatch tab so the user sees the swimlane forming.
+      // The activity store will pick up the new dispatchId on the first
+      // event; until then DispatchView shows the "waiting" state.
+      setActiveTab('Dispatch')
       const onlySet = req.onlyZoneIds && req.onlyZoneIds.length > 0
         ? new Set(req.onlyZoneIds)
         : null
@@ -1393,7 +1416,45 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
+  const isDispatch = activeTab === 'Dispatch'
   const isSettings = activeTab === 'Settings'
+
+  // Mirror the activity store's latestDispatchId so we render the most
+  // recently-active dispatch in the Dispatch tab. The store binds its IPC
+  // subscriptions on first import, so events that fire before the user opens
+  // the Dispatch tab are captured (the previous direct subscription only
+  // started receiving once the tab mounted, which dropped early task events).
+  const latestStoreDispatchId = useSyncExternalStore(
+    subscribeActivityStore,
+    () => getActivityStoreSnapshot().latestDispatchId,
+    () => getActivityStoreSnapshot().latestDispatchId,
+  )
+  useEffect(() => {
+    if (latestStoreDispatchId && latestStoreDispatchId !== activeDispatchId) {
+      setActiveDispatchId(latestStoreDispatchId)
+    }
+  }, [latestStoreDispatchId, activeDispatchId])
+
+  const participantLabels = useMemo(() => {
+    const map: Record<string, string> = { conductor: 'Conductor' }
+    for (const z of zones) {
+      const pid = (z.data.participantId as string) || z.id
+      map[pid] = (z.data.label as string) || z.id
+    }
+    return map
+  }, [zones])
+
+  const participantColors = useMemo(() => {
+    // Conductor gets a fixed accent so it reads as orchestration, not a zone.
+    // Zones contribute their own color so swimlane column headers match the
+    // on-canvas zone they represent.
+    const map: Record<string, string> = { conductor: '#c084fc' }
+    for (const z of zones) {
+      const pid = (z.data.participantId as string) || z.id
+      map[pid] = (z.data.color as string) || '#58A6FF'
+    }
+    return map
+  }, [zones])
   const activePaletteTool: CanvasPaletteTool | null = pendingCreate?.kind ?? (pendingEdgeDefaults ? 'edge' : null)
   const placementHint = pendingCreate
     ? `Click canvas to place ${pendingCreate.kind === 'zone' ? 'zone' : 'component'}`
@@ -1422,8 +1483,9 @@ Only discuss and advise without editing the file when the user is asking for cri
 
   return (
     <ProjectSettingsProvider value={projectSettings}>
+      <InterfaceSettingsProvider value={projectSettings.interface}>
       <ProjectDirProvider value={projectDir}>
-      <div className="flex flex-col h-screen bg-canvas text-white overflow-hidden">
+      <div className="flex flex-col h-screen bg-canvas text-fg overflow-hidden">
         <TopNav
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -1469,7 +1531,16 @@ Only discuss and advise without editing the file when the user is asking for cri
               proOptions={{ hideAttribution: true }}
               fitView
             >
-              <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
+              <Background
+                variant={projectSettings.interface.canvasBackground === 'grid' ? BackgroundVariant.Lines : BackgroundVariant.Dots}
+                gap={28}
+                size={projectSettings.interface.canvasBackground === 'grid' ? 1 : 1.8}
+                color={
+                  projectSettings.interface.theme === 'light'
+                    ? (projectSettings.interface.canvasBackground === 'grid' ? '#e2e8f0' : '#cbd5e1')
+                    : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
+                }
+              />
               <Controls />
             </ReactFlow>
 
@@ -1538,6 +1609,20 @@ Only discuss and advise without editing the file when the user is asking for cri
             />
           </div>
 
+          {isDispatch && (
+            <div className="flex-1 overflow-hidden">
+              <DispatchView
+                dispatchId={activeDispatchId}
+                participantLabels={participantLabels}
+                participantColors={participantColors}
+                onStartDispatch={onDispatch}
+                canStartDispatch={!dispatching && zones.length > 0}
+                isLaunching={dispatching}
+                onDismiss={() => setActiveTab('Canvas')}
+              />
+            </div>
+          )}
+
           {isSettings && (
             <div className="flex-1 overflow-hidden">
               <SettingsPanel
@@ -1580,6 +1665,7 @@ Only discuss and advise without editing the file when the user is asking for cri
         <UserMenu />
       </div>
       </ProjectDirProvider>
+      </InterfaceSettingsProvider>
     </ProjectSettingsProvider>
   )
 }
@@ -1618,7 +1704,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   if (session === 'loading') {
     return (
       <div className="h-screen w-screen bg-canvas flex items-center justify-center">
-        <Loader2 size={20} className="animate-spin text-slate-600" />
+        <Loader2 size={20} className="animate-spin text-fg-subtle" />
       </div>
     )
   }

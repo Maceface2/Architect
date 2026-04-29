@@ -59,6 +59,20 @@ interface ElectronAPI {
       | { ok: true; info: TerminalInfo[] }
       | { ok: false; error: 'not-found' | 'legacy-protocol' }
     >
+    loadActivity: (
+      projectDir: string,
+      dispatchId: string,
+    ) => Promise<Array<{
+      participantId: string
+      event: {
+        ts: string
+        from: string
+        kind: 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+        taskId?: string
+        content: string
+        structured?: Record<string, unknown>
+      }
+    }>>
   }
   assistant: {
     start: (
@@ -149,6 +163,32 @@ interface ElectronAPI {
         model?: string
         dispatchId?: string
       }) => void,
+    ) => () => void
+  }
+  activity: {
+    onEvent: (
+      cb: (event: {
+        dispatchId: string
+        participantId: string
+        event: {
+          ts: string
+          kind: 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+          taskId?: string
+          content: string
+          structured?: Record<string, unknown>
+        }
+      }) => void,
+    ) => () => void
+    onState: (
+      cb: (event: {
+        dispatchId: string
+        participantId: string
+        status: 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
+        lastTaskId?: string
+      }) => void,
+    ) => () => void
+    onDispatchComplete: (
+      cb: (event: { dispatchId: string; summary: string }) => void,
     ) => () => void
   }
 }

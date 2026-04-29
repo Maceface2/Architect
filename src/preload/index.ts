@@ -38,6 +38,8 @@ contextBridge.exposeInMainWorld('electron', {
       edges: unknown[]
       settings: unknown
     }) => ipcRenderer.invoke('dispatches:resume', opts),
+    loadActivity: (projectDir: string, dispatchId: string) =>
+      ipcRenderer.invoke('dispatches:load-activity', projectDir, dispatchId),
   },
 
   // Architecture assistant

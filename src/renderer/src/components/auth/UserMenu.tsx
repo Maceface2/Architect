@@ -36,8 +36,8 @@ export default function UserMenu() {
       {open && (
         <div className="absolute bottom-10 right-0 w-60 rounded-lg border border-node-border bg-[#161616] shadow-2xl overflow-hidden">
           <div className="px-3 py-2.5 border-b border-node-border">
-            <div className="text-[10px] uppercase tracking-wide text-slate-500">Account</div>
-            <div className="mt-0.5 text-xs text-slate-200 truncate" title={email}>
+            <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Account</div>
+            <div className="mt-0.5 text-xs text-fg truncate" title={email}>
               {email}
             </div>
           </div>
@@ -46,7 +46,7 @@ export default function UserMenu() {
               setOpen(false)
               void window.electron.auth.logout()
             }}
-            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-slate-300 hover:bg-node hover:text-white transition-colors"
+            className="flex items-center gap-2 w-full px-3 py-2 text-xs text-fg-muted hover:bg-node hover:text-fg transition-colors"
           >
             <LogOut size={12} />
             Sign out
@@ -55,7 +55,7 @@ export default function UserMenu() {
       )}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center w-8 h-8 rounded-md bg-node border border-node-border text-slate-300 hover:text-white hover:bg-[#222] transition-colors shadow-md"
+        className="flex items-center justify-center w-8 h-8 rounded-md bg-node border border-node-border text-fg-muted hover:text-fg hover:bg-[#222] transition-colors shadow-md"
         title={email}
         aria-label="Account menu"
       >

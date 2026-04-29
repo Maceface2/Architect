@@ -135,10 +135,10 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
       >
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
           <div>
-            <h2 className="text-lg font-semibold text-white flex items-center gap-2">
+            <h2 className="text-lg font-semibold text-fg flex items-center gap-2">
               <Rocket size={18} /> Dispatch
             </h2>
-            <p className="text-xs text-slate-400 mt-1">
+            <p className="text-xs text-fg-muted mt-1">
               {zoneCount === 0
                 ? 'No zones on the canvas.'
                 : selectedCount >= 2
@@ -148,7 +148,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                     : 'Select at least one zone below.'}
             </p>
           </div>
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors flex-shrink-0 p-1">
+          <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
             <X size={20} />
           </button>
         </div>
@@ -165,13 +165,13 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
             {zoneCount > 0 && (
               <div>
                 <div className="flex items-center justify-between mb-1.5">
-                  <label className="block text-xs font-medium text-slate-300">
-                    Zones to involve <span className="text-slate-500">· {selectedCount}/{zoneCount}</span>
+                  <label className="block text-xs font-medium text-fg-muted">
+                    Zones to involve <span className="text-fg-subtle">· {selectedCount}/{zoneCount}</span>
                   </label>
                   <div className="flex items-center gap-2 text-[11px]">
-                    <button type="button" onClick={selectAllZones} className="text-slate-400 hover:text-white transition-colors">Select all</button>
-                    <span className="text-slate-600">·</span>
-                    <button type="button" onClick={selectNoZones} className="text-slate-400 hover:text-white transition-colors">Select none</button>
+                    <button type="button" onClick={selectAllZones} className="text-fg-muted hover:text-fg transition-colors">Select all</button>
+                    <span className="text-fg-subtle">·</span>
+                    <button type="button" onClick={selectNoZones} className="text-fg-muted hover:text-fg transition-colors">Select none</button>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-1.5">
@@ -184,8 +184,8 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                         onClick={() => toggleZone(z.id)}
                         className={`px-2.5 py-1 text-xs rounded-md border transition-colors flex items-center gap-1.5 ${
                           selected
-                            ? 'bg-white/10 border-white/20 text-white'
-                            : 'bg-canvas border-white/10 text-slate-500 hover:text-slate-300'
+                            ? 'bg-white/10 border-white/20 text-fg'
+                            : 'bg-canvas border-white/10 text-fg-subtle hover:text-fg-muted'
                         }`}
                       >
                         <span
@@ -197,12 +197,12 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                     )
                   })}
                 </div>
-                <p className="text-[11px] text-slate-500 mt-1.5">Only the selected zones will receive task files. Others remain idle for this dispatch.</p>
+                <p className="text-[11px] text-fg-subtle mt-1.5">Only the selected zones will receive task files. Others remain idle for this dispatch.</p>
               </div>
             )}
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">User prompt <span className="text-red-400/70">*</span></label>
+              <label className="block text-xs font-medium text-fg-muted mb-1.5">User prompt <span className="text-red-400/70">*</span></label>
               <textarea
                 ref={promptRef}
                 value={prompt}
@@ -215,37 +215,37 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 }}
                 placeholder="Describe what this dispatch should do…"
                 rows={5}
-                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white resize-y focus:outline-none focus:border-accent"
+                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg resize-y focus:outline-none focus:border-accent"
               />
-              <p className="text-[11px] text-slate-500 mt-1">Cmd/Ctrl+Enter to dispatch.</p>
+              <p className="text-[11px] text-fg-subtle mt-1">Cmd/Ctrl+Enter to dispatch.</p>
             </div>
 
             <div>
-              <label className="block text-xs font-medium text-slate-300 mb-1.5">
+              <label className="block text-xs font-medium text-fg-muted mb-1.5">
                 Orchestrator CLI
-                <span className="ml-1 text-[10px] text-slate-500 uppercase tracking-wider">Conductor</span>
+                <span className="ml-1 text-[10px] text-fg-subtle uppercase tracking-wider">Conductor</span>
               </label>
               <select
                 value={conductorRuntime}
                 onChange={e => setConductorRuntime(e.target.value as AgentRuntime)}
-                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-accent"
+                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
               >
                 {AGENT_RUNTIMES.map(r => (
                   <option key={r.id} value={r.id}>{r.label}</option>
                 ))}
               </select>
-              <p className="text-[11px] text-slate-500 mt-1">
+              <p className="text-[11px] text-fg-subtle mt-1">
                 Runs the multi-zone Conductor. Zones keep their individually configured CLIs.
               </p>
             </div>
 
             <div className="grid grid-cols-2 gap-4">
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Model ({runtimeMeta.label})</label>
+                <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
                 <select
                   value={model}
                   onChange={e => setModel(e.target.value)}
-                  className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white focus:outline-none focus:border-accent"
+                  className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
                 >
                   {runtimeMeta.suggestedModels.map(m => (
                     <option key={m} value={m}>{m}</option>
@@ -257,8 +257,8 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
               </div>
 
               <div>
-                <label className="block text-xs font-medium text-slate-300 mb-1.5">Permissions</label>
-                <label className="flex items-center gap-2 bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-white cursor-pointer">
+                <label className="block text-xs font-medium text-fg-muted mb-1.5">Permissions</label>
+                <label className="flex items-center gap-2 bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg cursor-pointer">
                   <input
                     type="checkbox"
                     checked={planMode}
@@ -266,7 +266,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                   />
                   <span>Plan mode</span>
                 </label>
-                <p className="text-[11px] text-slate-500 mt-1">
+                <p className="text-[11px] text-fg-subtle mt-1">
                   {selectedCount >= 2
                     ? 'Applied to the Architect coordinator only — zones still execute autonomously.'
                     : 'Claude will plan before making changes.'}
@@ -277,16 +277,16 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
         ) : (
           <div className="flex-1 overflow-y-auto px-6 py-5 space-y-3">
             <div className="flex items-center justify-between">
-              <label className="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+              <label className="text-xs font-medium text-fg-muted flex items-center gap-1.5">
                 <History size={13} /> Previous dispatches
               </label>
-              <span className="text-[11px] text-slate-500">{priorSessions.length} saved</span>
+              <span className="text-[11px] text-fg-subtle">{priorSessions.length} saved</span>
             </div>
 
             {loading ? (
-              <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">Loading…</p>
+              <p className="text-xs text-fg-subtle bg-canvas border border-white/5 rounded-md px-3 py-3">Loading…</p>
             ) : priorSessions.length === 0 ? (
-              <p className="text-xs text-slate-500 bg-canvas border border-white/5 rounded-md px-3 py-3">
+              <p className="text-xs text-fg-subtle bg-canvas border border-white/5 rounded-md px-3 py-3">
                 No prior dispatches. Run a new dispatch to build history.
               </p>
             ) : (
@@ -310,7 +310,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                                 if (e.key === 'Enter') { e.preventDefault(); void commitRename() }
                                 if (e.key === 'Escape') { e.preventDefault(); setEditing(null) }
                               }}
-                              className="flex-1 bg-surface border border-white/20 rounded px-2 py-1 text-xs text-white focus:outline-none focus:border-accent"
+                              className="flex-1 bg-surface border border-white/20 rounded px-2 py-1 text-xs text-fg focus:outline-none focus:border-accent"
                             />
                             <button
                               onClick={commitRename}
@@ -321,7 +321,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                             </button>
                             <button
                               onClick={() => setEditing(null)}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-400 hover:bg-white/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-muted hover:bg-white/10"
                               title="Cancel"
                             >
                               <X size={12} />
@@ -335,24 +335,24 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                               title="Resume this dispatch (coordinator + all zones)"
                             >
                               <div className="flex items-center gap-2">
-                                <span className="text-slate-200 font-medium truncate">
+                                <span className="text-fg font-medium truncate">
                                   {record.summary || record.userPrompt || '(no prompt)'}
                                 </span>
                               </div>
-                              <div className="text-slate-500 mt-0.5 truncate">
+                              <div className="text-fg-subtle mt-0.5 truncate">
                                 {when} · {record.zoneLabels.join(' · ') || `${record.zoneIds.length} zones`} · {record.model}{record.planMode ? ' · plan' : ''}
                               </div>
                             </button>
                             <button
                               onClick={() => setEditing({ id: record.architectSessionId, draft: record.summary || record.userPrompt || '' })}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:text-white hover:bg-white/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-subtle hover:text-fg hover:bg-white/10"
                               title="Rename"
                             >
                               <Pencil size={12} />
                             </button>
                             <button
                               onClick={() => handleDelete(record)}
-                              className="w-6 h-6 flex items-center justify-center rounded text-slate-500 hover:text-red-400 hover:bg-red-400/10"
+                              className="w-6 h-6 flex items-center justify-center rounded text-fg-subtle hover:text-red-400 hover:bg-red-400/10"
                               title="Delete"
                             >
                               <Trash2 size={12} />
@@ -371,7 +371,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-white/10">
           <button
             onClick={onClose}
-            className="px-4 py-1.5 text-sm text-slate-300 hover:text-white transition-colors"
+            className="px-4 py-1.5 text-sm text-fg-muted hover:text-fg transition-colors"
           >
             Cancel
           </button>
@@ -379,7 +379,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
             <button
               onClick={handleSubmitNew}
               disabled={!canSubmitNew}
-              className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-white hover:bg-accent/90 disabled:bg-white/5 disabled:text-slate-500 disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
+              className="px-4 py-1.5 text-sm font-medium rounded-md bg-accent text-fg hover:bg-accent/90 disabled:bg-white/5 disabled:text-fg-subtle disabled:cursor-not-allowed transition-colors flex items-center gap-1.5"
             >
               <Rocket size={14} /> Dispatch
             </button>
@@ -396,8 +396,8 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       onClick={onClick}
       className={`px-3 py-2 text-xs font-medium border-b-2 transition-colors ${
         active
-          ? 'text-white border-accent'
-          : 'text-slate-400 border-transparent hover:text-slate-200'
+          ? 'text-fg border-accent'
+          : 'text-fg-muted border-transparent hover:text-fg'
       }`}
     >
       {children}
