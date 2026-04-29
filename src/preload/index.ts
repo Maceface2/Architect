@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld('electron', {
     }) => ipcRenderer.invoke('dispatches:resume', opts),
     loadActivity: (projectDir: string, dispatchId: string) =>
       ipcRenderer.invoke('dispatches:load-activity', projectDir, dispatchId),
+    loadOrchestration: (projectDir: string, dispatchId: string) =>
+      ipcRenderer.invoke('dispatches:load-orchestration', projectDir, dispatchId),
   },
 
   // Architecture assistant
@@ -245,6 +247,28 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_: unknown, event: { dispatchId: string; summary: string }) => cb(event)
       ipcRenderer.on('dispatch:complete', handler)
       return () => ipcRenderer.removeListener('dispatch:complete', handler)
+    },
+    onOrchestration: (
+      cb: (event: {
+        dispatchId: string
+        event: {
+          ts: string
+          kind:
+            | 'dispatch-started'
+            | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+            | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+            | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+          participantId?: string
+          taskId?: string
+          summary: string
+          structured?: Record<string, unknown>
+        }
+      }) => void,
+    ) => {
+      const handler = (_: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+      ipcRenderer.on('activity:orchestration', handler)
+      return () => ipcRenderer.removeListener('activity:orchestration', handler)
     },
   },
 })

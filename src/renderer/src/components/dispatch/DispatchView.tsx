@@ -4,9 +4,14 @@ import DispatchSwimlane from './DispatchSwimlane'
 import {
   getActivityStoreSnapshot,
   subscribeActivityStore,
-  type ActivityEnvelope,
   type DispatchActivityState,
+  type StoredActivityEnvelope,
+  type StoredOrchestrationEvent,
 } from '../../lib/activityStore'
+
+type LogRow =
+  | { kind: 'activity'; seq: number; envelope: StoredActivityEnvelope }
+  | { kind: 'orchestration'; seq: number; event: StoredOrchestrationEvent }
 
 interface Props {
   dispatchId: string | null
@@ -35,7 +40,18 @@ export default function DispatchView({
   const snapshot = useSyncExternalStore(subscribeActivityStore, getActivityStoreSnapshot, getActivityStoreSnapshot)
   const state: DispatchActivityState | null = dispatchId ? snapshot.byDispatch.get(dispatchId) ?? null : null
 
-  const filteredLog: ActivityEnvelope[] = useMemo(() => state?.log ?? [], [state])
+  // Merge agent activity + harness orchestration into one chronological table
+  // ordered by the harness arrival seq (same clock the swimlane uses). Two
+  // separate ts-sorted arrays would interleave incorrectly because agent ts
+  // can lag wall-clock; seq is the only causal clock that matches reality.
+  const logRows: LogRow[] = useMemo(() => {
+    if (!state) return []
+    const rows: LogRow[] = []
+    for (const env of state.log) rows.push({ kind: 'activity', seq: env.seq, envelope: env })
+    for (const ev of state.orchestrationLog) rows.push({ kind: 'orchestration', seq: ev.seq, event: ev })
+    rows.sort((a, b) => a.seq - b.seq)
+    return rows
+  }, [state])
   const showEmptyState = !isLaunching && dispatchId === null && snapshot.byDispatch.size === 0
 
   const status = isLaunching && !state ? 'active' : computeStatus(state)
@@ -50,7 +66,7 @@ export default function DispatchView({
           <StatusDot status={status} />
           <span className="text-[15px] text-fg font-medium">{statusLabel(status)}</span>
           {dispatchId && (
-            <span className="font-mono text-[12px] text-fg-subtle truncate" title={dispatchId}>
+            <span className="text-[12px] text-fg-subtle truncate" title={dispatchId}>
               {dispatchId}
             </span>
           )}
@@ -93,7 +109,7 @@ export default function DispatchView({
             participantColors={participantColors}
           />
         ) : (
-          <LogView events={filteredLog} participantLabels={participantLabels} />
+          <LogView rows={logRows} participantLabels={participantLabels} />
         )}
       </div>
     </div>
@@ -162,8 +178,8 @@ function EmptyState({ onStart, canStart }: { onStart: () => void; canStart: bool
   )
 }
 
-function LogView({ events, participantLabels }: { events: ActivityEnvelope[]; participantLabels?: Record<string, string> }) {
-  if (events.length === 0) {
+function LogView({ rows, participantLabels }: { rows: LogRow[]; participantLabels?: Record<string, string> }) {
+  if (rows.length === 0) {
     return (
       <div className="h-full flex items-center justify-center text-fg-subtle text-sm">
         Waiting for the first activity…
@@ -171,18 +187,41 @@ function LogView({ events, participantLabels }: { events: ActivityEnvelope[]; pa
     )
   }
   return (
-    <div className="h-full overflow-y-auto font-mono text-[11px]">
+    <div className="h-full overflow-y-auto text-[11px]">
       <table className="w-full">
         <tbody>
-          {events.map((entry, i) => {
-            const label = participantLabels?.[entry.participantId] ?? entry.participantId
+          {rows.map((row, i) => {
+            if (row.kind === 'activity') {
+              const env = row.envelope
+              const label = participantLabels?.[env.participantId] ?? env.participantId
+              const decisionTag = formatStructuredDecision(env.event.structured, participantLabels)
+              return (
+                <tr key={i} className="border-b border-node-border/30 hover:bg-panel/40">
+                  <td className="px-3 py-1 text-fg-subtle align-top whitespace-nowrap">{new Date(env.event.ts).toLocaleTimeString()}</td>
+                  <td className="px-3 py-1 text-fg-muted align-top whitespace-nowrap">{label}</td>
+                  <td className="px-3 py-1 text-fg align-top whitespace-nowrap">{env.event.kind}</td>
+                  <td className="px-3 py-1 text-fg-muted align-top whitespace-nowrap">{env.event.taskId ?? '—'}</td>
+                  <td className="px-3 py-1 text-fg-muted">
+                    <div>{env.event.content}</div>
+                    {decisionTag && (
+                      <div className="text-[10px] text-fg-subtle mt-0.5">{decisionTag}</div>
+                    )}
+                  </td>
+                </tr>
+              )
+            }
+            // Orchestration row: italic kind to read as a harness observation.
+            const ev = row.event
+            const label = ev.participantId
+              ? (participantLabels?.[ev.participantId] ?? ev.participantId)
+              : 'harness'
             return (
-              <tr key={i} className="border-b border-node-border/30 hover:bg-panel/40">
-                <td className="px-3 py-1 text-fg-subtle align-top whitespace-nowrap">{new Date(entry.event.ts).toLocaleTimeString()}</td>
-                <td className="px-3 py-1 text-fg-muted align-top whitespace-nowrap">{label}</td>
-                <td className="px-3 py-1 text-fg align-top whitespace-nowrap">{entry.event.kind}</td>
-                <td className="px-3 py-1 text-fg-muted align-top whitespace-nowrap">{entry.event.taskId ?? '—'}</td>
-                <td className="px-3 py-1 text-fg-muted">{entry.event.content}</td>
+              <tr key={i} className="border-b border-node-border/30 hover:bg-panel/40 bg-panel/20">
+                <td className="px-3 py-1 text-fg-subtle align-top whitespace-nowrap">{new Date(ev.ts).toLocaleTimeString()}</td>
+                <td className="px-3 py-1 text-fg-subtle italic align-top whitespace-nowrap">{label}</td>
+                <td className="px-3 py-1 text-fg-muted italic align-top whitespace-nowrap">{ev.kind}</td>
+                <td className="px-3 py-1 text-fg-muted align-top whitespace-nowrap">{ev.taskId ?? '—'}</td>
+                <td className="px-3 py-1 text-fg-muted">{ev.summary}</td>
               </tr>
             )
           })}
@@ -190,4 +229,43 @@ function LogView({ events, participantLabels }: { events: ActivityEnvelope[]; pa
       </table>
     </div>
   )
+}
+
+// Compact one-line tag for the conductor's structured decision payload.
+// Keeps the LogView scannable: at a glance the user can tell whether a
+// `kind:note` line carried a real assign/answer/final/noop or was just
+// narration.
+function formatStructuredDecision(
+  structured: Record<string, unknown> | undefined,
+  participantLabels?: Record<string, string>,
+): string | null {
+  if (!structured || typeof structured !== 'object') return null
+  const type = structured.type
+  if (typeof type !== 'string') return null
+  const labelOf = (pid: string): string => participantLabels?.[pid] ?? pid
+  if (type === 'assign' && Array.isArray(structured.assignments)) {
+    const assignments = structured.assignments as Array<{ zoneId?: string; taskId?: string }>
+    if (assignments.length === 1) {
+      const a = assignments[0]
+      const zone = typeof a?.zoneId === 'string' ? labelOf(a.zoneId) : '?'
+      const taskId = typeof a?.taskId === 'string' ? ` (${a.taskId})` : ''
+      return `assign → ${zone}${taskId}`
+    }
+    const zones = assignments
+      .map(a => (typeof a?.zoneId === 'string' ? labelOf(a.zoneId) : '?'))
+      .join(', ')
+    return `assign × ${assignments.length} → ${zones}`
+  }
+  if (type === 'answer' && typeof structured.targetZoneId === 'string') {
+    return `answer → ${labelOf(structured.targetZoneId)}`
+  }
+  if (type === 'final' && typeof structured.summary === 'string') {
+    const s = structured.summary
+    return `final: ${s.length > 80 ? s.slice(0, 80) + '…' : s}`
+  }
+  if (type === 'noop') {
+    const reason = typeof structured.reason === 'string' ? structured.reason : ''
+    return reason ? `noop: ${reason}` : 'noop'
+  }
+  return null
 }

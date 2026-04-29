@@ -250,6 +250,14 @@ ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, di
   return out
 })
 
+// Sibling of dispatches:load-activity for the harness-only orchestration log.
+// Lets the renderer seed the swimlane on resume with prior-session decisions
+// (status transitions, retries, conductor decisions, etc.) before the wipe.
+ipcMain.handle('dispatches:load-orchestration', async (_event, projectDir: string, dispatchId: string) => {
+  const { orchestrationLogPath, readAllOrchestration } = await import('./orchestrator/orchestrationLog')
+  return readAllOrchestration(orchestrationLogPath(projectDir, dispatchId))
+})
+
 ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode, opts?: StartAssistantOpts) => {
   if (!mainWindow) return null
   return startAssistant(mainWindow, projectDir, contextMd, runtime, mode, opts)

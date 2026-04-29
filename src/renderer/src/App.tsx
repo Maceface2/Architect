@@ -66,7 +66,7 @@ import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
-import { getActivityStoreSnapshot, seedDispatch, seedDispatchHistory, subscribeActivityStore } from './lib/activityStore'
+import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
 
@@ -816,8 +816,17 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         // resume wipes the runtime/<dispatchId>/ subtree, so any history
         // we want in the swimlane has to be read first.
         try {
-          const history = await window.electron.dispatches.loadActivity(projectDir, req.dispatchId)
-          if (history.length > 0) seedDispatchHistory(req.dispatchId, history)
+          const [activity, orchestration] = await Promise.all([
+            window.electron.dispatches.loadActivity(projectDir, req.dispatchId).catch(() => []),
+            window.electron.dispatches.loadOrchestration(projectDir, req.dispatchId).catch(() => []),
+          ])
+          if (activity.length > 0 || orchestration.length > 0) {
+            // Single-shot interleaved seed so the assigned seq matches the
+            // chronological order from disk. Two separate seed calls would
+            // assign all activity events lower seqs than orchestration events,
+            // breaking ordering.
+            seedDispatchCombined(req.dispatchId, activity, orchestration)
+          }
         } catch {
           // Best-effort — a missing or malformed log file shouldn't block resume.
         }

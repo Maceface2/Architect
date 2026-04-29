@@ -73,6 +73,22 @@ interface ElectronAPI {
         structured?: Record<string, unknown>
       }
     }>>
+    loadOrchestration: (
+      projectDir: string,
+      dispatchId: string,
+    ) => Promise<Array<{
+      ts: string
+      kind:
+        | 'dispatch-started'
+        | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+        | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+        | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+        | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+      participantId?: string
+      taskId?: string
+      summary: string
+      structured?: Record<string, unknown>
+    }>>
   }
   assistant: {
     start: (
@@ -189,6 +205,24 @@ interface ElectronAPI {
     ) => () => void
     onDispatchComplete: (
       cb: (event: { dispatchId: string; summary: string }) => void,
+    ) => () => void
+    onOrchestration: (
+      cb: (event: {
+        dispatchId: string
+        event: {
+          ts: string
+          kind:
+            | 'dispatch-started'
+            | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+            | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+            | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+          participantId?: string
+          taskId?: string
+          summary: string
+          structured?: Record<string, unknown>
+        }
+      }) => void,
     ) => () => void
   }
 }

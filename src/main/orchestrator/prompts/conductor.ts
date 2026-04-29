@@ -75,19 +75,25 @@ export function buildConductorPrompt(input: ConductorPromptInput): string {
 - a zone has gone stale ("Zone X stale for Nm on t-abc. Retry / reassign / fail?")
 - work is complete ("All zones done. Produce final summary.")
 
-For each incoming user turn, respond by appending **exactly one** activity-log line to:
-
-\`${activityLog}\`
-
-**Use this exact shell command shape**:
+For each incoming user turn, record **exactly one** activity line via the harness helper. The helper handles JSON encoding, the timestamp, and the \`from\` field — and survives any command wrapper your environment uses (rtk, ssh, screen, etc.):
 
 \`\`\`bash
-cat >> '${activityLog}' << 'ACT_EOF'
+"$ARCHITECT_RECORD" note "<one-line human summary>" --structured '<decision-json>'
+\`\`\`
+
+Replace \`<decision-json>\` with one of the decision shapes below. Keep the \`<one-line human summary>\` under 8 KB.
+
+**Fallback** — if \`$ARCHITECT_RECORD\` is somehow missing, append directly to the activity log (the path is also exposed as \`$ARCHITECT_ACTIVITY_LOG\`, which resolves to \`${activityLog}\`):
+
+\`\`\`bash
+cat >> "$ARCHITECT_ACTIVITY_LOG" << 'ACT_EOF'
 {"ts":"<iso-utc>","from":"conductor","kind":"note","content":"<one-line human summary>","structured":<decision>}
 ACT_EOF
 \`\`\`
 
-Replace \`<iso-utc>\` with the current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). The \`from\` field must be the literal string \`"conductor"\` — the harness rejects events whose \`from\` doesn't match the activity log's owner. Keep \`content\` under 8 KB. Replace \`<decision>\` with one of:
+The \`from\` field must be \`"conductor"\` — the harness rejects events whose \`from\` doesn't match the activity log's owner.
+
+Decision shapes for \`<decision-json>\` / \`<decision>\`:
 
 - **Assign work** — dispatch task(s) to zones:
   \`\`\`json

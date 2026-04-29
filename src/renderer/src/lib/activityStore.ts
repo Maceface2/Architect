@@ -14,6 +14,13 @@
 
 type ActivityKind = 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
 
+export type OrchestrationKind =
+  | 'dispatch-started'
+  | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+  | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+  | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+  | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+
 export type ParticipantStatus = 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
 
 export type BlockStatus = 'running' | 'done' | 'failed' | 'blocked'
@@ -32,6 +39,20 @@ export interface ActivityEnvelope {
   event: ActivityEventEntry
 }
 
+export interface OrchestrationEvent {
+  ts: string
+  kind: OrchestrationKind
+  participantId?: string
+  taskId?: string
+  summary: string
+  structured?: Record<string, unknown>
+}
+
+export interface OrchestrationEnvelope {
+  dispatchId: string
+  event: OrchestrationEvent
+}
+
 export interface TaskBlock {
   taskId: string
   participantId: string
@@ -42,12 +63,26 @@ export interface TaskBlock {
   events: ActivityEventEntry[]
 }
 
+// Stored entries carry a monotonic `seq` assigned at apply-time. The swimlane
+// orders by seq instead of the embedded `ts` because agent-supplied ts can lag
+// real time (e.g. an agent that emits task-received and done in quick
+// succession with a stale cached timestamp); harness arrival order is the only
+// reliable causal clock for interleaving these two streams.
+export type StoredActivityEnvelope = ActivityEnvelope & { seq: number }
+export type StoredOrchestrationEvent = OrchestrationEvent & { seq: number }
+
 export interface DispatchActivityState {
   dispatchId: string
   blocks: Map<string, TaskBlock>
   participantsOrder: string[]
   participantStatuses: Map<string, ParticipantStatus>
-  log: ActivityEnvelope[]
+  log: StoredActivityEnvelope[]
+  // Harness-authored orchestration log (status transitions, retries, conductor
+  // decisions, etc.). Kept separate from `log` so swimlane rendering can
+  // distinguish "agent said this" from "harness observed this", and so the
+  // task-block reducer at applyEvent doesn't try to attach orchestration
+  // events to phantom task blocks.
+  orchestrationLog: StoredOrchestrationEvent[]
   firstTs: number
   lastEventTs: number
   completedSummary: string | null
@@ -61,12 +96,20 @@ export interface ActivityStoreSnapshot {
 }
 
 const MAX_LOG_PER_DISPATCH = 1000
+const MAX_ORCH_PER_DISPATCH = 1000
 const MAX_DISPATCHES_RETAINED = 12
 
 let snapshot: ActivityStoreSnapshot = {
   latestDispatchId: null,
   byDispatch: new Map(),
 }
+
+// Module-level monotonic sequence. Bumped each time the store accepts an
+// envelope (live IPC or seed). Provides a single causal clock across both the
+// activity log and the orchestration log so the swimlane can render events in
+// arrival order regardless of what `event.ts` claims.
+let nextSeq = 0
+function bumpSeq(): number { nextSeq += 1; return nextSeq }
 
 const listeners = new Set<() => void>()
 let bound = false
@@ -89,6 +132,10 @@ function ensureBound() {
   })
   window.electron.activity.onDispatchComplete(({ dispatchId, summary }) => {
     snapshot = applyComplete(snapshot, dispatchId, summary)
+    notify()
+  })
+  window.electron.activity.onOrchestration((payload: OrchestrationEnvelope) => {
+    snapshot = applyOrchestration(snapshot, payload)
     notify()
   })
 }
@@ -152,6 +199,7 @@ export function seedDispatch(dispatchId: string, participantIds: string[]): void
         participantsOrder: order,
         participantStatuses: new Map(),
         log: [],
+        orchestrationLog: [],
         firstTs: 0,
         lastEventTs: 0,
         completedSummary: null,
@@ -170,6 +218,7 @@ function ensureDispatch(state: ActivityStoreSnapshot, dispatchId: string): Dispa
     participantsOrder: [],
     participantStatuses: new Map(),
     log: [],
+    orchestrationLog: [],
     firstTs: 0,
     lastEventTs: 0,
     completedSummary: null,
@@ -207,9 +256,10 @@ function applyEvent(state: ActivityStoreSnapshot, payload: ActivityEnvelope): Ac
   const tsRaw = Date.parse(payload.event.ts)
   const ts = Number.isFinite(tsRaw) ? tsRaw : Date.now()
   const dispatch = ensureDispatch(state, payload.dispatchId)
+  const stored: StoredActivityEnvelope = { ...payload, seq: bumpSeq() }
   const log = dispatch.log.length >= MAX_LOG_PER_DISPATCH
-    ? [...dispatch.log.slice(-MAX_LOG_PER_DISPATCH + 1), payload]
-    : [...dispatch.log, payload]
+    ? [...dispatch.log.slice(-MAX_LOG_PER_DISPATCH + 1), stored]
+    : [...dispatch.log, stored]
   const participantsOrder = dispatch.participantsOrder.includes(payload.participantId)
     ? dispatch.participantsOrder
     : [...dispatch.participantsOrder, payload.participantId]
@@ -269,4 +319,82 @@ function applyComplete(state: ActivityStoreSnapshot, dispatchId: string, summary
   const updated: DispatchActivityState = { ...dispatch, completedSummary: summary }
   const byDispatch = new Map(state.byDispatch).set(dispatchId, updated)
   return { ...state, byDispatch }
+}
+
+function applyOrchestration(state: ActivityStoreSnapshot, payload: OrchestrationEnvelope): ActivityStoreSnapshot {
+  const dispatch = ensureDispatch(state, payload.dispatchId)
+  const stored: StoredOrchestrationEvent = { ...payload.event, seq: bumpSeq() }
+  const log = dispatch.orchestrationLog.length >= MAX_ORCH_PER_DISPATCH
+    ? [...dispatch.orchestrationLog.slice(-MAX_ORCH_PER_DISPATCH + 1), stored]
+    : [...dispatch.orchestrationLog, stored]
+  // Surface any participantId not seen yet so dispatch-wide events from a
+  // not-yet-active zone don't keep its column hidden.
+  const pid = payload.event.participantId
+  const participantsOrder = pid && !dispatch.participantsOrder.includes(pid)
+    ? [...dispatch.participantsOrder, pid]
+    : dispatch.participantsOrder
+  const updated: DispatchActivityState = { ...dispatch, orchestrationLog: log, participantsOrder }
+  const byDispatch = new Map(state.byDispatch).set(payload.dispatchId, updated)
+  return { ...state, byDispatch }
+}
+
+// Bulk-seed orchestration history on resume — same flow as seedDispatchHistory
+// but for the harness-only orchestration log file.
+export function seedDispatchOrchestration(
+  dispatchId: string,
+  history: OrchestrationEvent[],
+): void {
+  ensureBound()
+  let next = snapshot
+  for (const event of history) {
+    next = applyOrchestration(next, { dispatchId, event })
+  }
+  snapshot = next
+  notify()
+}
+
+// Single-shot resume seeder. Interleaves the activity-log history and the
+// orchestration-log history by `ts` BEFORE applying so the assigned seq
+// matches chronological order from the prior session — without this, all
+// activity events would land before all orchestration events, mangling the
+// resumed swimlane.
+export function seedDispatchCombined(
+  dispatchId: string,
+  activityHistory: Array<{ participantId: string; event: { ts: string; kind: string; taskId?: string; content: string; structured?: Record<string, unknown> } }>,
+  orchestrationHistory: OrchestrationEvent[],
+): void {
+  ensureBound()
+  type Item =
+    | { kind: 'activity'; ts: number; payload: ActivityEnvelope }
+    | { kind: 'orch'; ts: number; payload: OrchestrationEnvelope }
+  const items: Item[] = []
+  for (const a of activityHistory) {
+    const ts = Date.parse(a.event.ts)
+    items.push({
+      kind: 'activity',
+      ts: Number.isFinite(ts) ? ts : 0,
+      payload: {
+        dispatchId,
+        participantId: a.participantId,
+        event: {
+          ts: a.event.ts,
+          kind: a.event.kind as ActivityEventEntry['kind'],
+          taskId: a.event.taskId,
+          content: a.event.content,
+          structured: a.event.structured,
+        },
+      },
+    })
+  }
+  for (const o of orchestrationHistory) {
+    const ts = Date.parse(o.ts)
+    items.push({ kind: 'orch', ts: Number.isFinite(ts) ? ts : 0, payload: { dispatchId, event: o } })
+  }
+  items.sort((a, b) => a.ts - b.ts)
+  let next = snapshot
+  for (const item of items) {
+    next = item.kind === 'activity' ? applyEvent(next, item.payload) : applyOrchestration(next, item.payload)
+  }
+  snapshot = next
+  notify()
 }

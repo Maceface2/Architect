@@ -40,6 +40,9 @@ import {
 import { runZone } from '../terminals'
 import { CONDUCTOR_PARTICIPANT_ID, Scheduler, type SchedulerZone } from './scheduler'
 import { composeInitialTurn, composePlanModeInitialTurn } from './conductor'
+import { activityLogPath } from './activity'
+import { appendOrchestration, orchestrationLogPath, type OrchestrationEvent } from './orchestrationLog'
+import { recordHelperPath } from './recordHelper'
 import { setupWorkspaceV5, type WorkspaceInput, type WorkspaceZoneInput } from './workspace'
 import { buildComponentEdgeSpecs } from './componentEdges'
 import type { ComponentEdgeSpec } from './prompts/componentEdges'
@@ -242,6 +245,49 @@ function buildSchedulerZones(workspaceZones: WorkspaceZoneInput[], filteredZones
   })
 }
 
+// Append-and-broadcast helper for orchestration events. Pulled out of the
+// SchedulerDeps closure so both the scheduler and the dispatch entry points
+// (e.g. the dispatch-started kickoff) can emit through the same path.
+function emitOrchestrationDirect(
+  projectDir: string,
+  dispatchId: string,
+  broadcastFn: typeof broadcast,
+  event: OrchestrationEvent,
+): void {
+  try {
+    appendOrchestration(orchestrationLogPath(projectDir, dispatchId), event)
+  } catch (err) {
+    console.error('[dispatch-v5] failed to append orchestration log', err)
+  }
+  broadcastFn('activity:orchestration', { dispatchId, event })
+}
+
+// Shared SchedulerDeps builder used by both startDispatchV5 and resumeDispatchV5.
+// Keeps the wiring identical between the two entry points so a deps change
+// (e.g. adding recordOrchestration) doesn't have to be remembered in two places.
+function buildSchedulerDeps(
+  projectDir: string,
+  dispatchId: string,
+  broadcastFn: typeof broadcast,
+) {
+  return {
+    submitTurn: (ptyId: string, text: string) => submitTurnToTerminal(ptyId, text),
+    broadcastActivity: (event: { dispatchId: string; participantId: string; event: unknown }) =>
+      broadcastFn('activity:event', event),
+    broadcastState: (event: { dispatchId: string; participantId: string; status: string; lastTaskId?: string }) =>
+      broadcastFn('activity:state', event),
+    onDispatchComplete: (summary: string) => broadcastFn('dispatch:complete', { dispatchId, summary }),
+    onPendingTasksChanged: () => {
+      // setDispatchPendingTasks is called inside the scheduler for durable
+      // persistence; this callback is the IPC broadcast hook. (No listeners
+      // today — renderer reads state via activity:state.)
+    },
+    getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
+    recordOrchestration: (event: OrchestrationEvent) =>
+      emitOrchestrationDirect(projectDir, dispatchId, broadcastFn, event),
+  }
+}
+
 export async function startDispatchV5(input: StartDispatchV5Input): Promise<TerminalInfo[]> {
   const { win, nodes, edges, projectDir, rawSettings, dispatch } = input
   killAll()
@@ -299,6 +345,17 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   )
   setupWorkspaceV5(workspaceInput)
 
+  // Emit the originating user prompt as the first orchestration line so the
+  // swimlane's conductor column opens with the actual task instead of a blank
+  // wait until the conductor's first decision lands.
+  emitOrchestrationDirect(projectDir, dispatchId, broadcast, {
+    ts: new Date().toISOString(),
+    kind: 'dispatch-started',
+    participantId: CONDUCTOR_PARTICIPANT_ID,
+    summary: userPrompt || '(no user prompt)',
+    structured: { model: dispatch.model, planMode: dispatch.planMode === true },
+  })
+
   // Broadcast the initial TerminalInfo set so the renderer can begin rendering
   // tabs incrementally as each PTY spawns.
   const wsByZoneId = new Map(workspaceZones.map(w => [w.zoneId, w]))
@@ -333,7 +390,14 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
     // a session file (required for capture + later resume). Without this the
     // zone sits at its prompt and the session poll times out.
     const composed = adapter.composeSystemAndUser(systemPrompt, ZONE_BOOTSTRAP_PROMPT)
-    const env: Record<string, string> = {}
+    const env: Record<string, string> = {
+      // Helper script + identity vars so agents can write activity-log lines
+      // via "$ARCHITECT_RECORD <kind> <content> ..." instead of constructing
+      // heredocs (which breaks under command-rewriters like rtk).
+      ARCHITECT_RECORD: recordHelperPath(projectDir, dispatchId),
+      ARCHITECT_PARTICIPANT_ID: ws.participantId,
+      ARCHITECT_ACTIVITY_LOG: activityLogPath(projectDir, dispatchId, ws.participantId),
+    }
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
@@ -433,7 +497,11 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       id: CONDUCTOR_PTY_ID,
       label: 'Conductor',
       runtime: conductorRuntime,
-      env: {},
+      env: {
+        ARCHITECT_RECORD: recordHelperPath(projectDir, dispatchId),
+        ARCHITECT_PARTICIPANT_ID: CONDUCTOR_PARTICIPANT_ID,
+        ARCHITECT_ACTIVITY_LOG: activityLogPath(projectDir, dispatchId, CONDUCTOR_PARTICIPANT_ID),
+      },
       cwd: projectDir,
       initialPrompt: conductorComposed.firstUserPrompt,
       appendSystemPrompt: conductorComposed.appendSystemPromptFlag,
@@ -502,18 +570,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       staleEscalationMs: settings.harnessTimeouts.staleEscalationMs,
       statusTickMs: STATUS_TICK_MS,
     },
-    {
-      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
-      broadcastActivity: event => broadcast('activity:event', event),
-      broadcastState: event => broadcast('activity:state', event),
-      onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId, summary }),
-      onPendingTasksChanged: () => {
-        // setDispatchPendingTasks is called inside the scheduler for
-        // durable persistence; this callback is the IPC broadcast hook.
-        // (No listeners today — renderer reads state via activity:state.)
-      },
-      getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
-    },
+    buildSchedulerDeps(projectDir, dispatchId, broadcast),
   )
 
   setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
@@ -611,7 +668,11 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       continue
     }
 
-    const env: Record<string, string> = {}
+    const env: Record<string, string> = {
+      ARCHITECT_RECORD: recordHelperPath(projectDir, pinnedDispatchId),
+      ARCHITECT_PARTICIPANT_ID: participantId,
+      ARCHITECT_ACTIVITY_LOG: activityLogPath(projectDir, pinnedDispatchId, participantId),
+    }
     for (const { key, value } of zone.data.envVars ?? []) {
       if (key) env[key] = value
     }
@@ -638,7 +699,11 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
     id: CONDUCTOR_PTY_ID,
     label: 'Conductor',
     runtime: conductorRuntime,
-    env: {},
+    env: {
+      ARCHITECT_RECORD: recordHelperPath(projectDir, pinnedDispatchId),
+      ARCHITECT_PARTICIPANT_ID: CONDUCTOR_PARTICIPANT_ID,
+      ARCHITECT_ACTIVITY_LOG: activityLogPath(projectDir, pinnedDispatchId, CONDUCTOR_PARTICIPANT_ID),
+    },
     cwd: projectDir,
     model: record.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime],
     resumeSessionId: record.architectSessionId,
@@ -660,14 +725,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       staleEscalationMs: settings.harnessTimeouts.staleEscalationMs,
       statusTickMs: STATUS_TICK_MS,
     },
-    {
-      submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
-      broadcastActivity: event => broadcast('activity:event', event),
-      broadcastState: event => broadcast('activity:state', event),
-      onDispatchComplete: summary => broadcast('dispatch:complete', { dispatchId: pinnedDispatchId, summary }),
-      onPendingTasksChanged: () => {},
-      getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
-    },
+    buildSchedulerDeps(projectDir, pinnedDispatchId, broadcast),
   )
   setActiveDispatchCoordinator({ stop: () => scheduler?.stop() })
   scheduler.start()
