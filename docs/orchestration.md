@@ -241,7 +241,7 @@ Early plans specified marker-delimited blocks (`<<<ASSIGN>>>...<<<END>>>`) insid
 
 - **Spawn PTYs directly.** It receives `submitTurn` / `getPtyLastActivityMs` / broadcast functions as deps from `dispatch.ts`.
 - **Write to agent stdin outside the user-turn channel.** No "control" messages. Everything the agent sees looks like a user prompt.
-- **Parse PTY bytes.** The `@xterm/headless` `Terminal` instance is fed PTY bytes for renderer parity (resize accounting, etc.) but nothing on the coordination path reads from the grid.
+- **Parse PTY bytes.** Raw PTY bytes are broadcast to the renderer's xterm and otherwise ignored by main — nothing on the coordination path reads them.
 
 ## Status machine
 
@@ -419,7 +419,7 @@ Completed tasks stay completed. The Conductor waits for the next material event 
 
 ## No screen-grid coordination
 
-v5 transitions `spawning → running` on the first PTY-output byte — no prompt-glyph regex, no screen scrape. The `@xterm/headless` `Terminal` instance is still fed every PTY byte so resize accounting and the renderer's xterm stay coherent, but nothing on the coordination path reads from the grid.
+v5 transitions `spawning → running` on the first PTY-output byte — no prompt-glyph regex, no screen scrape. Raw bytes flow PTY → `broadcast('terminal:data', …)` → renderer xterm; main never parses them.
 
 ## What's intentionally NOT in v5
 

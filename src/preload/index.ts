@@ -21,9 +21,8 @@ contextBridge.exposeInMainWorld('electron', {
     cwd: string,
     settings: unknown,
     dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: string },
-    dispatchContext?: unknown,
   ) =>
-    ipcRenderer.invoke('dispatch:start', nodes, edges, cwd, settings, dispatch, dispatchContext),
+    ipcRenderer.invoke('dispatch:start', nodes, edges, cwd, settings, dispatch),
 
   // Dispatch history
   dispatches: {
@@ -112,15 +111,6 @@ contextBridge.exposeInMainWorld('electron', {
 
     close: (id: string) =>
       ipcRenderer.invoke('terminal:close', id),
-
-    getCaptureState: (id: string) =>
-      ipcRenderer.invoke('terminal:capture-state', id),
-
-    onCaptureState: (cb: (event: { id: string; state: 'pending' | 'ready' }) => void) => {
-      const handler = (_: unknown, event: { id: string; state: 'pending' | 'ready' }) => cb(event)
-      ipcRenderer.on('terminal:capture-state', handler)
-      return () => ipcRenderer.removeListener('terminal:capture-state', handler)
-    },
 
     onStatus: (
       cb: (event: {

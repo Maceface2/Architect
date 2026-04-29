@@ -44,7 +44,6 @@ interface ElectronAPI {
     cwd: string,
     settings: ProjectSettings,
     dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: AgentRuntime },
-    dispatchContext?: unknown
   ) => Promise<TerminalInfo[]>
   dispatches: {
     list: (projectDir: string) => Promise<DispatchRecord[]>
@@ -87,10 +86,6 @@ interface ElectronAPI {
     resize: (id: string, cols: number, rows: number) => void
     killAll: () => void
     close: (id: string) => Promise<{ ok: boolean; reason?: string }>
-    getCaptureState: (id: string) => Promise<'pending' | 'ready' | null>
-    onCaptureState: (
-      cb: (event: { id: string; state: 'pending' | 'ready' }) => void,
-    ) => () => void
     onStatus: (
       cb: (event: {
         id: string

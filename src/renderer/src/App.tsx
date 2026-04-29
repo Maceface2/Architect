@@ -829,10 +829,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         return
       }
 
-      const isRedispatch = dispatchedGraph !== null
-      const dispatchContext = isRedispatch
-        ? { isRedispatch: true, changedNodeLabels: changedZoneLabels }
-        : undefined
       // Persist the picked Orchestrator CLI so the next DispatchModal
       // pre-selects it. Keep this write alongside the IPC dispatch — they
       // describe the same user action.
@@ -852,7 +848,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           onlyZoneIds: req.onlyZoneIds,
           conductorRuntime: req.conductorRuntime,
         },
-        dispatchContext,
       )
       setTerminalSessions(sessions)
       setActiveTab('Terminal')

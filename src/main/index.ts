@@ -14,7 +14,6 @@ import {
   killAll,
   killAllIncludingShells,
   closeTerminal,
-  getCaptureState,
   startAssistant,
   stopAllAssistants,
   stopAssistantMode,
@@ -178,9 +177,9 @@ ipcMain.handle('unwatch-canvas', () => {
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 
-ipcMain.handle('dispatch:start', (_event, nodes, edges, cwd, settings, dispatch: StartDispatchOptions, dispatchContext) => {
+ipcMain.handle('dispatch:start', (_event, nodes, edges, cwd, settings, dispatch: StartDispatchOptions) => {
   if (!mainWindow) return []
-  return startDispatch(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' }, dispatchContext)
+  return startDispatch(mainWindow, nodes, edges, cwd ?? app.getPath('home'), settings, dispatch ?? { userPrompt: '' })
 })
 
 ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
@@ -269,10 +268,6 @@ ipcMain.on('terminal:kill-all', () => {
 
 ipcMain.handle('terminal:close', (_event, id: string) => {
   return closeTerminal(id)
-})
-
-ipcMain.handle('terminal:capture-state', (_event, id: string) => {
-  return getCaptureState(id)
 })
 
 // ── Terminal popout windows ────────────────────────────────────────────────

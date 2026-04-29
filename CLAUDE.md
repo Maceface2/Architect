@@ -71,7 +71,7 @@ The canvas exposes two launch flows, both binary-choice (start new vs. resume pr
 
 **Flow B — multi-zone dispatch** (TopNav Dispatch button → `DispatchModal`):
 
-1. "New dispatch" tab: user enters prompt + model + plan mode → `startDispatch(nodes, edges, cwd, settings, { userPrompt, model, planMode, onlyZoneIds? }, dispatchContext?)`.
+1. "New dispatch" tab: user enters prompt + model + plan mode → `startDispatch(nodes, edges, cwd, settings, { userPrompt, model, planMode, onlyZoneIds? })`.
 2. "Resume previous" tab: scrollable history of prior `DispatchRecord` entries → `dispatches.resume({ dispatchId, nodes, edges, settings })`.
 3. `terminals.ts` forwards to `orchestrator/dispatch.ts` (dynamic import, to avoid a module-load cycle with `spawnAgentSession`). Single-zone dispatches fall through to `runZone` — no conductor needed.
 4. Multi-zone path: mint `dispatchId`, call `setupWorkspaceV5(projectDir, dispatchId, …)` to lay down:
@@ -338,7 +338,7 @@ All renderer ↔ main communication goes through `window.electron` (defined in p
 - `saveCanvas / loadCanvas / watchCanvas / unwatchCanvas / onCanvasChanged` — canvas persistence + external-edit watcher
 - `startDispatch` — start multi-zone dispatch, returns `TerminalInfo[]` (each `{id, label, runtime, coordinatedMode?}`; `coordinatedMode: true` on zones spawned inside a dispatch so the renderer auto-acquires the user-control lock when the user types — see "User-control lock" below)
 - `terminal.spawnShell / terminal.input / terminal.resize / terminal.killAll / terminal.setUserControl` — PTY control. `setUserControl(id, hasControl)` is the renderer's hook into the per-PTY scheduler-write queue (see "User-control lock"); the user only invokes it through normal typing (auto-acquire on keystroke, auto-release on a non-slash, non-picker Enter).
-- `terminal.onData / terminal.onExit / terminal.onSpawned / terminal.onStatus / terminal.onCaptureState / terminal.popout / terminal.dock / terminal.onPopoutClosed` — terminal streaming, lifecycle state broadcasts, popout windows
+- `terminal.onData / terminal.onExit / terminal.onSpawned / terminal.onStatus / terminal.popout / terminal.dock / terminal.onPopoutClosed` — terminal streaming, lifecycle state broadcasts, popout windows
 - `zone.launch({ mode: 'new' | 'resume', sessionId?, summary?, ... })` — spawn or resume a single zone via `runZone`
 - `zone.listSessions / zone.deleteSession / zone.updateSessionSummary / zone.resetSession` — per-zone history management
 - `zone.onSessionCaptured` — broadcast when a fresh spawn captures its CLI session id (event includes `summary` and optional `dispatchId`)

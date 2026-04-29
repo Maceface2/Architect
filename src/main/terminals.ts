@@ -4,7 +4,6 @@ import { join, basename } from 'path'
 import fs from 'fs'
 import { execFileSync, spawn } from 'child_process'
 import { randomBytes } from 'crypto'
-import { Terminal as HeadlessTerminal } from '@xterm/headless'
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../shared/terminalDims'
 import {
   DEFAULT_AGENT_RUNTIME,
@@ -326,7 +325,6 @@ export interface ZoneFailure {
 
 interface Session {
   pty: pty.IPty
-  term: HeadlessTerminal
   lifecycle: ZoneLifecycleState
   kind: 'agent' | 'shell'
   runtime: AgentRuntime | 'shell'
@@ -394,22 +392,6 @@ interface SpawnAgentOptions {
 const sessions = new Map<string, Session>()
 let activeDispatchCoordinator: { stop: () => void } | null = null
 
-// Per-session capture readiness. 'pending' means a fresh spawn is still polling
-// for its new CLI session id; 'ready' means capture settled (resolved or timed
-// out). Used by the renderer's close-terminal flow to block close until the
-// id has been persisted. Shell and resumed sessions are never added here —
-// absence means "no capture in flight, close is safe."
-type CaptureState = 'pending' | 'ready'
-const captureStates = new Map<string, CaptureState>()
-
-function setCaptureReady(id: string): void {
-  captureStates.set(id, 'ready')
-}
-
-export function getCaptureState(id: string): CaptureState | null {
-  return captureStates.get(id) ?? null
-}
-
 const SHELL_ID_PREFIX = 'shell-'
 
 // Send to every live BrowserWindow so popout windows receive the same stream.
@@ -475,15 +457,8 @@ function createSession(
 ): void {
   const kind = opts?.kind ?? 'agent'
   const runtime = opts?.runtime ?? 'shell'
-  const term = new HeadlessTerminal({
-    cols: DEFAULT_COLS,
-    rows: DEFAULT_ROWS,
-    allowProposedApi: true,
-    scrollback: 500,
-  })
   const session: Session = {
     pty: ptyProcess,
-    term,
     lifecycle: 'spawning',
     kind,
     runtime,
@@ -507,7 +482,6 @@ function createSession(
       if (kind === 'agent' && session.lifecycle !== 'failed') {
         failSession(id, session, 'pty-exit', `PTY exited with code ${exitCode ?? 0}`)
       }
-      try { session.term.dispose() } catch {}
       sessions.delete(id)
       clearCoordinationState(id)
     }
@@ -563,10 +537,6 @@ export function spawnAgentSession({
   coordinatedMode,
   planModeBadge,
 }: SpawnAgentOptions): TerminalInfo {
-  // Reset any capture state from a prior spawn at this id (e.g. resume replacing
-  // a fresh session). captureRuntime below will re-mark 'pending' if needed.
-  captureStates.delete(id)
-
   const bin = resolveBinary(runtime)
   if (!bin) {
     return spawnErrorSession(
@@ -612,9 +582,6 @@ export function spawnAgentSession({
   createSession(win, id, ptyProcess, onExit, { kind: 'agent', runtime })
 
   if (captureRuntime && capture) {
-    captureStates.set(id, 'pending')
-    broadcast('terminal:capture-state', { id, state: 'pending' })
-
     let capturedId: string | null = null
     let settled = false
 
@@ -646,8 +613,6 @@ export function spawnAgentSession({
     }
 
     const markReady = (): void => {
-      setCaptureReady(id)
-      broadcast('terminal:capture-state', { id, state: 'ready' })
       if (!settled) {
         settled = true
         try { onCaptureSettled?.(capturedId) } catch (err) {
@@ -813,7 +778,6 @@ export function resizeTerminal(id: string, cols: number, rows: number) {
   const safeCols = Math.max(Math.floor(cols) || 1, 1)
   const safeRows = Math.max(Math.floor(rows) || 1, 1)
   try { session.pty.resize(safeCols, safeRows) } catch {}
-  try { session.term.resize(safeCols, safeRows) } catch {}
 }
 
 // Kills agent and assistant sessions; preserves user shell sessions.
@@ -823,9 +787,7 @@ export function killAll() {
   for (const [id, session] of sessions) {
     if (id.startsWith(SHELL_ID_PREFIX)) continue
     try { session.pty.kill() } catch {}
-    try { session.term.dispose() } catch {}
     sessions.delete(id)
-    captureStates.delete(id)
     clearCoordinationState(id)
   }
 }
@@ -838,9 +800,7 @@ export function killAllIncludingShells() {
   activeDispatchCoordinator = null
   for (const [id, session] of sessions) {
     try { session.pty.kill() } catch {}
-    try { session.term.dispose() } catch {}
     sessions.delete(id)
-    captureStates.delete(id)
     clearCoordinationState(id)
   }
 }
@@ -868,19 +828,10 @@ export function getSessionLastActivityMs(id: string): number | null {
 // polling times out quietly and no history entry is written.
 export function closeTerminal(id: string): { ok: boolean; reason?: string } {
   const session = sessions.get(id)
-  const state = captureStates.get(id)
-
   if (session) {
     try { session.pty.kill() } catch {}
-    try { session.term.dispose() } catch {}
     sessions.delete(id)
     clearCoordinationState(id)
-  }
-  // Only clear capture bookkeeping if capture already settled. While still
-  // 'pending', leave the entries so the in-flight poll's persistAndBroadcast
-  // / markReady callbacks remain valid.
-  if (state !== 'pending') {
-    captureStates.delete(id)
   }
   return { ok: true }
 }
@@ -983,8 +934,6 @@ export async function startDispatch(
   projectDir: string,
   rawSettings: unknown,
   dispatch: StartDispatchOptions,
-  // dispatchContext: accepted for IPC backwards-compat but unused by v5.
-  _dispatchContext?: { isRedispatch: boolean; changedNodeLabels: string[] },
 ): Promise<TerminalInfo[]> {
   const { startDispatchV5 } = await import('./orchestrator/dispatch')
   return startDispatchV5({ win, nodes, edges, projectDir, rawSettings, dispatch })
@@ -1220,7 +1169,6 @@ export function stopAssistantMode(mode: AssistantMode) {
   const session = sessions.get(sessionId)
   if (!session) return
   try { session.pty.kill() } catch {}
-  try { session.term.dispose() } catch {}
   sessions.delete(sessionId)
 }
 
@@ -1232,7 +1180,6 @@ export function stopAllAssistants() {
     const session = sessions.get(sessionId)
     if (session) {
       try { session.pty.kill() } catch {}
-      try { session.term.dispose() } catch {}
       sessions.delete(sessionId)
     }
   }

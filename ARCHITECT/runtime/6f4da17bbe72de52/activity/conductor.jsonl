@@ -1,2 +1,0 @@
-{"ts":"2026-04-27T00:00:00Z","from":"conductor","kind":"note","content":"Test dispatch — no instructions given, no zones engaged","structured":{"type":"noop","reason":"User explicitly requested no instructions be sent; this is a test run only."}}
-{"ts":"2026-04-27T00:00:01Z","from":"conductor","kind":"note","content":"Renderer-UX PTY exited (code 129) — no tasks were assigned; exit is inconsequential for this test dispatch","structured":{"type":"noop","reason":"No work was assigned to Renderer-UX. Test dispatch has no active tasks so the exit has no impact."}}
