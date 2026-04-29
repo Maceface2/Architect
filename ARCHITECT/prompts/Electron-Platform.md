@@ -9,7 +9,7 @@ These components live in your zone on the architecture canvas. This is CONTEXT a
 
 - **IPC Bridge** (`ipc-bridge`) [PROXY] (infrastructure) — Preload contextBridge that exposes the allowed Electron surface as window.electron — the renderer's only doorway into Electron.
 
-  src/preload/index.ts. Exposes namespaces: terminal.* (spawnShell/input/setUserControl/resize/onData/onExit/popout), zone.* (launch/listSessions/onSessionCaptured), dispatches.* (list/resume/delete), activity.* (onEvent/onState/onDispatchComplete — v5 observability), assistant.* (start/stop/listSessions), plus readDir/readFile/saveCanvas/loadCanvas/watchCanvas/startDispatch/terminal-layout. Keep the contract typed and never leak raw Node or Electron primitives into renderer code.
+  src/preload/index.ts. Exposes namespaces: terminal.* (spawnShell/input/setUserControl/resize/onData/onExit/popout), zone.* (launch/listSessions/onSessionCaptured), dispatches.* (list/resume/delete), activity.* (onEvent/onState/onDispatchComplete — v5 observability), assistant.* (start/stop/listSessions), plus readDir/saveCanvas/loadCanvas/watchCanvas/startDispatch/terminal-layout. Keep the contract typed and never leak raw Node or Electron primitives into renderer code.
 
 - **Main Process** (`main-process`) [API] (infrastructure) — Electron shell that owns window lifecycle, IPC registration, and routing into the dispatch + terminal subsystems.
 

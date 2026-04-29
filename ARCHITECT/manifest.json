@@ -1,5 +1,5 @@
 {
-  "generated": "2026-04-28T05:05:24.752Z",
+  "generated": "2026-04-28T06:12:15.230Z",
   "protocolVersion": 5,
   "dispatchId": "84f77e81f2212384",
   "dispatchRuntime": "claude",
@@ -417,7 +417,7 @@
           "category": "infrastructure",
           "tag": "PROXY",
           "description": "Preload contextBridge that exposes the allowed Electron surface as window.electron — the renderer's only doorway into Electron.",
-          "specs": "src/preload/index.ts. Exposes namespaces: terminal.* (spawnShell/input/setUserControl/resize/onData/onExit/popout), zone.* (launch/listSessions/onSessionCaptured), dispatches.* (list/resume/delete), activity.* (onEvent/onState/onDispatchComplete — v5 observability), assistant.* (start/stop/listSessions), plus readDir/readFile/saveCanvas/loadCanvas/watchCanvas/startDispatch/terminal-layout. Keep the contract typed and never leak raw Node or Electron primitives into renderer code."
+          "specs": "src/preload/index.ts. Exposes namespaces: terminal.* (spawnShell/input/setUserControl/resize/onData/onExit/popout), zone.* (launch/listSessions/onSessionCaptured), dispatches.* (list/resume/delete), activity.* (onEvent/onState/onDispatchComplete — v5 observability), assistant.* (start/stop/listSessions), plus readDir/saveCanvas/loadCanvas/watchCanvas/startDispatch/terminal-layout. Keep the contract typed and never leak raw Node or Electron primitives into renderer code."
         },
         {
           "id": "main-process",
