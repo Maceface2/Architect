@@ -23,7 +23,7 @@ interface TopNavProps {
   canRedo: boolean
 }
 
-const TABS = ['Canvas', 'Files', 'Terminal', 'Dispatch', 'Settings']
+const TABS = ['Canvas', 'Files', 'Terminal', 'Logs', 'Settings']
 
 export default function TopNav({
   activeTab, onTabChange, onClear, onLoadDemo,

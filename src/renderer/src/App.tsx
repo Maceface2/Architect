@@ -706,6 +706,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (addedLabels.length) parts.push(`added: ${addedLabels.join(', ')}`)
     if (removedIds.length) parts.push(`removed: ${removedIds.length} zone${removedIds.length === 1 ? '' : 's'}`)
     setDispatchPrefill(`Pick up these canvas changes — ${parts.join(' · ')}.`)
+    setActiveTab('Canvas')
     setDispatchModalOpen(true)
   }, [persistCanvasRaw, dispatchedGraph])
 
@@ -850,7 +851,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         const participantIds = ['conductor', ...zones.map(z => (z.data.participantId as string) || z.id)]
         seedDispatch(req.dispatchId, participantIds)
         setActiveDispatchId(req.dispatchId)
-        setActiveTab('Dispatch')
         // Mark the full current canvas as "dispatched" — the resumed set covers it.
         const snapshot: Record<string, string> = {}
         for (const n of zones) snapshot[n.id] = zoneHash(n)
@@ -879,10 +879,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         },
       )
       setTerminalSessions(sessions)
-      // Land on the Dispatch tab so the user sees the swimlane forming.
-      // The activity store will pick up the new dispatchId on the first
-      // event; until then DispatchView shows the "waiting" state.
-      setActiveTab('Dispatch')
       const onlySet = req.onlyZoneIds && req.onlyZoneIds.length > 0
         ? new Set(req.onlyZoneIds)
         : null
@@ -899,6 +895,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const onDispatch = useCallback(() => {
     if (zones.length === 0) return
     setDispatchPrefill('')
+    setActiveTab('Canvas')
     setDispatchModalOpen(true)
   }, [zones.length])
 
@@ -1425,7 +1422,7 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
-  const isDispatch = activeTab === 'Dispatch'
+  const isDispatch = activeTab === 'Logs'
   const isSettings = activeTab === 'Settings'
 
   // Mirror the activity store's latestDispatchId so we render the most
