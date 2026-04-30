@@ -2,7 +2,10 @@ import {
   useState,
   useCallback,
   useEffect,
+  useMemo,
   useRef,
+  useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -30,6 +33,7 @@ import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchM
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
+import TerminalPagePopoutApp from './components/layout/TerminalPagePopoutApp'
 import ResizablePanel from './components/layout/ResizablePanel'
 import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
@@ -60,16 +64,14 @@ import {
   normalizeEdgeData,
 } from './lib/canvas'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
+import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import DispatchModal from './components/dispatch/DispatchModal'
+import DispatchView from './components/dispatch/DispatchView'
+import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
-
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-}
+import type { SessionInfo, TerminalInfo } from '../../shared/electronTypes'
 
 interface CanvasUpdate {
   zones?: unknown[]
@@ -223,6 +225,15 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 
   return (
     <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+      {/* Drag strip across the top so the user can move the window before
+          they've picked a project (TopNav, which is the normal drag region,
+          isn't mounted yet). Sits behind the centered content; everything
+          interactive opts out via no-drag. */}
+      <div
+        className="absolute top-0 left-0 right-0 h-9"
+        style={{ WebkitAppRegion: 'drag' } as CSSProperties}
+        aria-hidden
+      />
       <UserMenu />
 
       <div className="flex flex-col items-center gap-4">
@@ -235,21 +246,42 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
           <circle cx="360" cy="40" r="14" fill="#58A6FF" />
         </svg>
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-white tracking-tight">ARCHITECT</h1>
-          <p className="text-sm text-slate-500 mt-1">Open a project folder to get started</p>
+          <h1 className="text-2xl font-semibold text-fg tracking-tight">ARCHITECT</h1>
+          <p className="text-sm text-fg-subtle mt-1">Open a project folder to get started</p>
         </div>
       </div>
 
       <button
         onClick={pick}
         disabled={loading}
-        className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-white text-sm font-medium rounded-lg transition-colors"
+        className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-sm font-medium rounded-lg transition-colors"
       >
         {loading ? 'Opening…' : 'Open Project Folder'}
       </button>
 
-      <p className="text-xs text-slate-700">
+      <p className="text-xs text-fg-subtle">
         All agents will be scoped to this directory
+      </p>
+    </div>
+  )
+}
+
+// Renders inside the docked Terminal tab while the terminal page is open
+// in a detached BrowserWindow. The terminals themselves keep running in
+// main; this placeholder just gives the user a way to bring the panel back.
+function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center gap-3 bg-terminal text-fg-muted">
+      <p className="text-sm">Terminal page is open in a separate window.</p>
+      <button
+        onClick={onDock}
+        className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-accent/90 transition-colors"
+      >
+        Dock back here
+      </button>
+      <p className="text-[11px] text-fg-subtle max-w-md text-center">
+        Closing the popout window also docks. Sessions and PTY state are
+        preserved across the move; on-screen scrollback may reset.
       </p>
     </div>
   )
@@ -266,14 +298,14 @@ function CanvasConflictModal({
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
         <div className="border-b border-white/[0.06] px-5 py-4">
-          <h2 className="text-sm font-semibold text-white">External canvas changes detected</h2>
-          <p className="mt-1 text-xs leading-5 text-slate-400">
+          <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
             The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
           </p>
         </div>
 
         <div className="px-5 py-4">
-          <p className="text-xs leading-5 text-slate-500">
+          <p className="text-xs leading-5 text-fg-subtle">
             Choose whether to replace the current canvas with the assistant&apos;s version or keep your local edits and ignore this incoming change.
           </p>
         </div>
@@ -281,13 +313,13 @@ function CanvasConflictModal({
         <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
           <button
             onClick={onKeepLocal}
-            className="px-3 py-1.5 text-xs text-slate-300 border border-node-border rounded hover:bg-node transition-colors"
+            className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
           >
             Keep local edits
           </button>
           <button
             onClick={onLoadIncoming}
-            className="px-3 py-1.5 text-xs font-medium text-white bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
           >
             Load assistant changes
           </button>
@@ -336,6 +368,12 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
+  const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
+  // True while the terminal page is rendering in a detached BrowserWindow.
+  // The docked panel hides itself and shows a "popped out" placeholder; all
+  // session/layout/theme updates flow over the terminalPage IPC bus until
+  // the popout window is closed.
+  const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
@@ -449,12 +487,87 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const handleTerminalLayoutChange = useCallback((next: TerminalLayout) => {
     setTerminalLayout(next)
+    // Publish to the detached terminal page (no-op if no popout is open —
+    // the IPC handler short-circuits when there's no peer). Doing this at
+    // the call site (rather than via a setTerminalLayout-watching effect)
+    // avoids the inbound→setState→re-publish loop that would otherwise
+    // bounce layout edits back to the originating window.
+    if (terminalPagePoppedOut) {
+      window.electron.terminalPage.publishLayout(next)
+    }
     if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
     terminalLayoutSaveTimer.current = setTimeout(() => {
       terminalLayoutSaveTimer.current = null
       void window.electron.saveTerminalLayout(projectDir, next)
     }, 400)
-  }, [projectDir])
+  }, [projectDir, terminalPagePoppedOut])
+
+  // Open the terminal page in a detached window. Sends the current
+  // sessions + layout + theme + projectDir as the initial snapshot so the
+  // popout can render immediately without round-tripping for state.
+  const handlePopoutTerminalPage = useCallback(() => {
+    void window.electron.terminalPage.popout({
+      sessions: terminalSessions,
+      layout: terminalLayout,
+      projectDir,
+      theme: projectSettings.interface.theme,
+    })
+    setTerminalPagePoppedOut(true)
+  }, [terminalSessions, terminalLayout, projectDir, projectSettings.interface.theme])
+
+  // Subscribe to inbound updates from the popout window. Layout edits in
+  // the popout flow back here so the docked panel state stays in sync (and
+  // so the layout persists correctly when the popout closes). Sessions
+  // are pushed back when the popout removes a terminal.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    const offLayout = window.electron.terminalPage.onLayout(next => {
+      const incoming = next as TerminalLayout | null
+      if (!incoming) return
+      setTerminalLayout(incoming)
+      // Persist popout-originated layout edits to disk too. Goes through
+      // the same debounced save path as in-window edits (via the timer
+      // ref), but skips re-publishing — the popout already has this.
+      if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
+      terminalLayoutSaveTimer.current = setTimeout(() => {
+        terminalLayoutSaveTimer.current = null
+        void window.electron.saveTerminalLayout(projectDir, incoming)
+      }, 400)
+    })
+    const offSessions = window.electron.terminalPage.onSessions(next => {
+      setTerminalSessions(next)
+    })
+    return () => {
+      offLayout()
+      offSessions()
+    }
+  }, [terminalPagePoppedOut, projectDir])
+
+  // Popout window closed → resume rendering the docked panel. The closed
+  // event carries the popout's last-known layout in case the IPC bus
+  // dropped any updates between its final edit and the window-closed event.
+  useEffect(() => {
+    const off = window.electron.terminalPage.onClosed(({ layout }) => {
+      setTerminalPagePoppedOut(false)
+      const incoming = layout as TerminalLayout | null
+      if (incoming) setTerminalLayout(incoming)
+    })
+    return off
+  }, [])
+
+  // Push sessions to the popout whenever they change while it's open.
+  // Cheap — the IPC handler is a no-op when no popout window exists.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    window.electron.terminalPage.publishSessions(terminalSessions)
+  }, [terminalPagePoppedOut, terminalSessions])
+
+  // Mirror theme into the popout so a flip on the parent updates the
+  // detached terminal page in lockstep.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    window.electron.terminalPage.publishTheme(projectSettings.interface.theme)
+  }, [terminalPagePoppedOut, projectSettings.interface.theme])
 
   const queueFitView = useCallback(() => {
     requestAnimationFrame(() => {
@@ -700,6 +813,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (addedLabels.length) parts.push(`added: ${addedLabels.join(', ')}`)
     if (removedIds.length) parts.push(`removed: ${removedIds.length} zone${removedIds.length === 1 ? '' : 's'}`)
     setDispatchPrefill(`Pick up these canvas changes — ${parts.join(' · ')}.`)
+    setActiveTab('Canvas')
     setDispatchModalOpen(true)
   }, [persistCanvasRaw, dispatchedGraph])
 
@@ -806,6 +920,24 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setDispatching(true)
     try {
       if (req.mode === 'resume') {
+        // Capture the persisted activity log BEFORE calling resume — the
+        // resume wipes the runtime/<dispatchId>/ subtree, so any history
+        // we want in the swimlane has to be read first.
+        try {
+          const [activity, orchestration] = await Promise.all([
+            window.electron.dispatches.loadActivity(projectDir, req.dispatchId).catch(() => []),
+            window.electron.dispatches.loadOrchestration(projectDir, req.dispatchId).catch(() => []),
+          ])
+          if (activity.length > 0 || orchestration.length > 0) {
+            // Single-shot interleaved seed so the assigned seq matches the
+            // chronological order from disk. Two separate seed calls would
+            // assign all activity events lower seqs than orchestration events,
+            // breaking ordering.
+            seedDispatchCombined(req.dispatchId, activity, orchestration)
+          }
+        } catch {
+          // Best-effort — a missing or malformed log file shouldn't block resume.
+        }
         const result = await window.electron.dispatches.resume({
           projectDir,
           dispatchId: req.dispatchId,
@@ -821,7 +953,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           return
         }
         setTerminalSessions(result.info)
-        setActiveTab('Terminal')
+        // Pre-seed the swimlane so every zone column appears immediately,
+        // even before the first activity event from the resumed PTYs lands.
+        const participantIds = ['conductor', ...zones.map(z => (z.data.participantId as string) || z.id)]
+        seedDispatch(req.dispatchId, participantIds)
+        setActiveDispatchId(req.dispatchId)
         // Mark the full current canvas as "dispatched" — the resumed set covers it.
         const snapshot: Record<string, string> = {}
         for (const n of zones) snapshot[n.id] = zoneHash(n)
@@ -850,7 +986,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         },
       )
       setTerminalSessions(sessions)
-      setActiveTab('Terminal')
       const onlySet = req.onlyZoneIds && req.onlyZoneIds.length > 0
         ? new Set(req.onlyZoneIds)
         : null
@@ -867,6 +1002,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const onDispatch = useCallback(() => {
     if (zones.length === 0) return
     setDispatchPrefill('')
+    setActiveTab('Canvas')
     setDispatchModalOpen(true)
   }, [zones.length])
 
@@ -1393,7 +1529,48 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
+  // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
+  // the DispatchView (swimlane + flat log). Keep the variable name aligned
+  // with the tab string so a future tab rename only has to be made in one place.
+  const isLogs = activeTab === 'Logs'
   const isSettings = activeTab === 'Settings'
+
+  // Mirror the activity store's latestDispatchId so we render the most
+  // recently-active dispatch in the Dispatch tab. The store binds its IPC
+  // subscriptions on first import, so events that fire before the user opens
+  // the Dispatch tab are captured (the previous direct subscription only
+  // started receiving once the tab mounted, which dropped early task events).
+  const latestStoreDispatchId = useSyncExternalStore(
+    subscribeActivityStore,
+    () => getActivityStoreSnapshot().latestDispatchId,
+    () => getActivityStoreSnapshot().latestDispatchId,
+  )
+  useEffect(() => {
+    if (latestStoreDispatchId && latestStoreDispatchId !== activeDispatchId) {
+      setActiveDispatchId(latestStoreDispatchId)
+    }
+  }, [latestStoreDispatchId, activeDispatchId])
+
+  const participantLabels = useMemo(() => {
+    const map: Record<string, string> = { conductor: 'Conductor' }
+    for (const z of zones) {
+      const pid = (z.data.participantId as string) || z.id
+      map[pid] = (z.data.label as string) || z.id
+    }
+    return map
+  }, [zones])
+
+  const participantColors = useMemo(() => {
+    // Conductor gets a fixed accent so it reads as orchestration, not a zone.
+    // Zones contribute their own color so swimlane column headers match the
+    // on-canvas zone they represent.
+    const map: Record<string, string> = { conductor: '#c084fc' }
+    for (const z of zones) {
+      const pid = (z.data.participantId as string) || z.id
+      map[pid] = (z.data.color as string) || '#58A6FF'
+    }
+    return map
+  }, [zones])
   const activePaletteTool: CanvasPaletteTool | null = pendingCreate?.kind ?? (pendingEdgeDefaults ? 'edge' : null)
   const placementHint = pendingCreate
     ? `Click canvas to place ${pendingCreate.kind === 'zone' ? 'zone' : 'component'}`
@@ -1422,8 +1599,9 @@ Only discuss and advise without editing the file when the user is asking for cri
 
   return (
     <ProjectSettingsProvider value={projectSettings}>
+      <InterfaceSettingsProvider value={projectSettings.interface}>
       <ProjectDirProvider value={projectDir}>
-      <div className="flex flex-col h-screen bg-canvas text-white overflow-hidden">
+      <div className="flex flex-col h-screen bg-canvas text-fg overflow-hidden">
         <TopNav
           activeTab={activeTab}
           onTabChange={setActiveTab}
@@ -1469,7 +1647,16 @@ Only discuss and advise without editing the file when the user is asking for cri
               proOptions={{ hideAttribution: true }}
               fitView
             >
-              <Background variant={BackgroundVariant.Dots} gap={28} size={1.5} color="#2a2a2a" />
+              <Background
+                variant={projectSettings.interface.canvasBackground === 'grid' ? BackgroundVariant.Lines : BackgroundVariant.Dots}
+                gap={28}
+                size={projectSettings.interface.canvasBackground === 'grid' ? 1 : 1.8}
+                color={
+                  projectSettings.interface.theme === 'light'
+                    ? (projectSettings.interface.canvasBackground === 'grid' ? '#e2e8f0' : '#cbd5e1')
+                    : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
+                }
+              />
               <Controls />
             </ReactFlow>
 
@@ -1521,22 +1708,43 @@ Only discuss and advise without editing the file when the user is asking for cri
           )}
 
           <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
-            <TerminalPanel
-              sessions={terminalSessions}
-              isVisible={isTerminal}
-              projectDir={projectDir}
-              layout={terminalLayout}
-              onLayoutChange={handleTerminalLayoutChange}
-              onRemoveSession={(id) =>
-                setTerminalSessions(prev => prev.filter(s => s.id !== id))
-              }
-              getCanvasSnapshot={() => ({
-                nodes: nodesRef.current,
-                edges: edgesRef.current,
-                settings: settingsRef.current,
-              })}
-            />
+            {terminalPagePoppedOut ? (
+              <PoppedOutPlaceholder
+                onDock={() => void window.electron.terminalPage.dock()}
+              />
+            ) : (
+              <TerminalPanel
+                sessions={terminalSessions}
+                isVisible={isTerminal && !terminalPagePoppedOut}
+                projectDir={projectDir}
+                layout={terminalLayout}
+                onLayoutChange={handleTerminalLayoutChange}
+                onRemoveSession={(id) =>
+                  setTerminalSessions(prev => prev.filter(s => s.id !== id))
+                }
+                getCanvasSnapshot={() => ({
+                  nodes: nodesRef.current,
+                  edges: edgesRef.current,
+                  settings: settingsRef.current,
+                })}
+                onPanelPopout={handlePopoutTerminalPage}
+              />
+            )}
           </div>
+
+          {isLogs && (
+            <div className="flex-1 overflow-hidden">
+              <DispatchView
+                dispatchId={activeDispatchId}
+                participantLabels={participantLabels}
+                participantColors={participantColors}
+                onStartDispatch={onDispatch}
+                canStartDispatch={!dispatching && zones.length > 0}
+                isLaunching={dispatching}
+                onDismiss={() => setActiveTab('Canvas')}
+              />
+            </div>
+          )}
 
           {isSettings && (
             <div className="flex-1 overflow-hidden">
@@ -1580,6 +1788,7 @@ Only discuss and advise without editing the file when the user is asking for cri
         <UserMenu />
       </div>
       </ProjectDirProvider>
+      </InterfaceSettingsProvider>
     </ProjectSettingsProvider>
   )
 }
@@ -1618,7 +1827,7 @@ function AuthGate({ children }: { children: ReactNode }) {
   if (session === 'loading') {
     return (
       <div className="h-screen w-screen bg-canvas flex items-center justify-center">
-        <Loader2 size={20} className="animate-spin text-slate-600" />
+        <Loader2 size={20} className="animate-spin text-fg-subtle" />
       </div>
     )
   }
@@ -1633,6 +1842,9 @@ export default function App() {
   const popoutId = params.get('popout')
   if (popoutId) {
     return <PopoutTerminalApp id={popoutId} label={params.get('label') ?? popoutId} />
+  }
+  if (params.get('panel') === 'terminal-page') {
+    return <TerminalPagePopoutApp />
   }
   return (
     <AuthGate>

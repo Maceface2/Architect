@@ -27,6 +27,7 @@ import {
   type ConductorDecision,
   type ParsedDecision,
 } from './conductor'
+import type { OrchestrationEvent } from './orchestrationLog'
 import { readState, stateFilePath, updateState, type ParticipantState, type TaskStatus } from './state'
 import { computeParticipantStatus, shouldEscalateStale, type ParticipantStatus } from './status'
 
@@ -84,6 +85,11 @@ export interface SchedulerDeps {
   // Read the live PTY's last-activity timestamp (ms). Used alongside the
   // activity log to decide staleness. Returns null if the PTY is not alive.
   getPtyLastActivityMs(ptyId: string): number | null
+  // Harness-authored orchestration log line. dispatch.ts implements this as
+  // appendOrchestration(...) + broadcast('activity:orchestration', ...) so the
+  // scheduler stays a pure coordinator (matches how broadcastActivity works —
+  // scheduler observes, never writes the activity log itself).
+  recordOrchestration(event: OrchestrationEvent): void
 }
 
 interface InFlightTask {
@@ -109,6 +115,11 @@ export class Scheduler {
   // ask carries `structured.blockedOn` pointing at another known participant.
   // Cleared when the zone is unblocked (answered, done, or failed).
   private readonly blockedOnByParticipant = new Map<string, string>()
+  // Last status broadcast per participant. Used to suppress duplicate
+  // status-change orchestration entries — the 15s tick re-broadcasts the
+  // current status unconditionally, so without this every tick would spam
+  // a no-op 'status-change' line.
+  private readonly lastStatusByParticipant = new Map<string, ParticipantStatus>()
   private statusTimer: NodeJS.Timeout | null = null
   private stopped = false
   private finalEmitted = false
@@ -122,6 +133,37 @@ export class Scheduler {
       this.ptyByParticipant.set(zone.participantId, zone.zoneId)
       this.participantById.set(zone.participantId, zone)
     }
+  }
+
+  // ─── orchestration log helper ────────────────────────────────────────────
+
+  // All orchestration events flow through here so the scheduler doesn't have
+  // to repeat the ts/dispatchId boilerplate at every hook site. dispatch.ts
+  // owns the actual append + IPC broadcast in its recordOrchestration impl.
+  private recordOrchestration(event: Omit<OrchestrationEvent, 'ts'>): void {
+    this.deps.recordOrchestration({ ts: new Date().toISOString(), ...event })
+  }
+
+  private participantLabel(participantId: string): string {
+    if (participantId === CONDUCTOR_PARTICIPANT_ID) return 'Conductor'
+    return this.participantById.get(participantId)?.label ?? participantId
+  }
+
+  // Emit a status-change orchestration line iff status actually moved. Both
+  // the 15s tick path and the per-event broadcast path call this — without
+  // dedup against `lastStatusByParticipant`, ticks would spam the log with
+  // no-op transitions on every interval.
+  private emitStatusChange(participantId: string, status: ParticipantStatus, lastTaskId: string | undefined): void {
+    const prevStatus = this.lastStatusByParticipant.get(participantId)
+    if (prevStatus === status) return
+    this.lastStatusByParticipant.set(participantId, status)
+    this.recordOrchestration({
+      kind: 'status-change',
+      participantId,
+      taskId: lastTaskId,
+      summary: `${this.participantLabel(participantId)}: ${prevStatus ?? '—'} → ${status}`,
+      structured: { from: prevStatus ?? null, to: status },
+    })
   }
 
   // ─── lifecycle ────────────────────────────────────────────────────────────
@@ -174,6 +216,13 @@ export class Scheduler {
       console.warn(`[scheduler] redispatch: unknown participant ${task.participantId}`)
       return
     }
+    this.recordOrchestration({
+      kind: 'redispatched',
+      participantId: task.participantId,
+      taskId: task.taskId,
+      summary: `Re-delivering pending task to ${zone.label} on resume`,
+      structured: { attempts: task.attempts, status: task.status },
+    })
     this.dispatchTaskInternal({
       zoneId: task.zoneId,
       participantId: task.participantId,
@@ -189,6 +238,13 @@ export class Scheduler {
     if (this.stopped) return
     const zone = this.participantById.get(participantId)
     if (!zone) return
+    this.recordOrchestration({
+      kind: 'pty-exit',
+      participantId,
+      taskId: this.currentTaskByParticipant.get(participantId),
+      summary: `${zone.label} PTY exited (code ${exitCode ?? 'n/a'})`,
+      structured: { exitCode },
+    })
     this.updateStateAtomic(participantId, { ptyAlive: false })
     this.blockedOnByParticipant.delete(participantId)
     const currentTaskId = this.currentTaskByParticipant.get(participantId)
@@ -245,6 +301,12 @@ export class Scheduler {
     } catch (err) {
       console.error('[scheduler] failed to persist conductor decision', err)
     }
+    this.recordOrchestration({
+      kind: 'conductor-decision',
+      participantId: CONDUCTOR_PARTICIPANT_ID,
+      summary: orchestrationSummaryForDecision(parsed.decision),
+      structured: { decision: parsed.decision },
+    })
     this.executeDecision(parsed)
   }
 
@@ -256,6 +318,11 @@ export class Scheduler {
           const zone = this.findZoneByLoose(assignment.zoneId)
           if (!zone) {
             console.warn(`[scheduler] conductor assigned to unknown zone "${assignment.zoneId}"`)
+            this.recordOrchestration({
+              kind: 'assign-rejected',
+              summary: `Rejected assign to unknown zone "${assignment.zoneId}"`,
+              structured: { reason: 'unknown-zone', zoneId: assignment.zoneId },
+            })
             this.writeToParticipant(
               CONDUCTOR_PARTICIPANT_ID,
               composeAssignRejectedTurn('unknown-zone', {
@@ -267,6 +334,13 @@ export class Scheduler {
           }
           if (assignment.taskId && this.tasksByTaskId.has(assignment.taskId)) {
             console.warn(`[scheduler] duplicate taskId "${assignment.taskId}" rejected`)
+            this.recordOrchestration({
+              kind: 'assign-rejected',
+              participantId: zone.participantId,
+              taskId: assignment.taskId,
+              summary: `Rejected duplicate taskId ${assignment.taskId}`,
+              structured: { reason: 'duplicate-task' },
+            })
             this.writeToParticipant(
               CONDUCTOR_PARTICIPANT_ID,
               composeAssignRejectedTurn('duplicate-task', { taskId: assignment.taskId }),
@@ -274,6 +348,12 @@ export class Scheduler {
             continue
           }
           if (!assignment.body || assignment.body.trim().length === 0) {
+            this.recordOrchestration({
+              kind: 'assign-rejected',
+              participantId: zone.participantId,
+              summary: `Rejected empty-body assign to ${zone.label}`,
+              structured: { reason: 'empty-body' },
+            })
             this.writeToParticipant(
               CONDUCTOR_PARTICIPANT_ID,
               composeAssignRejectedTurn('empty-body', { zoneId: zone.participantId }),
@@ -309,6 +389,11 @@ export class Scheduler {
           })
         }
         if (stillRunning.length) {
+          this.recordOrchestration({
+            kind: 'premature-final',
+            summary: `Conductor sent {final} but ${stillRunning.length} task(s) still running`,
+            structured: { stillRunning },
+          })
           this.writeToParticipant(
             CONDUCTOR_PARTICIPANT_ID,
             composePrematureFinalTurn(stillRunning),
@@ -361,6 +446,12 @@ export class Scheduler {
     // cycle was previously detected, this also breaks the recorded chain.
     this.blockedOnByParticipant.delete(zone.participantId)
     const taskId = currentTaskId ?? 'unknown'
+    this.recordOrchestration({
+      kind: 'task-answered',
+      participantId: zone.participantId,
+      taskId,
+      summary: `Conductor answered ${zone.label}; task resumed`,
+    })
     this.writeToParticipant(zone.participantId, `ANSWER ${taskId}: ${decision.body}`)
     this.persistPendingTasks()
   }
@@ -466,6 +557,10 @@ export class Scheduler {
     let conductorTurn = composeZoneDoneTurn(zone.label, zone.participantId, taskId, event.content)
     if (!this.finalEmitted && this.isAllDone()) {
       conductorTurn += '\n\n' + composeAllDoneTurn()
+      this.recordOrchestration({
+        kind: 'all-done-detected',
+        summary: 'All engaged zones reported done; prompting conductor for {final}',
+      })
     }
     this.writeToParticipant(CONDUCTOR_PARTICIPANT_ID, conductorTurn)
     return true
@@ -500,6 +595,13 @@ export class Scheduler {
         lastTaskId: taskId,
       })
       this.persistPendingTasks()
+      this.recordOrchestration({
+        kind: 'task-retried',
+        participantId: zone.participantId,
+        taskId,
+        summary: `Retrying ${zone.label} (attempt ${task.attempts}/${zone.retriesAllowed})`,
+        structured: { attempts: task.attempts, retriesAllowed: zone.retriesAllowed, reason: event.content },
+      })
       // Re-deliver immediately. Include the prior error in the prompt so
       // the zone knows to try a different approach.
       this.writeToParticipant(
@@ -531,6 +633,13 @@ export class Scheduler {
       lastTaskId: taskId,
     })
     this.persistPendingTasks()
+    this.recordOrchestration({
+      kind: 'task-exhausted',
+      participantId: zone.participantId,
+      taskId,
+      summary: `${zone.label} exhausted retries (${task.attempts + 1}/${zone.retriesAllowed + 1})`,
+      structured: { reason: event.content, attempts: task.attempts + 1 },
+    })
     this.writeToParticipant(
       CONDUCTOR_PARTICIPANT_ID,
       composeZoneFailedTurn(
@@ -559,6 +668,13 @@ export class Scheduler {
     if (!task || task.participantId !== zone.participantId) {
       const reason = !task ? `taskId=${taskId} not assigned` : `taskId=${taskId} belongs to ${task.participantId}`
       console.warn(`[scheduler] ${zone.participantId} unassigned ask dropped: ${reason}`)
+      this.recordOrchestration({
+        kind: 'unassigned-ask-dropped',
+        participantId: zone.participantId,
+        taskId,
+        summary: `Dropped ask from ${zone.label}: ${reason}`,
+        structured: { reason },
+      })
       this.writeToParticipant(
         CONDUCTOR_PARTICIPANT_ID,
         composeUnassignedAskDroppedTurn(zone.label, zone.participantId, taskId, event.content),
@@ -583,6 +699,11 @@ export class Scheduler {
       this.blockedOnByParticipant.set(zone.participantId, blockedOnRaw)
       const cycle = this.detectCycle(zone.participantId)
       if (cycle) {
+        this.recordOrchestration({
+          kind: 'deadlock-detected',
+          summary: `Deadlock cycle detected: ${cycle.map(pid => this.participantLabel(pid)).join(' → ')}`,
+          structured: { cycle },
+        })
         this.writeToParticipant(
           CONDUCTOR_PARTICIPANT_ID,
           composeDeadlockTurn(cycle.map(pid => ({
@@ -647,6 +768,12 @@ export class Scheduler {
       if (prevTask && prevTask.status !== 'done' && prevTask.status !== 'failed') {
         prevTask.status = 'failed'
         prevTask.lastError = 'superseded by conductor reassignment'
+        this.recordOrchestration({
+          kind: 'task-superseded',
+          participantId: opts.participantId,
+          taskId: prevTaskId,
+          summary: `Superseded ${prevTaskId} on ${this.participantLabel(opts.participantId)} (reassigned)`,
+        })
       }
     }
     // Reassignment unblocks the zone — clear any recorded blockedOn edge.
@@ -672,6 +799,13 @@ export class Scheduler {
       staleAt: undefined,
     })
     this.persistPendingTasks()
+    this.recordOrchestration({
+      kind: 'task-dispatched',
+      participantId: opts.participantId,
+      taskId,
+      summary: `Dispatched ${taskId} to ${this.participantLabel(opts.participantId)}`,
+      structured: opts.attempts > 0 ? { attempts: opts.attempts } : undefined,
+    })
     this.writeToParticipant(opts.participantId, `TASK ${taskId}: ${opts.body}`)
     return taskId
   }
@@ -754,6 +888,7 @@ export class Scheduler {
       this.updateStateAtomic(participantId, { staleAt: undefined })
     }
 
+    this.emitStatusChange(participantId, status, state.lastTaskId)
     this.deps.broadcastState({
       dispatchId: this.config.dispatchId,
       participantId,
@@ -769,6 +904,13 @@ export class Scheduler {
         if (refreshed && shouldEscalateStale(refreshed, now, this.config.staleEscalationMs)) {
           const currentTaskId = this.currentTaskByParticipant.get(participantId) ?? refreshed.lastTaskId ?? 'unknown'
           const staleMinutes = Math.floor((now - Date.parse(refreshed.staleAt ?? new Date(now).toISOString())) / 60_000)
+          this.recordOrchestration({
+            kind: 'stale-escalation',
+            participantId,
+            taskId: currentTaskId,
+            summary: `Escalating ${zone.label} (stale ${staleMinutes}m) to conductor`,
+            structured: { staleMinutes, escalations: refreshed.staleEscalations + 1 },
+          })
           this.writeToParticipant(
             CONDUCTOR_PARTICIPANT_ID,
             composeStaleTurn(zone.label, zone.participantId, currentTaskId, staleMinutes),
@@ -806,6 +948,7 @@ export class Scheduler {
       activityIdleMs,
       idleThresholdMs: this.config.idleThresholdMs,
     })
+    this.emitStatusChange(participantId, status, state.lastTaskId)
     this.deps.broadcastState({
       dispatchId: this.config.dispatchId,
       participantId,
@@ -836,4 +979,19 @@ export class Scheduler {
 
 function mintTaskId(): string {
   return `t-${randomBytes(4).toString('hex')}`
+}
+
+function orchestrationSummaryForDecision(decision: ConductorDecision): string {
+  switch (decision.type) {
+    case 'assign':
+      return decision.assignments.length === 1
+        ? `Conductor assign → ${decision.assignments[0].zoneId}`
+        : `Conductor assign × ${decision.assignments.length}`
+    case 'answer':
+      return `Conductor answer → ${decision.targetZoneId}`
+    case 'final':
+      return `Conductor final: ${decision.summary}`
+    case 'noop':
+      return `Conductor noop${decision.reason ? `: ${decision.reason}` : ''}`
+  }
 }

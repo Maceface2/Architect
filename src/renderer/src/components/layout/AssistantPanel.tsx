@@ -7,6 +7,7 @@ import { getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../..
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import type { ProjectSettings } from '../../types'
 import AssistantLaunchModal, { type AssistantRelaunchOpts } from './AssistantLaunchModal'
 
@@ -28,7 +29,10 @@ function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '')
 }
 
-const TERM_THEME = {
+// Two themes for the embedded assistant terminal — see TerminalPanel for
+// the rationale on light-mode color picks. Cursor stays purple here to
+// match the assistant accent that's used elsewhere in the UI.
+const TERM_THEME_DARK = {
   background:   '#0d0d0d',
   foreground:   '#e2e8f0',
   cursor:       '#c084fc',
@@ -43,6 +47,23 @@ const TERM_THEME = {
   white:        '#e2e8f0',
   brightBlack:  '#3a3a3a',
   brightWhite:  '#ffffff',
+}
+
+const TERM_THEME_LIGHT = {
+  background:   '#ffffff',
+  foreground:   '#1e293b',
+  cursor:       '#9333ea',
+  cursorAccent: '#ffffff',
+  black:        '#1e293b',
+  red:          '#dc2626',
+  green:        '#16a34a',
+  yellow:       '#ca8a04',
+  blue:         '#2563eb',
+  magenta:      '#9333ea',
+  cyan:         '#0891b2',
+  white:        '#475569',
+  brightBlack:  '#94a3b8',
+  brightWhite:  '#0f172a',
 }
 
 interface CanvasUpdate {
@@ -94,6 +115,8 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
     const fitRef         = useRef<FitAddon | null>(null)
     const parseBufferRef = useRef<string>('')
     const assistantId = ASSISTANT_IDS[mode]
+    const { theme } = useInterfaceSettings()
+    const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
 
     // Mirrored synchronously into a ref so callbacks (RO, debounce tail) can
     // read the current visibility without needing stale-closure gymnastics.
@@ -223,7 +246,7 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       if (!containerRef.current) return
 
       const term = new Terminal({
-        theme: TERM_THEME,
+        theme: xtermTheme,
         fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
         fontSize: 13,
         lineHeight: 1.4,
@@ -262,6 +285,14 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
         fitRef.current  = null
       }
     }, [assistantId, measure, requestResize])
+
+    // Push theme updates into the live xterm without disposing it. xterm's
+    // setter rerenders the buffer with the new palette but keeps scrollback
+    // and PTY state intact.
+    useEffect(() => {
+      if (!termRef.current) return
+      termRef.current.options.theme = xtermTheme
+    }, [xtermTheme])
 
     // Visibility gate + flush. useLayoutEffect so the measure happens after
     // React commits the display flip but before the browser paints — matches
@@ -357,14 +388,14 @@ export default function AssistantPanel({
 
   return (
     <div
-      className={`flex flex-col h-full w-full bg-[#0d0d0d] ${borderClass}`}
+      className={`flex flex-col h-full w-full bg-terminal ${borderClass}`}
       style={{ display: visible ? 'flex' : 'none' }}
     >
       {/* Header */}
       <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] flex-shrink-0 bg-[#111111]">
         <div className="flex items-center gap-2 min-w-0">
           <Bot size={13} className="text-[#c084fc] flex-shrink-0" />
-          <span className="text-xs font-medium text-slate-300 truncate">{headerLabel}</span>
+          <span className="text-xs font-medium text-fg-muted truncate">{headerLabel}</span>
           <span
             className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
             style={{ color: runtimeMeta.accentColor, backgroundColor: `${runtimeMeta.accentColor}20` }}
@@ -376,19 +407,19 @@ export default function AssistantPanel({
           {/* Settings — model picker + new/resume for the current mode */}
           <button
             onClick={() => setModalOpen(true)}
-            className="text-slate-600 hover:text-slate-300 transition-colors"
+            className="text-fg-subtle hover:text-fg-muted transition-colors"
             title="Model + session"
           >
             <Settings2 size={13} />
           </button>
           {/* Mode toggle — segmented control */}
-          <div className="flex items-center rounded border border-white/[0.08] bg-[#0d0d0d] overflow-hidden">
+          <div className="flex items-center rounded border border-white/[0.08] bg-terminal overflow-hidden">
             <button
               onClick={() => onModeChange('architecture')}
               className={
                 mode === 'architecture'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
-                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="Architecture mode — edit the canvas"
             >
@@ -398,8 +429,8 @@ export default function AssistantPanel({
               onClick={() => onModeChange('general')}
               className={
                 mode === 'general'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-white'
-                  : 'px-2 py-0.5 text-[10px] text-slate-400 hover:text-slate-200 hover:bg-white/[0.04]'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="General mode — generic coding assistant"
             >
@@ -408,7 +439,7 @@ export default function AssistantPanel({
           </div>
           <button
             onClick={onClose}
-            className="text-slate-600 hover:text-slate-300 transition-colors"
+            className="text-fg-subtle hover:text-fg-muted transition-colors"
             title="Close assistant"
           >
             <X size={13} />

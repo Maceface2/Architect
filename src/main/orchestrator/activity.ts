@@ -237,9 +237,20 @@ export function watchActivity(
   // neither replayed nor tailed.
   drain()
 
+  // Belt-and-suspenders watching:
+  //   - fs.watch (FSEvents on macOS) — fires immediately when it works, but
+  //     can silently drop appends to recently-created/size-0 files. Hit in the
+  //     wild: a zone's first `done` line was missed, the conductor never got
+  //     the corresponding "Zone X done" turn, and the dispatch hung.
+  //   - fs.watchFile (polling) — reliable, catches anything fs.watch misses.
+  //     drain() is offset-based and idempotent, so double-firing is harmless.
+  // Together: we still get sub-millisecond latency when fs.watch fires, and
+  // a 1s worst-case catch-up when it doesn't.
   const watcher = fs.watch(path, () => drain())
+  const watchFileListener = (): void => drain()
+  fs.watchFile(path, { interval: 1000, persistent: true }, watchFileListener)
   // One more drain in case bytes landed between the drain above and the
-  // watcher attaching.
+  // watchers attaching.
   drain()
 
   return {
@@ -247,6 +258,7 @@ export function watchActivity(
       if (closed) return
       closed = true
       try { watcher.close() } catch {}
+      try { fs.unwatchFile(path, watchFileListener) } catch {}
     },
   }
 }

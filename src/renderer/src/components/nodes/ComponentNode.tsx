@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom'
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { FileText, Trash2 } from 'lucide-react'
 import { getIcon } from '../../lib/icons'
+import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import ComponentConfigModal from './ComponentConfigModal'
 import type { ComponentNodeData } from '../../types'
 
@@ -10,6 +11,8 @@ type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 
 function ComponentNode({ id, data }: ComponentNodeProps) {
   const { setNodes, deleteElements } = useReactFlow()
+  const { theme } = useInterfaceSettings()
+  const isLight = theme === 'light'
   const [modalOpen, setModalOpen] = useState(false)
 
   const color = data.color
@@ -31,7 +34,10 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
   const handleBaseStyle = {
     width: 9,
     height: 9,
-    background: '#1e1e1e',
+    // Match the card body so the handle reads as a subtle clip, not a dot.
+    // Hardcoded dark used to bleed through in light mode — pull from the
+    // same theme token the card uses.
+    background: isLight ? '#ffffff' : '#1e1e1e',
     border: `2px solid ${color}`,
     zIndex: 10,
   } as const
@@ -65,7 +71,11 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
       ])}
 
       <div
-        className="relative bg-[#1e1e1e] rounded-lg overflow-hidden min-w-[160px] max-w-[200px] border border-white/[0.06] shadow-xl select-none cursor-pointer hover:border-white/20 transition-colors"
+        className={`relative bg-component rounded-lg overflow-hidden min-w-[160px] max-w-[200px] border shadow-xl select-none cursor-pointer transition-colors ${
+          isLight
+            ? 'border-slate-300 hover:border-slate-400'
+            : 'border-white/[0.06] hover:border-white/20'
+        }`}
         onDoubleClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
       >
         <div className="absolute left-0 top-0 bottom-0 w-[4px]" style={{ backgroundColor: color }} />
@@ -74,12 +84,12 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
             <Icon size={11} style={{ color }} />
             <span className="text-[10px] font-bold tracking-widest" style={{ color }}>{tag}</span>
             {hasSpecs && (
-              <FileText size={9} className="text-slate-500 ml-auto" aria-label="Has specs" />
+              <FileText size={9} className="text-fg-subtle ml-auto" aria-label="Has specs" />
             )}
           </div>
-          <p className="text-[13px] font-semibold text-white leading-snug">{label}</p>
+          <p className="text-[13px] font-semibold text-fg leading-snug">{label}</p>
           {description && (
-            <p className="text-[10px] text-slate-500 mt-1 line-clamp-2">{description}</p>
+            <p className="text-[10px] text-fg-subtle mt-1 line-clamp-2">{description}</p>
           )}
         </div>
 
@@ -88,7 +98,9 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           <button
             onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
             onMouseDown={(e) => e.stopPropagation()}
-            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-white hover:bg-white/10 transition-colors nodrag"
+            className={`w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-fg transition-colors nodrag ${
+              isLight ? 'hover:bg-slate-200' : 'hover:bg-white/10'
+            }`}
             title="Edit component"
             aria-label="Edit component"
           >
@@ -97,7 +109,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
           <button
             onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }) }}
             onMouseDown={(e) => e.stopPropagation()}
-            className="w-5 h-5 flex items-center justify-center rounded text-slate-600 hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
+            className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
             title="Delete component"
             aria-label="Delete component"
           >

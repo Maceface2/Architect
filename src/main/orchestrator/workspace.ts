@@ -4,6 +4,8 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 import { getAgentRuntime } from '../../shared/agentRuntimes'
 import { DISPATCH_PROTOCOL_VERSION } from '../dispatchCapture'
 import { activityDir, activityLogPath, ensureActivityLog } from './activity'
+import { ensureOrchestrationLog, orchestrationLogPath } from './orchestrationLog'
+import { ensureRecordHelper } from './recordHelper'
 import { initialState, stateDir, stateFilePath, writeState } from './state'
 import { buildConductorPrompt, type ConductorZoneContext } from './prompts/conductor'
 import { buildZonePrompt, type ZoneComponentSpec } from './prompts/zone'
@@ -80,6 +82,11 @@ function ensureDispatchDirs(projectDir: string, dispatchId: string): void {
   fs.mkdirSync(activityDir(projectDir, dispatchId), { recursive: true })
   fs.mkdirSync(stateDir(projectDir, dispatchId), { recursive: true })
   fs.mkdirSync(join(base, 'runtime', dispatchId, 'tasks'), { recursive: true })
+  ensureOrchestrationLog(orchestrationLogPath(projectDir, dispatchId))
+  // Per-dispatch helper script that handles activity-log JSON encoding via
+  // python3/jq, so agents in command-rewriter environments (rtk, ssh, etc.)
+  // don't have to construct heredocs themselves.
+  ensureRecordHelper(projectDir, dispatchId)
 }
 
 function writeManifest(input: WorkspaceInput): void {

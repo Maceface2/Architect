@@ -96,33 +96,35 @@ The conductor dispatches tasks to you as normal user-turn prompts. Each starts w
 
 ## How you report back
 
-When you finish (or fail, or get blocked), append **exactly one** JSON line to:
-
-\`${activityLog}\`
-
-Use this exact shell command shape (heredoc keeps JSON quoting straightforward):
+When you finish (or fail, or get blocked), record **exactly one** activity line. Use the harness-provided helper script — it handles JSON encoding, the timestamp, and the \`from\` field for you, and survives any command wrapper your environment uses (rtk, ssh, screen, etc.):
 
 \`\`\`bash
-cat >> '${activityLog}' << 'ACT_EOF'
-{"ts":"<iso-utc>","from":"${participantId}","kind":"done","taskId":"<id>","content":"<one-line summary>"}
-ACT_EOF
+"$ARCHITECT_RECORD" done "<one-line summary>" --task <id>
 \`\`\`
 
-Replace \`<iso-utc>\` with a current UTC ISO timestamp (e.g. \`2026-04-23T21:10:00Z\`). Replace \`<id>\` with the taskId from the prompt. The \`from\` field must be the literal string \`"${participantId}"\` — the harness rejects events whose \`from\` doesn't match the activity-log file's owner. Valid \`kind\` values:
+Replace \`<id>\` with the taskId from the prompt. Valid first-arg \`kind\` values:
 
-- \`"done"\` — task finished successfully. Put what you produced in \`content\`.
-- \`"failed"\` — task aborted. Put the concrete blocker in \`content\` (e.g. "file X does not exist").
-- \`"ask"\` — you need more info to finish. Put the question in \`content\`. The conductor will reply with \`ANSWER\` on the next user turn.
+- \`done\` — task finished successfully. Put what you produced in \`<content>\`.
+- \`failed\` — task aborted. Put the concrete blocker in \`<content>\` (e.g. "file X does not exist").
+- \`ask\` — you need more info to finish. Put the question in \`<content>\`. The conductor will reply with \`ANSWER\` on the next user turn.
 
 **Optional mid-work progress** (keeps the harness from flagging you as stale on long tasks):
 
 \`\`\`bash
-cat >> '${activityLog}' << 'ACT_EOF'
-{"ts":"<iso-utc>","from":"${participantId}","kind":"progress","taskId":"<id>","content":"<short note>"}
+"$ARCHITECT_RECORD" progress "<short note>" --task <id>
+\`\`\`
+
+**Fallback** — if \`$ARCHITECT_RECORD\` is somehow missing, append directly to the activity log:
+
+\`\`\`bash
+cat >> "$ARCHITECT_ACTIVITY_LOG" << 'ACT_EOF'
+{"ts":"<iso-utc>","from":"${participantId}","kind":"done","taskId":"<id>","content":"<one-line summary>"}
 ACT_EOF
 \`\`\`
 
-**Content size limit:** keep the \`content\` field under 8 KB. Lines exceeding that cap are rejected by the harness parser. For long output, write to your scratchpad (below) and put a short pointer in \`content\`.
+The activity log path is also exposed as \`$ARCHITECT_ACTIVITY_LOG\` (resolves to \`${activityLog}\`). The \`from\` field must be \`"${participantId}"\` — the harness rejects events whose \`from\` doesn't match the file's owner.
+
+**Content size limit:** keep \`<content>\` under 8 KB. Lines exceeding that cap are rejected by the harness parser. For long output, write to your scratchpad (below) and put a short pointer in \`<content>\`.
 
 After your final \`done\`/\`failed\`/\`ask\` line, stop and wait for the next user turn. **Do not loop. Do not poll.**
 

@@ -2,6 +2,60 @@
 @tailwind components;
 @tailwind utilities;
 
+/* Theme tokens. Each color is stored as a space-separated R G B triple so
+   Tailwind's `<alpha-value>` placeholder (configured in tailwind.config.ts)
+   lets `bg-accent/90`, `hover:bg-node/50`, etc. resolve correctly. */
+:root {
+  --bg-canvas: 29 29 29;
+  --bg-panel: 24 20 24;
+  --bg-node: 58 55 54;
+  /* Dark-themed cards inside the canvas (e.g. ComponentNode). Stays dark
+     in dark mode, flips to white-ish in light mode so cards aren't
+     unreadable on a light backdrop. */
+  --bg-component: 30 30 30;
+  /* Terminal surface — kept separate from --bg-canvas so the terminal can
+     be a flat near-black in dark mode (better contrast for ANSI colors)
+     and pure white in light mode. xterm's own theme is updated to match. */
+  --bg-terminal: 13 13 13;
+  --border-node: 76 72 70;
+  --border-node-active: 88 166 255;
+  --accent: 88 166 255;
+  --fg: 240 238 236;
+  --fg-muted: 162 158 156;
+  --fg-subtle: 108 104 102;
+  /* React Flow chrome — not Tailwind-bound, used directly in CSS rules below. */
+  --rf-dot: #6c6967;
+  --rf-controls-bg: #2c2a29;
+  --rf-controls-border: #4a4644;
+  --rf-controls-fg: #a8a4a2;
+  --rf-controls-bg-hover: #383532;
+  --rf-controls-fg-hover: #f0eeec;
+}
+
+:root[data-theme='light'] {
+  /* Canvas is a noticeably tinted slate so nodes read as objects on a
+     surface, not as floating white-on-white shapes. */
+  --bg-canvas: 226 232 240;          /* slate-200 */
+  --bg-panel: 248 250 252;           /* slate-50  */
+  --bg-node: 255 255 255;            /* white     */
+  --bg-component: 255 255 255;       /* white     */
+  --bg-terminal: 255 255 255;        /* white     */
+  --border-node: 203 213 225;        /* slate-300 */
+  /* Keep the accent the same blue across themes. Switching to indigo turns
+     every primary button purple, which was confusing and inconsistent. */
+  --border-node-active: 88 166 255;
+  --accent: 88 166 255;
+  --fg: 15 23 42;
+  --fg-muted: 71 85 105;
+  --fg-subtle: 100 116 139;
+  --rf-dot: #94a3b8;
+  --rf-controls-bg: #ffffff;
+  --rf-controls-border: #cbd5e1;
+  --rf-controls-fg: #475569;
+  --rf-controls-bg-hover: #e2e8f0;
+  --rf-controls-fg-hover: #0f172a;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -11,15 +65,17 @@ body {
   padding: 0;
   font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
   -webkit-font-smoothing: antialiased;
+  background-color: rgb(var(--bg-canvas));
+  color: rgb(var(--fg));
 }
 
 /* React Flow canvas */
 .react-flow {
-  background-color: #111111;
+  background-color: rgb(var(--bg-canvas));
 }
 
 .react-flow__background {
-  background-color: #111111;
+  background-color: rgb(var(--bg-canvas));
 }
 
 /* Keep translucent zones behind components, including while selected/dragged. */
@@ -39,16 +95,16 @@ body {
 }
 
 .react-flow__controls-button {
-  background-color: #191919 !important;
-  border-color: #2d2d2d !important;
-  color: #94a3b8 !important;
+  background-color: var(--rf-controls-bg) !important;
+  border-color: var(--rf-controls-border) !important;
+  color: var(--rf-controls-fg) !important;
   border-radius: 6px !important;
   margin-bottom: 4px;
 }
 
 .react-flow__controls-button:hover {
-  background-color: #212121 !important;
-  color: #e2e8f0 !important;
+  background-color: var(--rf-controls-bg-hover) !important;
+  color: var(--rf-controls-fg-hover) !important;
 }
 
 .react-flow__controls-button svg {
@@ -57,12 +113,12 @@ body {
 
 /* Edge */
 .react-flow__edge-path {
-  stroke: #5b5bf0;
+  stroke: #58a6ff;
   stroke-width: 2;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #7c7cf5;
+  stroke: #8fc2ff;
 }
 
 /* Component connection points */
@@ -80,25 +136,36 @@ body {
 
 .architect-edge-mode .architect-component-handle {
   animation: architect-handle-pulse 1.15s ease-in-out infinite;
-  box-shadow: 0 0 0 2px rgba(91, 91, 240, 0.18), 0 0 14px rgba(91, 91, 240, 0.42);
+  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.18), 0 0 14px rgba(88, 166, 255, 0.42);
 }
 
 @keyframes architect-handle-pulse {
   0%, 100% {
-    box-shadow: 0 0 0 2px rgba(91, 91, 240, 0.16), 0 0 10px rgba(91, 91, 240, 0.32);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.16), 0 0 10px rgba(88, 166, 255, 0.32);
   }
   50% {
-    box-shadow: 0 0 0 5px rgba(91, 91, 240, 0.28), 0 0 18px rgba(91, 91, 240, 0.58);
+    box-shadow: 0 0 0 5px rgba(88, 166, 255, 0.28), 0 0 18px rgba(88, 166, 255, 0.58);
   }
 }
 
 /* Selection box */
 .react-flow__selection {
-  background: rgba(91, 91, 240, 0.08);
-  border: 1px solid #5b5bf0;
+  background: rgba(88, 166, 255, 0.08);
+  border: 1px solid #58a6ff;
 }
 
 /* Node drag placeholder */
 .react-flow__node.dragging {
   opacity: 0.8;
+}
+
+/* Hide horizontal scrollbar while keeping the element scrollable. Used by
+   the popout title-bar tab strip — tabs scroll within a bounded zone
+   instead of showing a hairline scrollbar. */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
 }

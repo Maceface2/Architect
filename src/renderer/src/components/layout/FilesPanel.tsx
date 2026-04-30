@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Folder, File, ArrowLeft, FolderOpen } from 'lucide-react'
-
-interface FileEntry {
-  name: string
-  isDirectory: boolean
-  path: string
-}
+import type { FileEntry } from '../../../../shared/electronTypes'
 
 interface Props {
   rootDir: string
@@ -56,21 +51,21 @@ export default function FilesPanel({ rootDir }: Props) {
         <button
           onClick={navigateBack}
           disabled={!canGoBack}
-          className="p-1 rounded text-slate-400 hover:text-white hover:bg-node transition-colors disabled:opacity-25 disabled:pointer-events-none"
+          className="p-1 rounded text-fg-muted hover:text-fg hover:bg-node transition-colors disabled:opacity-25 disabled:pointer-events-none"
         >
           <ArrowLeft size={14} />
         </button>
         <div className="flex items-center gap-1.5 flex-1 min-w-0">
           <FolderOpen size={13} className="text-amber-400 flex-shrink-0" />
-          <span className="text-xs text-slate-400 truncate font-mono">{folderName}</span>
+          <span className="text-xs text-fg-muted truncate font-mono">{folderName}</span>
         </div>
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
         {loading ? (
-          <div className="flex items-center justify-center h-24 text-xs text-slate-600">Loading…</div>
+          <div className="flex items-center justify-center h-24 text-xs text-fg-subtle">Loading…</div>
         ) : entries.length === 0 ? (
-          <div className="flex items-center justify-center h-24 text-xs text-slate-600">Empty directory</div>
+          <div className="flex items-center justify-center h-24 text-xs text-fg-subtle">Empty directory</div>
         ) : (
           entries.map(entry => (
             <button
@@ -82,9 +77,9 @@ export default function FilesPanel({ rootDir }: Props) {
             >
               {entry.isDirectory
                 ? <Folder size={13} className="text-amber-400 flex-shrink-0" />
-                : <File   size={13} className="text-slate-600 flex-shrink-0" />
+                : <File   size={13} className="text-fg-subtle flex-shrink-0" />
               }
-              <span className={`text-sm truncate ${entry.isDirectory ? 'text-slate-200' : 'text-slate-500'}`}>
+              <span className={`text-sm truncate ${entry.isDirectory ? 'text-fg' : 'text-fg-subtle'}`}>
                 {entry.name}
               </span>
             </button>

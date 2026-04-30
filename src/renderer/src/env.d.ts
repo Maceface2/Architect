@@ -1,25 +1,16 @@
+/// <reference types="vite/client" />
+// vite/client gives ImportMeta { env, hot } typings — needed for both the
+// RENDERER_VITE_* env reads in App.tsx and the import.meta.hot HMR guard
+// in lib/activityStore.ts.
+
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import type {
+  AuthLoginResult,
+  FileEntry,
+  SessionInfo,
+  TerminalInfo,
+} from '../../shared/electronTypes'
 import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord } from './types'
-
-interface FileEntry {
-  name: string
-  isDirectory: boolean
-  path: string
-}
-
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  coordinatedMode?: boolean
-  planMode?: boolean
-}
-
-interface AuthLoginResult {
-  ok: boolean
-  error?: string
-  session?: SessionInfo
-}
 
 interface ElectronAPI {
   platform: string
@@ -59,6 +50,36 @@ interface ElectronAPI {
       | { ok: true; info: TerminalInfo[] }
       | { ok: false; error: 'not-found' | 'legacy-protocol' }
     >
+    loadActivity: (
+      projectDir: string,
+      dispatchId: string,
+    ) => Promise<Array<{
+      participantId: string
+      event: {
+        ts: string
+        from: string
+        kind: 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+        taskId?: string
+        content: string
+        structured?: Record<string, unknown>
+      }
+    }>>
+    loadOrchestration: (
+      projectDir: string,
+      dispatchId: string,
+    ) => Promise<Array<{
+      ts: string
+      kind:
+        | 'dispatch-started'
+        | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+        | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+        | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+        | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+      participantId?: string
+      taskId?: string
+      summary: string
+      structured?: Record<string, unknown>
+    }>>
   }
   assistant: {
     start: (
@@ -102,6 +123,28 @@ interface ElectronAPI {
   }
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
   saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>
+  terminalPage: {
+    popout: (snapshot: {
+      sessions: TerminalInfo[]
+      layout: unknown
+      projectDir: string
+      theme: 'dark' | 'light'
+    }) => Promise<{ ok: boolean }>
+    dock: () => Promise<{ ok: boolean }>
+    requestInitial: () => Promise<{
+      sessions: TerminalInfo[] | null
+      layout: unknown
+      projectDir: string
+      theme: 'dark' | 'light'
+    }>
+    publishSessions: (sessions: TerminalInfo[]) => void
+    publishLayout: (layout: unknown) => void
+    publishTheme: (theme: 'dark' | 'light') => void
+    onSessions: (cb: (sessions: TerminalInfo[]) => void) => () => void
+    onLayout: (cb: (layout: unknown) => void) => () => void
+    onTheme: (cb: (theme: 'dark' | 'light') => void) => () => void
+    onClosed: (cb: (event: { layout: unknown }) => void) => () => void
+  }
   zone: {
     listSessions: (
       projectDir: string,
@@ -151,15 +194,55 @@ interface ElectronAPI {
       }) => void,
     ) => () => void
   }
+  activity: {
+    onEvent: (
+      cb: (event: {
+        dispatchId: string
+        participantId: string
+        event: {
+          ts: string
+          kind: 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
+          taskId?: string
+          content: string
+          structured?: Record<string, unknown>
+        }
+      }) => void,
+    ) => () => void
+    onState: (
+      cb: (event: {
+        dispatchId: string
+        participantId: string
+        status: 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
+        lastTaskId?: string
+      }) => void,
+    ) => () => void
+    onDispatchComplete: (
+      cb: (event: { dispatchId: string; summary: string }) => void,
+    ) => () => void
+    onOrchestration: (
+      cb: (event: {
+        dispatchId: string
+        event: {
+          ts: string
+          kind:
+            | 'dispatch-started'
+            | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
+            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+            | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
+            | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+          participantId?: string
+          taskId?: string
+          summary: string
+          structured?: Record<string, unknown>
+        }
+      }) => void,
+    ) => () => void
+  }
 }
 
 declare global {
   interface Window {
     electron: ElectronAPI
-  }
-  type SessionInfo = {
-    userId: string
-    email: string
   }
 }
 

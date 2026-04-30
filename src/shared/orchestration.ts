@@ -1,0 +1,37 @@
+// Shared orchestration types — used by main, preload, and renderer. The
+// main-side authoritative definition lives in src/main/orchestrator/orchestrationLog.ts;
+// this module re-declares the wire-level shape so the renderer + preload don't
+// have to import main-only modules. Keep this in sync with OrchestrationKind /
+// OrchestrationEvent in orchestrationLog.ts.
+
+export type OrchestrationKind =
+  | 'dispatch-started'
+  | 'task-dispatched'
+  | 'task-superseded'
+  | 'task-retried'
+  | 'task-exhausted'
+  | 'task-answered'
+  | 'all-done-detected'
+  | 'conductor-decision'
+  | 'assign-rejected'
+  | 'premature-final'
+  | 'pty-exit'
+  | 'status-change'
+  | 'stale-escalation'
+  | 'unassigned-ask-dropped'
+  | 'deadlock-detected'
+  | 'redispatched'
+
+export interface OrchestrationEvent {
+  ts: string
+  kind: OrchestrationKind
+  participantId?: string
+  taskId?: string
+  summary: string
+  structured?: Record<string, unknown>
+}
+
+export interface OrchestrationEnvelope {
+  dispatchId: string
+  event: OrchestrationEvent
+}

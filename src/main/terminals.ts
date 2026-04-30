@@ -225,26 +225,8 @@ function pickSession(
   return rec
 }
 
-export interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  // True when this terminal is part of a scheduler-driven dispatch (any zone
-  // OR the Conductor). The renderer uses it to lock user input by default so
-  // accidental typing doesn't interleave with scheduler-delivered prompts —
-  // the scheduler's two-step submit (text → 120ms → \r) races with concurrent
-  // user keystrokes and corrupts whichever turn is mid-flight. The user can
-  // click "Take manual control" to type (e.g. to send GO in plan mode or chat
-  // with the Conductor mid-dispatch). Never set on solo-zone launches, the
-  // assistant, or shell sessions.
-  coordinatedMode?: boolean
-  // True when this terminal is the Conductor of a dispatch the user has
-  // requested in plan mode. The renderer renders a "plan mode — waiting
-  // for GO" pill in the terminal's header until the user types GO. The
-  // conductor's prompt teaches it to discuss the plan with the user
-  // before emitting any {type:"assign"} decisions.
-  planMode?: boolean
-}
+import type { TerminalInfo } from '../shared/electronTypes'
+export type { TerminalInfo }
 
 // Position + dimensions come straight from React Flow nodes.
 export interface NodePosition { x: number; y: number }
@@ -709,40 +691,32 @@ const INTER_TURN_GAP_MS = 1500    // \r→next-body gap (let TUI commit the turn
 // Submit one full turn (body + Enter) to a PTY. Use this instead of two
 // separate writeToTerminal calls — the two-step pattern (body, 120ms, CR) is
 // load-bearing because Claude's TUI treats a single burst as paste content
-// and won't interpret an embedded \r as Enter. While `userControlState[id]`
-// is true (user has manual control), turns are queued and replayed on release.
+// and won't interpret an embedded \r as Enter.
+//
+// Every submit goes through `turnQueue` so back-to-back calls serialize
+// instead of overlapping. Without this, two submits within 120ms would write
+// both bodies before either \r fires, mashing them into a single TUI turn —
+// the bug the conductor hit when multiple zones reported done at once. The
+// drainer respects `userControlState` as a pause condition; if the user grabs
+// the keyboard mid-drain, the drainer yields and `setUserControl(false)`
+// re-kicks it on release.
 export function submitTurnToTerminal(id: string, text: string): void {
-  if (userControlState.get(id) === true) {
-    const q = turnQueue.get(id) ?? []
-    q.push(text)
-    turnQueue.set(id, q)
-    return
-  }
-  performSubmit(id, text)
-}
-
-function performSubmit(id: string, text: string): void {
-  const sess = sessions.get(id)
-  if (!sess) return
-  sess.pty.write(text)
-  setTimeout(() => {
-    // If the user took control during the 120ms gap, skip the CR — the body
-    // has already landed in the TUI input line, and submitting it now would
-    // race with whatever the user has started typing. The body sits there as
-    // pre-filled text the user can backspace or accept. Subsequent queued
-    // turns will drain after release.
-    if (userControlState.get(id) === true) return
-    sessions.get(id)?.pty.write('\r')
-  }, SUBMIT_BODY_TO_CR_MS)
+  const q = turnQueue.get(id) ?? []
+  q.push(text)
+  turnQueue.set(id, q)
+  startDrain(id, 0)
 }
 
 // User toggles manual control. Releasing (hasControl=false) drains the queue.
 export function setUserControl(id: string, hasControl: boolean): void {
   userControlState.set(id, hasControl)
-  if (!hasControl) drainTurnQueue(id)
+  // Leading gap on release: the user just pressed Enter; without a pause the
+  // queued body lands back-to-back with the user's \r and Claude's TUI splices
+  // them into one input.
+  if (!hasControl) startDrain(id, INTER_TURN_GAP_MS)
 }
 
-function drainTurnQueue(id: string): void {
+function startDrain(id: string, leadingGapMs: number): void {
   if (draining.has(id)) return
   draining.add(id)
   const next = (): void => {
@@ -759,10 +733,8 @@ function drainTurnQueue(id: string): void {
       setTimeout(next, INTER_TURN_GAP_MS)
     }, SUBMIT_BODY_TO_CR_MS)
   }
-  // Same gap on the boundary between the user's release-Enter and the first
-  // queued turn — without it, the user's just-submitted \r and the queued
-  // body land back-to-back and Claude's TUI splices them into one input.
-  setTimeout(next, INTER_TURN_GAP_MS)
+  if (leadingGapMs > 0) setTimeout(next, leadingGapMs)
+  else next()
 }
 
 // Clear all coordination state for a PTY id. Called when a session ends so a

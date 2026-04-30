@@ -290,7 +290,21 @@ function listGeminiChatDirs(cwd: string): string[] {
 
 function readGeminiSessionMeta(path: string): GeminiSessionMeta | null {
   try {
-    const parsed = JSON.parse(fs.readFileSync(path, 'utf-8'))
+    const raw = fs.readFileSync(path, 'utf-8')
+    // Newer Gemini versions write JSONL (one event per line, metadata on line 1);
+    // older versions wrote a single JSON object. Try line-1 parse first, then whole-file.
+    let parsed: any = null
+    const firstNewline = raw.indexOf('\n')
+    const firstLine = firstNewline >= 0 ? raw.slice(0, firstNewline) : raw
+    try {
+      parsed = JSON.parse(firstLine)
+    } catch {
+      try {
+        parsed = JSON.parse(raw)
+      } catch {
+        return null
+      }
+    }
     if (typeof parsed?.sessionId !== 'string' || typeof parsed?.projectHash !== 'string') return null
     return {
       id: parsed.sessionId as string,
@@ -309,7 +323,9 @@ function listGeminiSessionIdsForCwd(cwd: string, primaryOnly = false): Set<strin
   for (const dir of listGeminiChatDirs(cwd)) {
     let files: string[]
     try {
-      files = fs.readdirSync(dir).filter(name => name.startsWith('session-') && name.endsWith('.json'))
+      files = fs.readdirSync(dir).filter(
+        name => name.startsWith('session-') && (name.endsWith('.jsonl') || name.endsWith('.json')),
+      )
     } catch {
       continue
     }
@@ -356,7 +372,7 @@ export function isGeminiSessionIdForCwd(cwd: string, sessionId: string): boolean
   for (const dir of listGeminiChatDirs(cwd)) {
     let files: string[]
     try {
-      files = fs.readdirSync(dir).filter(name => name.endsWith('.json'))
+      files = fs.readdirSync(dir).filter(name => name.endsWith('.jsonl') || name.endsWith('.json'))
     } catch {
       continue
     }

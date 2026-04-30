@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
+import type { ActivityEvent } from './orchestrator/activity'
 import {
   initShellEnv,
   startDispatch,
@@ -98,6 +99,11 @@ function createWindow(): void {
     backgroundColor: '#111111',
     icon,
     title: 'Architect',
+    // macOS: keep the traffic lights but drop the native title bar strip.
+    // Lights inset over TopNav row 1; the renderer reserves padding-left + a
+    // drag region so the user can grab the bar to move the window.
+    titleBarStyle: 'hiddenInset',
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -220,6 +226,59 @@ ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
   return resumeDispatch(mainWindow, opts)
 })
 
+// Defense-in-depth check on the dispatchId IPC argument. Renderer is trusted
+// today, but joining an attacker-controlled `../` into the runtime path would
+// let any caller read arbitrary JSONL files outside ARCHITECT/runtime/. A
+// dispatchId is a UUID-like token in practice — slashes, backslashes, NUL,
+// and parent refs have no legitimate use.
+function isSafeDispatchId(id: unknown): id is string {
+  if (typeof id !== 'string' || id.length === 0 || id.length > 256) return false
+  if (id.includes('/') || id.includes('\\') || id.includes('\0')) return false
+  if (id === '.' || id === '..' || id.includes('..')) return false
+  return true
+}
+
+// Read every persisted activity-log line for a dispatch, oldest first.
+// Used so the swimlane shows the previous session's history when a user
+// resumes a dispatch — without it, the wipe in setupWorkspaceV5 would
+// drop those lines before the new run starts.
+ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, dispatchId: string) => {
+  if (!isSafeDispatchId(dispatchId)) return []
+  const fsMod = await import('fs')
+  const pathMod = await import('path')
+  const { activityDir, readAllActivity } = await import('./orchestrator/activity')
+  const dir = activityDir(projectDir, dispatchId)
+  let entries: string[] = []
+  try {
+    entries = fsMod.readdirSync(dir).filter(n => n.endsWith('.jsonl'))
+  } catch {
+    return [] as Array<{ participantId: string; event: ActivityEvent }>
+  }
+  const out: Array<{ participantId: string; event: ActivityEvent }> = []
+  for (const file of entries) {
+    const participantId = file.replace(/\.jsonl$/, '')
+    const events = readAllActivity(pathMod.join(dir, file), participantId)
+    for (const event of events) out.push({ participantId, event })
+  }
+  out.sort((a, b) => {
+    const aTs = Date.parse(a.event.ts)
+    const bTs = Date.parse(b.event.ts)
+    // Treat unparseable ts as 0 so they sort to the head rather than producing
+    // NaN comparisons (which leave order undefined).
+    return (Number.isFinite(aTs) ? aTs : 0) - (Number.isFinite(bTs) ? bTs : 0)
+  })
+  return out
+})
+
+// Sibling of dispatches:load-activity for the harness-only orchestration log.
+// Lets the renderer seed the swimlane on resume with prior-session decisions
+// (status transitions, retries, conductor decisions, etc.) before the wipe.
+ipcMain.handle('dispatches:load-orchestration', async (_event, projectDir: string, dispatchId: string) => {
+  if (!isSafeDispatchId(dispatchId)) return []
+  const { orchestrationLogPath, readAllOrchestration } = await import('./orchestrator/orchestrationLog')
+  return readAllOrchestration(orchestrationLogPath(projectDir, dispatchId))
+})
+
 ipcMain.handle('start-assistant', (_event, projectDir: string, contextMd: string, runtime: AgentRuntime, mode: AssistantMode, opts?: StartAssistantOpts) => {
   if (!mainWindow) return null
   return startAssistant(mainWindow, projectDir, contextMd, runtime, mode, opts)
@@ -315,6 +374,130 @@ ipcMain.handle('terminal:dock', (_event, id: string) => {
   return { ok: true }
 })
 
+// ── Terminal page popout (entire panel, singleton) ─────────────────────────
+//
+// A separate BrowserWindow that owns the full TerminalPanel UI while open.
+// Main window state (sessions + layout) is forwarded via two IPC channels:
+//   - terminal-page:publish-sessions   (main window → main proc → popout)
+//   - terminal-page:publish-layout     (any window  → main proc → other window)
+// The cache below holds the last-published snapshot so a freshly-opened
+// popout can render immediately without round-tripping for the data.
+
+let terminalPagePopout: BrowserWindow | null = null
+let terminalPageSessionsCache: unknown = null
+let terminalPageLayoutCache: unknown = null
+let terminalPageProjectDirCache: string = ''
+let terminalPageThemeCache: 'dark' | 'light' = 'dark'
+
+function broadcastToTerminalPagePeers(channel: string, payload: unknown, except?: BrowserWindow): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow !== except) {
+    mainWindow.webContents.send(channel, payload)
+  }
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed() && terminalPagePopout !== except) {
+    terminalPagePopout.webContents.send(channel, payload)
+  }
+}
+
+interface TerminalPagePopoutOpts {
+  sessions: unknown
+  layout: unknown
+  projectDir: string
+  theme: 'dark' | 'light'
+}
+
+ipcMain.handle('terminal-page:popout', (_event, opts: TerminalPagePopoutOpts) => {
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    terminalPagePopout.focus()
+    return { ok: true }
+  }
+
+  // Seed the cache with whatever main window had at popout time so the
+  // popout's first render has the full session/layout snapshot available
+  // by the time it asks for it.
+  terminalPageSessionsCache = opts.sessions
+  terminalPageLayoutCache = opts.layout
+  terminalPageProjectDirCache = opts.projectDir ?? ''
+  terminalPageThemeCache = opts.theme === 'light' ? 'light' : 'dark'
+
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 720,
+    backgroundColor: '#0d0d0d',
+    title: 'Terminal',
+    // Match the main window's macOS chrome: traffic lights inset over the
+    // app's own title bar so the renderer can paint a tab strip flush
+    // against the top edge with the lights tucked into its left padding.
+    titleBarStyle: 'hiddenInset',
+    // Title bar is a 6px drag micro-strip + the tab row underneath. y=14
+    // visually centers the lights against the tab content while leaving
+    // the micro-strip clear above for click-and-drag grabs.
+    trafficLightPosition: { x: 14, y: 14 },
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  terminalPagePopout = win
+  win.on('closed', () => {
+    terminalPagePopout = null
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-page:closed', { layout: terminalPageLayoutCache })
+    }
+  })
+
+  const params = `panel=terminal-page`
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${params}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search: params })
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('terminal-page:dock', () => {
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    terminalPagePopout.close()
+  }
+  return { ok: true }
+})
+
+// Returns the cached snapshot. The popout window asks for this once after
+// mount because `did-finish-load` fires before its IPC subscribers attach.
+ipcMain.handle('terminal-page:request-initial', () => {
+  return {
+    sessions: terminalPageSessionsCache,
+    layout: terminalPageLayoutCache,
+    projectDir: terminalPageProjectDirCache,
+    theme: terminalPageThemeCache,
+  }
+})
+
+// Sender publishes its sessions list. We cache + forward to peer windows.
+ipcMain.on('terminal-page:publish-sessions', (event, sessions: unknown) => {
+  terminalPageSessionsCache = sessions
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:sessions', sessions, sender)
+})
+
+// Same pattern for layout.
+ipcMain.on('terminal-page:publish-layout', (event, layout: unknown) => {
+  terminalPageLayoutCache = layout
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:layout', layout, sender)
+})
+
+// Theme broadcast from main window. The popout mirrors it via the same bus
+// so a theme flip in the parent app updates the detached terminal page too.
+ipcMain.on('terminal-page:publish-theme', (event, theme: unknown) => {
+  const next = theme === 'light' ? 'light' : 'dark'
+  terminalPageThemeCache = next
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:theme', next, sender)
+})
+
 // ── Terminal layout persistence ────────────────────────────────────────────
 
 ipcMain.handle('terminal-layout:load', (_event, projectDir: string) => {
@@ -346,6 +529,10 @@ function closeAllPopouts() {
     } catch {}
   }
   popouts.clear()
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    try { terminalPagePopout.close() } catch {}
+  }
+  terminalPagePopout = null
 }
 
 registerAuthIpc()

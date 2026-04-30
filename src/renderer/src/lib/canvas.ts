@@ -8,6 +8,7 @@ import {
 } from '../../../shared/agentRuntimes'
 import type {
   ArchitectCanvasData,
+  CanvasBackground,
   CanvasEdge,
   CanvasNode,
   ComponentEdgeData,
@@ -15,16 +16,25 @@ import type {
   ComponentNodeData,
   ComponentNodeType,
   HarnessTimeouts,
+  InterfaceSettings,
+  InterfaceTheme,
   NodeTools,
   ProjectSettings,
   RuntimeModelMap,
   ZoneNodeData,
   ZoneNodeType,
+  ZoneTreatment,
 } from '../types'
 
 export const DEFAULT_HARNESS_TIMEOUTS: HarnessTimeouts = {
   idleThresholdMs: 3 * 60_000,
   staleEscalationMs: 10 * 60_000,
+}
+
+export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
+  zoneTreatment: 'default',
+  theme: 'dark',
+  canvasBackground: 'dots',
 }
 
 export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
@@ -55,7 +65,24 @@ export function createDefaultProjectSettings(): ProjectSettings {
     dispatchTools: { ...DEFAULT_TOOLS },
     dispatchTimeoutMs: DEFAULT_ZONE_TIMEOUT_MS,
     harnessTimeouts: { ...DEFAULT_HARNESS_TIMEOUTS },
+    interface: { ...DEFAULT_INTERFACE_SETTINGS },
   }
+}
+
+function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
+  const base = { ...DEFAULT_INTERFACE_SETTINGS }
+  if (!raw || typeof raw !== 'object') return base
+  const rec = raw as Record<string, unknown>
+  if (rec.zoneTreatment === 'architectural' || rec.zoneTreatment === 'default') {
+    base.zoneTreatment = rec.zoneTreatment as ZoneTreatment
+  }
+  if (rec.theme === 'light' || rec.theme === 'dark') {
+    base.theme = rec.theme as InterfaceTheme
+  }
+  if (rec.canvasBackground === 'dots' || rec.canvasBackground === 'grid') {
+    base.canvasBackground = rec.canvasBackground as CanvasBackground
+  }
+  return base
 }
 
 export function createDefaultZoneAgentConfig(settings: ProjectSettings = createDefaultProjectSettings()) {
@@ -243,6 +270,7 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
     dispatchTools: normalizeDispatchTools(rawDispatchTools),
     dispatchTimeoutMs,
     harnessTimeouts: normalizeHarnessTimeouts(rawSettings.harnessTimeouts),
+    interface: normalizeInterfaceSettings(rawSettings.interface),
   }
 }
 

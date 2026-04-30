@@ -7,6 +7,7 @@ import {
 } from '../../../../shared/agentRuntimes'
 import type {
   HarnessTimeouts,
+  InterfaceSettings,
   NodeTools,
   ProjectSettings,
   ZoneNodeType,
@@ -64,15 +65,48 @@ export default function SettingsPanel({
     onChange({ harnessTimeouts: { ...settings.harnessTimeouts, [key]: Math.max(0, value) } })
   }
 
+  const setInterface = (partial: Partial<InterfaceSettings>) => {
+    onChange({ interface: { ...settings.interface, ...partial } })
+  }
+
   return (
     <div className="h-full overflow-y-auto bg-canvas">
       <div className="max-w-3xl mx-auto px-8 py-8 space-y-10">
         <header>
-          <h1 className="text-xl font-semibold text-white tracking-tight">Project Settings</h1>
-          <p className="text-xs text-slate-500 mt-1 leading-relaxed">
-            These settings persist in <span className="font-mono text-slate-400">architect-canvas.json</span> and apply to every new zone and dispatch in this project.
+          <h1 className="text-xl font-semibold text-fg tracking-tight">Project Settings</h1>
+          <p className="text-xs text-fg-subtle mt-1 leading-relaxed">
+            These settings persist in <span className="font-mono text-fg-muted">architect-canvas.json</span> and apply to every new zone and dispatch in this project.
           </p>
         </header>
+
+        <Section title="Interface" hint="Pure UI preferences — these only affect how the renderer paints. Saved with the canvas so the next session starts with the same look.">
+          <div className="space-y-3">
+            <Field label="Zone style">
+              <Seg
+                options={['default', 'architectural'] as const}
+                value={settings.interface.zoneTreatment}
+                onChange={value => setInterface({ zoneTreatment: value })}
+              />
+            </Field>
+            <Field label="Theme">
+              <Seg
+                options={['dark', 'light'] as const}
+                value={settings.interface.theme}
+                onChange={value => setInterface({ theme: value })}
+              />
+            </Field>
+            <Field label="Canvas background">
+              <Seg
+                options={['dots', 'grid'] as const}
+                value={settings.interface.canvasBackground}
+                onChange={value => setInterface({ canvasBackground: value })}
+              />
+            </Field>
+          </div>
+          <p className="text-[11px] text-fg-subtle leading-relaxed mt-3">
+            <span className="text-fg-muted">Architectural</span> turns zones into outlined boxes with corner ticks and a floating label, like a blueprint. <span className="text-fg-muted">Default</span> keeps the current card look.
+          </p>
+        </Section>
 
         <Section title="Canvas Zone CLI" hint="Picking a CLI here bulk-applies it to every zone on the canvas and seeds newly dragged zones. Individual zones may still override via the zone config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
           <div className="grid grid-cols-2 gap-2">
@@ -84,8 +118,8 @@ export default function SettingsPanel({
                   onClick={() => onChange({ dispatchRuntime: runtime.id })}
                   className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-colors ${
                     selected
-                      ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
-                      : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                      ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                      : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                   }`}
                 >
                   <span className="text-sm font-medium">{runtime.label}</span>
@@ -99,7 +133,7 @@ export default function SettingsPanel({
               className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
                 zonesAreCustom
                   ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
-                  : 'border-white/[0.04] text-slate-700'
+                  : 'border-white/[0.04] text-fg-subtle'
               }`}
               title={
                 zonesAreCustom
@@ -125,7 +159,7 @@ export default function SettingsPanel({
               return (
                 <div key={runtime.id}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-slate-400">{runtime.label}</span>
+                    <span className="text-[11px] text-fg-muted">{runtime.label}</span>
                     <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
                       {runtime.shortLabel}
                     </span>
@@ -134,7 +168,7 @@ export default function SettingsPanel({
                     value={current}
                     onChange={event => setModel(runtime.id, event.target.value)}
                     placeholder={runtime.defaultModel}
-                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
                     {runtime.suggestedModels.map(model => (
@@ -144,7 +178,7 @@ export default function SettingsPanel({
                         className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                           current === model
                             ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                            : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                            : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                         }`}
                       >
                         {shortModelLabel(model)}
@@ -174,14 +208,14 @@ export default function SettingsPanel({
               value={settings.dispatchPlanMode}
               onChange={() => onChange({ dispatchPlanMode: !settings.dispatchPlanMode })}
             />
-            <p className="text-[11px] text-slate-600 leading-relaxed">
+            <p className="text-[11px] text-fg-subtle leading-relaxed">
               Per-CLI behavior at spawn:
             </p>
-            <ul className="text-[11px] text-slate-600 leading-relaxed list-disc list-inside space-y-0.5">
-              <li>Claude — <span className="font-mono text-slate-500">--effort &lt;level&gt;</span> (also supports xhigh, max).</li>
-              <li>Codex — <span className="font-mono text-slate-500">-c model_reasoning_effort="&lt;level&gt;"</span>.</li>
-              <li>Gemini — no spawn flag; set a preset in <span className="font-mono text-slate-500">~/.gemini/config.json</span>.</li>
-              <li>OpenCode — no spawn flag on the tui; press <span className="font-mono text-slate-500">Ctrl+T</span> inside the session to cycle variants.</li>
+            <ul className="text-[11px] text-fg-subtle leading-relaxed list-disc list-inside space-y-0.5">
+              <li>Claude — <span className="font-mono text-fg-subtle">--effort &lt;level&gt;</span> (also supports xhigh, max).</li>
+              <li>Codex — <span className="font-mono text-fg-subtle">-c model_reasoning_effort="&lt;level&gt;"</span>.</li>
+              <li>Gemini — no spawn flag; set a preset in <span className="font-mono text-fg-subtle">~/.gemini/config.json</span>.</li>
+              <li>OpenCode — no spawn flag on the tui; press <span className="font-mono text-fg-subtle">Ctrl+T</span> inside the session to cycle variants.</li>
             </ul>
           </div>
         </Section>
@@ -208,7 +242,7 @@ export default function SettingsPanel({
         >
           <div className="space-y-5">
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-slate-600">New-zone timeout seed</p>
+              <p className="text-[10px] uppercase tracking-wider text-fg-subtle">New-zone timeout seed</p>
               <NumberField
                 label="Zone timeout (ms)"
                 value={settings.dispatchTimeoutMs}
@@ -219,7 +253,7 @@ export default function SettingsPanel({
             </div>
 
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-slate-600">Scheduler staleness</p>
+              <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Scheduler staleness</p>
               <NumberField
                 label="Idle threshold (ms)"
                 value={settings.harnessTimeouts.idleThresholdMs}
@@ -260,21 +294,21 @@ export default function SettingsPanel({
               />
             </Field>
           </div>
-          <p className="text-[11px] text-slate-600 leading-relaxed mt-2">
+          <p className="text-[11px] text-fg-subtle leading-relaxed mt-2">
             Architecture and General assistants each pick their own CLI + model from the gear icon on the assistant panel — those choices are independent of the Dispatch/Zone CLI above. Dock position is saved per machine; both mode terminals keep running when you close the panel or switch modes.
           </p>
-          <div className="mt-3 space-y-1 text-[11px] text-slate-500">
-            <p className="text-[10px] uppercase tracking-wider text-slate-600">Current per-mode CLI</p>
+          <div className="mt-3 space-y-1 text-[11px] text-fg-subtle">
+            <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Current per-mode CLI</p>
             {(['architecture', 'general'] as const).map(mode => {
               const rt = settings.assistantRuntimeByMode?.[mode]
               const effective = rt ?? DEFAULT_AGENT_RUNTIME
               const explicit = !!rt
               return (
                 <p key={mode}>
-                  <span className="capitalize text-slate-400">{mode}</span>
+                  <span className="capitalize text-fg-muted">{mode}</span>
                   {' → '}
-                  <span className="text-slate-300">{getAgentRuntime(effective).label}</span>
-                  {!explicit && <span className="text-slate-600"> (baseline — pick via assistant gear to make it sticky)</span>}
+                  <span className="text-fg-muted">{getAgentRuntime(effective).label}</span>
+                  {!explicit && <span className="text-fg-subtle"> (baseline — pick via assistant gear to make it sticky)</span>}
                 </p>
               )
             })}
@@ -289,10 +323,10 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
   return (
     <section>
       <div className="mb-3">
-        <h2 className="text-[10px] uppercase tracking-widest text-slate-500">{title}</h2>
-        {hint && <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{hint}</p>}
+        <h2 className="text-[10px] uppercase tracking-widest text-fg-subtle">{title}</h2>
+        {hint && <p className="text-[11px] text-fg-subtle mt-1 leading-relaxed">{hint}</p>}
       </div>
-      <div className="rounded-xl border border-white/[0.06] bg-[#141414] p-5">
+      <div className="rounded-xl border border-node-border bg-panel p-5">
         {children}
       </div>
     </section>
@@ -302,7 +336,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-3">
-      <span className="text-[12px] text-slate-400">{label}</span>
+      <span className="text-[12px] text-fg-muted">{label}</span>
       {children}
     </div>
   )
@@ -316,7 +350,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: readonly
           key={option}
           onClick={() => onChange(option)}
           className={`px-2.5 py-1 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-slate-500 hover:text-slate-300'
+            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-fg-subtle hover:text-fg-muted'
           }`}
         >
           {option}
@@ -329,7 +363,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: readonly
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: () => void }) {
   return (
     <button onClick={onChange} className="flex items-center justify-between w-full group py-0.5">
-      <span className="text-[12px] text-slate-400 group-hover:text-slate-200 transition-colors">{label}</span>
+      <span className="text-[12px] text-fg-muted group-hover:text-fg transition-colors">{label}</span>
       <div className={`relative w-8 h-4 rounded-full transition-colors ${value ? 'bg-[#58A6FF]' : 'bg-white/10'}`}>
         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${value ? 'left-[18px]' : 'left-0.5'}`} />
       </div>
@@ -355,17 +389,17 @@ function NumberField({
   return (
     <div>
       <div className="flex items-center justify-between gap-3">
-        <span className="text-[12px] text-slate-400">{label}</span>
+        <span className="text-[12px] text-fg-muted">{label}</span>
         <input
           type="number"
           value={value}
           min={min}
           step={step}
           onChange={event => onChange(Number(event.target.value))}
-          className="w-32 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[12px] text-slate-300 focus:outline-none focus:border-white/20 font-mono text-right"
+          className="w-32 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[12px] text-fg-muted focus:outline-none focus:border-white/20 font-mono text-right"
         />
       </div>
-      {hint && <p className="text-[11px] text-slate-600 mt-1 leading-relaxed">{hint}</p>}
+      {hint && <p className="text-[11px] text-fg-subtle mt-1 leading-relaxed">{hint}</p>}
     </div>
   )
 }

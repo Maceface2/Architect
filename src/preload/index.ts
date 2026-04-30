@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { OrchestrationEnvelope } from '../shared/orchestration'
 
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
@@ -38,6 +39,10 @@ contextBridge.exposeInMainWorld('electron', {
       edges: unknown[]
       settings: unknown
     }) => ipcRenderer.invoke('dispatches:resume', opts),
+    loadActivity: (projectDir: string, dispatchId: string) =>
+      ipcRenderer.invoke('dispatches:load-activity', projectDir, dispatchId),
+    loadOrchestration: (projectDir: string, dispatchId: string) =>
+      ipcRenderer.invoke('dispatches:load-orchestration', projectDir, dispatchId),
   },
 
   // Architecture assistant
@@ -168,6 +173,52 @@ contextBridge.exposeInMainWorld('electron', {
   saveTerminalLayout: (projectDir: string, json: unknown) =>
     ipcRenderer.invoke('terminal-layout:save', projectDir, json),
 
+  // Whole-terminal-page popout (singleton — one detached window at a time).
+  // Lifecycle:
+  //   popout(snapshot)               → main spawns the popout window
+  //   requestInitial()               → popout pulls the cached snapshot
+  //   publishSessions / publishLayout → broadcast my state to peer window
+  //   onSessions / onLayout          → receive peer's state updates
+  //   onClosed (main only)           → popout window closed; resume docked
+  terminalPage: {
+    popout: (snapshot: { sessions: unknown; layout: unknown; projectDir: string; theme: 'dark' | 'light' }) =>
+      ipcRenderer.invoke('terminal-page:popout', snapshot),
+    dock: () => ipcRenderer.invoke('terminal-page:dock'),
+    requestInitial: () =>
+      ipcRenderer.invoke('terminal-page:request-initial') as Promise<{
+        sessions: unknown
+        layout: unknown
+        projectDir: string
+        theme: 'dark' | 'light'
+      }>,
+    publishSessions: (sessions: unknown) =>
+      ipcRenderer.send('terminal-page:publish-sessions', sessions),
+    publishLayout: (layout: unknown) =>
+      ipcRenderer.send('terminal-page:publish-layout', layout),
+    publishTheme: (theme: 'dark' | 'light') =>
+      ipcRenderer.send('terminal-page:publish-theme', theme),
+    onSessions: (cb: (sessions: unknown) => void) => {
+      const handler = (_: unknown, sessions: unknown) => cb(sessions)
+      ipcRenderer.on('terminal-page:sessions', handler)
+      return () => ipcRenderer.removeListener('terminal-page:sessions', handler)
+    },
+    onLayout: (cb: (layout: unknown) => void) => {
+      const handler = (_: unknown, layout: unknown) => cb(layout)
+      ipcRenderer.on('terminal-page:layout', handler)
+      return () => ipcRenderer.removeListener('terminal-page:layout', handler)
+    },
+    onTheme: (cb: (theme: 'dark' | 'light') => void) => {
+      const handler = (_: unknown, theme: 'dark' | 'light') => cb(theme)
+      ipcRenderer.on('terminal-page:theme', handler)
+      return () => ipcRenderer.removeListener('terminal-page:theme', handler)
+    },
+    onClosed: (cb: (event: { layout: unknown }) => void) => {
+      const handler = (_: unknown, event: { layout: unknown }) => cb(event)
+      ipcRenderer.on('terminal-page:closed', handler)
+      return () => ipcRenderer.removeListener('terminal-page:closed', handler)
+    },
+  },
+
   // Per-zone session history + launch
   zone: {
     listSessions: (projectDir: string, zoneId: string, label?: string) =>
@@ -243,6 +294,11 @@ contextBridge.exposeInMainWorld('electron', {
       const handler = (_: unknown, event: { dispatchId: string; summary: string }) => cb(event)
       ipcRenderer.on('dispatch:complete', handler)
       return () => ipcRenderer.removeListener('dispatch:complete', handler)
+    },
+    onOrchestration: (cb: (event: OrchestrationEnvelope) => void) => {
+      const handler = (_: unknown, event: OrchestrationEnvelope) => cb(event)
+      ipcRenderer.on('activity:orchestration', handler)
+      return () => ipcRenderer.removeListener('activity:orchestration', handler)
     },
   },
 })

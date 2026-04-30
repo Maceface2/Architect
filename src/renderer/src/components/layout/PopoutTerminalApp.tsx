@@ -74,9 +74,14 @@ export default function PopoutTerminalApp({ id, label }: Props) {
     }
   }, [id])
 
+  // Popout windows are their own React tree with no InterfaceSettingsProvider,
+  // so the document's data-theme attribute stays unset and CSS variables
+  // resolve to the dark defaults. `bg-terminal` here will follow that — if we
+  // ever wire theme through the popout IPC, just setting documentElement
+  // dataset.theme on this side will flip both the wrapper and the xterm.
   return (
-    <div className="h-screen w-screen bg-[#0d0d0d] flex flex-col">
-      <div className="flex-shrink-0 px-3 py-2 border-b border-white/[0.06] text-xs text-slate-400 font-medium">
+    <div className="h-screen w-screen bg-terminal flex flex-col">
+      <div className="flex-shrink-0 px-3 py-2 border-b border-white/[0.06] text-xs text-fg-muted font-medium">
         {label}
       </div>
       <div ref={containerRef} className="flex-1 p-1 overflow-hidden" />

@@ -2,19 +2,14 @@ import { app, ipcMain, safeStorage, BrowserWindow } from 'electron'
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
 import fs from 'fs'
 import path from 'path'
+import type { AuthLoginResult, SessionInfo } from '../shared/electronTypes'
+
+// Re-export so existing call sites (`import { SessionInfo } from './auth'`)
+// keep working without changes. The canonical definition lives in
+// shared/electronTypes.ts so renderer + main agree on the wire shape.
+export type { SessionInfo } from '../shared/electronTypes'
 
 const SESSION_FILE = 'session.enc'
-
-export interface SessionInfo {
-  userId: string
-  email: string
-}
-
-interface LoginResult {
-  ok: boolean
-  error?: string
-  session?: SessionInfo
-}
 
 let supabase: SupabaseClient | null = null
 let configError: string | null = null
@@ -138,7 +133,7 @@ export function registerAuthIpc(): void {
 
   ipcMain.handle(
     'auth:login',
-    async (_event, email: string, password: string): Promise<LoginResult> => {
+    async (_event, email: string, password: string): Promise<AuthLoginResult> => {
       const client = ensureClient()
       if (!client) {
         return { ok: false, error: configError ?? 'Auth not configured' }

@@ -148,10 +148,10 @@ export default function AgentConfigModal({
             onChange={event => setLabelDraft(event.target.value)}
             onBlur={saveLabel}
             onKeyDown={event => { if (event.key === 'Enter') { saveLabel(); labelInputRef.current?.blur() } }}
-            className="text-lg font-semibold text-white bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/40 focus:outline-none transition-colors flex-1 min-w-0"
+            className="text-lg font-semibold text-fg bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/40 focus:outline-none transition-colors flex-1 min-w-0"
             placeholder="Agent name"
           />
-          <button onClick={onClose} className="text-slate-500 hover:text-white transition-colors flex-shrink-0 p-1">
+          <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
             <X size={18} />
           </button>
         </div>
@@ -160,9 +160,9 @@ export default function AgentConfigModal({
           <div className="flex flex-col flex-1 min-w-0">
             <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-2 flex-shrink-0">
               <div>
-                <p className="text-[10px] uppercase tracking-widest text-slate-600">System prompt</p>
-                <p className="text-[11px] text-slate-600 mt-1 leading-relaxed max-w-md">
-                  Customizes this zone agent&apos;s behavior. Passed as <span className="font-mono text-slate-500">--append-system-prompt</span> on the first spawn. Edits take effect only after <span className="text-slate-400">Reset conversation</span>.
+                <p className="text-[10px] uppercase tracking-widest text-fg-subtle">System prompt</p>
+                <p className="text-[11px] text-fg-subtle mt-1 leading-relaxed max-w-md">
+                  Customizes this zone agent&apos;s behavior. Passed as <span className="font-mono text-fg-subtle">--append-system-prompt</span> on the first spawn. Edits take effect only after <span className="text-fg-muted">Reset conversation</span>.
                 </p>
               </div>
               {resetState === 'confirm' ? (
@@ -170,13 +170,13 @@ export default function AgentConfigModal({
                   <span className="text-[11px] text-amber-400">Erase conversation?</span>
                   <button
                     onClick={handleReset}
-                    className="px-2 py-1 text-[11px] text-white bg-red-600/80 hover:bg-red-600 rounded transition-colors"
+                    className="px-2 py-1 text-[11px] text-fg bg-red-600/80 hover:bg-red-600 rounded transition-colors"
                   >
                     Reset
                   </button>
                   <button
                     onClick={() => setResetState('idle')}
-                    className="px-2 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:bg-white/[0.05] transition-colors"
+                    className="px-2 py-1 text-[11px] text-fg-muted border border-white/[0.08] rounded hover:bg-white/[0.05] transition-colors"
                   >
                     Cancel
                   </button>
@@ -185,7 +185,7 @@ export default function AgentConfigModal({
                 <button
                   onClick={() => setResetState('confirm')}
                   disabled={resetState === 'pending'}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-slate-400 border border-white/[0.08] rounded hover:text-slate-200 hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
+                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-fg-muted border border-white/[0.08] rounded hover:text-fg hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
                   title="Delete the saved session so the next dispatch starts fresh"
                 >
                   <RotateCcw size={11} />
@@ -204,7 +204,7 @@ export default function AgentConfigModal({
               onChange={event => patch({ systemPrompt: event.target.value })}
               placeholder="Define this zone agent's role, expertise, tone, and constraints. E.g. 'You are a senior backend engineer. Write idiomatic, well-tested code. Prefer pure functions. Never introduce new frameworks without justification.'"
               autoFocus
-              className="flex-1 bg-transparent text-slate-200 text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-slate-700 font-mono"
+              className="flex-1 bg-transparent text-fg text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-fg-subtle font-mono"
             />
           </div>
 
@@ -212,7 +212,7 @@ export default function AgentConfigModal({
             <div className="p-6 space-y-6">
               <Section title="Runtime">
                 <div className="space-y-3">
-                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-slate-400">
+                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-fg-muted">
                     Canvas default: {getAgentRuntime(projectSettings.dispatchRuntime).label}. Pick a different CLI to override this zone only.
                   </div>
                   <div className="grid grid-cols-2 gap-1.5">
@@ -224,8 +224,8 @@ export default function AgentConfigModal({
                           onClick={() => setConfiguredRuntime(runtime.id)}
                           className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
                             selected
-                              ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-white'
-                              : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                              ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                              : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                           }`}
                         >
                           <span className="text-[12px] font-medium">{runtime.label}</span>
@@ -242,14 +242,14 @@ export default function AgentConfigModal({
               <Section title="Model">
                 <div className="space-y-2">
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-slate-600">Effective runtime</p>
-                    <p className="text-[12px] text-white mt-1">{effectiveRuntimeMeta.label}</p>
+                    <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Effective runtime</p>
+                    <p className="text-[12px] text-fg mt-1">{effectiveRuntimeMeta.label}</p>
                   </div>
                   <input
                     value={effectiveModel}
                     onChange={event => setRuntimeModel(effectiveRuntime, event.target.value)}
                     placeholder={DEFAULT_MODEL_BY_RUNTIME[effectiveRuntime]}
-                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5">
                     {effectiveRuntimeMeta.suggestedModels.map(model => (
@@ -259,7 +259,7 @@ export default function AgentConfigModal({
                         className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                           effectiveModel === model
                             ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                            : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                            : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                         }`}
                       >
                         {shortModelLabel(model)}
@@ -270,7 +270,7 @@ export default function AgentConfigModal({
               </Section>
 
               <Section title="Skills">
-                <p className="text-[10px] text-slate-700 uppercase tracking-wider mb-2">Presets</p>
+                <p className="text-[10px] text-fg-subtle uppercase tracking-wider mb-2">Presets</p>
                 <div className="flex flex-wrap gap-1.5 mb-3">
                   {BUILTIN_SKILLS.map(preset => {
                     const active = hasSkill(preset.path)
@@ -281,7 +281,7 @@ export default function AgentConfigModal({
                         className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors ${
                           active
                             ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                            : 'border-white/[0.08] text-slate-500 hover:text-slate-300 hover:border-white/20'
+                            : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                         }`}
                       >
                         <FileText size={10} />
@@ -290,16 +290,16 @@ export default function AgentConfigModal({
                     )
                   })}
                 </div>
-                <p className="text-[10px] text-slate-700 uppercase tracking-wider mb-2">Custom</p>
+                <p className="text-[10px] text-fg-subtle uppercase tracking-wider mb-2">Custom</p>
                 <div className="flex gap-2 mb-2">
                   <input
                     value={customSkillInput}
                     onChange={event => setCustomSkillInput(event.target.value)}
                     onKeyDown={event => event.key === 'Enter' && addCustomSkill()}
                     placeholder="path/to/skill.md"
-                    className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                    className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
-                  <button onClick={addCustomSkill} className="text-slate-500 hover:text-slate-200 transition-colors">
+                  <button onClick={addCustomSkill} className="text-fg-subtle hover:text-fg transition-colors">
                     <Plus size={14} />
                   </button>
                 </div>
@@ -309,9 +309,9 @@ export default function AgentConfigModal({
                       <div key={skill.path} className="flex items-center justify-between gap-2">
                         <div className="flex items-center gap-1.5 min-w-0">
                           <FileText size={10} className="text-[#58A6FF] flex-shrink-0" />
-                          <span className="text-[11px] text-slate-400 truncate font-mono">{skill.name}</span>
+                          <span className="text-[11px] text-fg-muted truncate font-mono">{skill.name}</span>
                         </div>
-                        <button onClick={() => removeSkill(skill.path)} className="text-slate-700 hover:text-slate-400 flex-shrink-0">
+                        <button onClick={() => removeSkill(skill.path)} className="text-fg-subtle hover:text-fg-muted flex-shrink-0">
                           <X size={11} />
                         </button>
                       </div>
@@ -358,7 +358,7 @@ export default function AgentConfigModal({
                       max={10}
                       value={behavior.retries}
                       onChange={event => setBehavior({ retries: Number(event.target.value) })}
-                      className="w-16 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-white/20"
+                      className="w-16 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:border-white/20"
                     />
                   </Field>
                   <Field label="Timeout (ms)">
@@ -368,7 +368,7 @@ export default function AgentConfigModal({
                       step={1000}
                       value={behavior.timeoutMs}
                       onChange={event => setBehavior({ timeoutMs: Number(event.target.value) })}
-                      className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-slate-300 focus:outline-none focus:border-white/20"
+                      className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:border-white/20"
                     />
                   </Field>
                 </div>
@@ -395,22 +395,22 @@ export default function AgentConfigModal({
                         value={envVar.key}
                         onChange={event => updateEnvVar(index, 'key', event.target.value)}
                         placeholder="KEY"
-                        className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                        className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                       />
                       <input
                         value={envVar.value}
                         onChange={event => updateEnvVar(index, 'value', event.target.value)}
                         placeholder="value"
-                        className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-slate-300 placeholder-slate-700 focus:outline-none focus:border-white/20 font-mono"
+                        className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                       />
-                      <button onClick={() => removeEnvVar(index)} className="text-slate-700 hover:text-slate-400 flex-shrink-0">
+                      <button onClick={() => removeEnvVar(index)} className="text-fg-subtle hover:text-fg-muted flex-shrink-0">
                         <X size={12} />
                       </button>
                     </div>
                   ))}
                   <button
                     onClick={addEnvVar}
-                    className="flex items-center gap-1 text-[11px] text-slate-600 hover:text-slate-400 transition-colors"
+                    className="flex items-center gap-1 text-[11px] text-fg-subtle hover:text-fg-muted transition-colors"
                   >
                     <Plus size={12} /> Add variable
                   </button>
@@ -423,7 +423,7 @@ export default function AgentConfigModal({
         <div className="flex justify-end px-6 py-3 border-t border-white/[0.07] flex-shrink-0">
           <button
             onClick={onClose}
-            className="px-5 py-1.5 bg-[#3d3dbf] hover:bg-[#4f4fcf] text-white text-sm rounded-lg transition-colors"
+            className="px-5 py-1.5 bg-[#3d3dbf] hover:bg-[#4f4fcf] text-fg text-sm rounded-lg transition-colors"
           >
             Done
           </button>
@@ -436,7 +436,7 @@ export default function AgentConfigModal({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <p className="text-[10px] uppercase tracking-widest text-slate-600 mb-3">{title}</p>
+      <p className="text-[10px] uppercase tracking-widest text-fg-subtle mb-3">{title}</p>
       {children}
     </div>
   )
@@ -445,7 +445,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Toggle({ label, value, onChange }: { label: string; value: boolean; onChange: () => void }) {
   return (
     <button onClick={onChange} className="flex items-center justify-between w-full group">
-      <span className="text-[12px] text-slate-500 group-hover:text-slate-300 transition-colors">{label}</span>
+      <span className="text-[12px] text-fg-subtle group-hover:text-fg-muted transition-colors">{label}</span>
       <div className={`relative w-7 h-4 rounded-full transition-colors ${value ? 'bg-[#58A6FF]' : 'bg-white/10'}`}>
         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${value ? 'left-[14px]' : 'left-0.5'}`} />
       </div>
@@ -456,7 +456,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex items-center justify-between gap-2">
-      <span className="text-[12px] text-slate-500 flex-shrink-0">{label}</span>
+      <span className="text-[12px] text-fg-subtle flex-shrink-0">{label}</span>
       {children}
     </div>
   )
@@ -470,7 +470,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: T[]; val
           key={option}
           onClick={() => onChange(option)}
           className={`px-2 py-0.5 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-slate-600 hover:text-slate-400'
+            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-fg-subtle hover:text-fg-muted'
           }`}
         >
           {option}
