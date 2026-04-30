@@ -9,6 +9,14 @@
   --bg-canvas: 29 29 29;
   --bg-panel: 24 20 24;
   --bg-node: 58 55 54;
+  /* Dark-themed cards inside the canvas (e.g. ComponentNode). Stays dark
+     in dark mode, flips to white-ish in light mode so cards aren't
+     unreadable on a light backdrop. */
+  --bg-component: 30 30 30;
+  /* Terminal surface — kept separate from --bg-canvas so the terminal can
+     be a flat near-black in dark mode (better contrast for ANSI colors)
+     and pure white in light mode. xterm's own theme is updated to match. */
+  --bg-terminal: 13 13 13;
   --border-node: 76 72 70;
   --border-node-active: 88 166 255;
   --accent: 88 166 255;
@@ -25,20 +33,26 @@
 }
 
 :root[data-theme='light'] {
-  --bg-canvas: 245 245 244;
-  --bg-panel: 255 255 255;
-  --bg-node: 241 245 249;
-  --border-node: 226 232 240;
-  --border-node-active: 91 91 240;
-  --accent: 79 70 229;
+  /* Canvas is a noticeably tinted slate so nodes read as objects on a
+     surface, not as floating white-on-white shapes. */
+  --bg-canvas: 226 232 240;          /* slate-200 */
+  --bg-panel: 248 250 252;           /* slate-50  */
+  --bg-node: 255 255 255;            /* white     */
+  --bg-component: 255 255 255;       /* white     */
+  --bg-terminal: 255 255 255;        /* white     */
+  --border-node: 203 213 225;        /* slate-300 */
+  /* Keep the accent the same blue across themes. Switching to indigo turns
+     every primary button purple, which was confusing and inconsistent. */
+  --border-node-active: 88 166 255;
+  --accent: 88 166 255;
   --fg: 15 23 42;
   --fg-muted: 71 85 105;
-  --fg-subtle: 148 163 184;
-  --rf-dot: #cbd5e1;
+  --fg-subtle: 100 116 139;
+  --rf-dot: #94a3b8;
   --rf-controls-bg: #ffffff;
-  --rf-controls-border: #e2e8f0;
+  --rf-controls-border: #cbd5e1;
   --rf-controls-fg: #475569;
-  --rf-controls-bg-hover: #f1f5f9;
+  --rf-controls-bg-hover: #e2e8f0;
   --rf-controls-fg-hover: #0f172a;
 }
 

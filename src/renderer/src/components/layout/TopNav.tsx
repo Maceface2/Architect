@@ -62,7 +62,7 @@ export default function TopNav({
           </svg>
           <button
             onClick={onChangeDir}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-white/[0.05] border border-white/[0.06] transition-colors max-w-[200px]"
+            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-node border border-node-border transition-colors max-w-[200px]"
             title={projectDir}
           >
             <FolderOpen size={11} className="text-amber-400 flex-shrink-0" />

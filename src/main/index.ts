@@ -374,6 +374,97 @@ ipcMain.handle('terminal:dock', (_event, id: string) => {
   return { ok: true }
 })
 
+// ── Terminal page popout (entire panel, singleton) ─────────────────────────
+//
+// A separate BrowserWindow that owns the full TerminalPanel UI while open.
+// Main window state (sessions + layout) is forwarded via two IPC channels:
+//   - terminal-page:publish-sessions   (main window → main proc → popout)
+//   - terminal-page:publish-layout     (any window  → main proc → other window)
+// The cache below holds the last-published snapshot so a freshly-opened
+// popout can render immediately without round-tripping for the data.
+
+let terminalPagePopout: BrowserWindow | null = null
+let terminalPageSessionsCache: unknown = null
+let terminalPageLayoutCache: unknown = null
+
+function broadcastToTerminalPagePeers(channel: string, payload: unknown, except?: BrowserWindow): void {
+  if (mainWindow && !mainWindow.isDestroyed() && mainWindow !== except) {
+    mainWindow.webContents.send(channel, payload)
+  }
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed() && terminalPagePopout !== except) {
+    terminalPagePopout.webContents.send(channel, payload)
+  }
+}
+
+ipcMain.handle('terminal-page:popout', (_event, opts: { sessions: unknown; layout: unknown }) => {
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    terminalPagePopout.focus()
+    return { ok: true }
+  }
+
+  // Seed the cache with whatever main window had at popout time so the
+  // popout's first render has the full session/layout snapshot available
+  // by the time it asks for it.
+  terminalPageSessionsCache = opts.sessions
+  terminalPageLayoutCache = opts.layout
+
+  const win = new BrowserWindow({
+    width: 1200,
+    height: 720,
+    backgroundColor: '#0d0d0d',
+    title: 'Terminal',
+    webPreferences: {
+      preload: join(__dirname, '../preload/index.js'),
+      sandbox: false,
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  })
+
+  terminalPagePopout = win
+  win.on('closed', () => {
+    terminalPagePopout = null
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('terminal-page:closed', { layout: terminalPageLayoutCache })
+    }
+  })
+
+  const params = `panel=terminal-page`
+  if (!app.isPackaged && process.env['ELECTRON_RENDERER_URL']) {
+    win.loadURL(`${process.env['ELECTRON_RENDERER_URL']}?${params}`)
+  } else {
+    win.loadFile(join(__dirname, '../renderer/index.html'), { search: params })
+  }
+  return { ok: true }
+})
+
+ipcMain.handle('terminal-page:dock', () => {
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    terminalPagePopout.close()
+  }
+  return { ok: true }
+})
+
+// Returns the cached snapshot. The popout window asks for this once after
+// mount because `did-finish-load` fires before its IPC subscribers attach.
+ipcMain.handle('terminal-page:request-initial', () => {
+  return { sessions: terminalPageSessionsCache, layout: terminalPageLayoutCache }
+})
+
+// Sender publishes its sessions list. We cache + forward to peer windows.
+ipcMain.on('terminal-page:publish-sessions', (event, sessions: unknown) => {
+  terminalPageSessionsCache = sessions
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:sessions', sessions, sender)
+})
+
+// Same pattern for layout.
+ipcMain.on('terminal-page:publish-layout', (event, layout: unknown) => {
+  terminalPageLayoutCache = layout
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:layout', layout, sender)
+})
+
 // ── Terminal layout persistence ────────────────────────────────────────────
 
 ipcMain.handle('terminal-layout:load', (_event, projectDir: string) => {
@@ -405,6 +496,10 @@ function closeAllPopouts() {
     } catch {}
   }
   popouts.clear()
+  if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
+    try { terminalPagePopout.close() } catch {}
+  }
+  terminalPagePopout = null
 }
 
 registerAuthIpc()

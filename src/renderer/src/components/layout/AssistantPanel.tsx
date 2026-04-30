@@ -7,6 +7,7 @@ import { getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../..
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import type { ProjectSettings } from '../../types'
 import AssistantLaunchModal, { type AssistantRelaunchOpts } from './AssistantLaunchModal'
 
@@ -28,7 +29,10 @@ function stripAnsi(s: string): string {
   return s.replace(ANSI_RE, '')
 }
 
-const TERM_THEME = {
+// Two themes for the embedded assistant terminal — see TerminalPanel for
+// the rationale on light-mode color picks. Cursor stays purple here to
+// match the assistant accent that's used elsewhere in the UI.
+const TERM_THEME_DARK = {
   background:   '#0d0d0d',
   foreground:   '#e2e8f0',
   cursor:       '#c084fc',
@@ -43,6 +47,23 @@ const TERM_THEME = {
   white:        '#e2e8f0',
   brightBlack:  '#3a3a3a',
   brightWhite:  '#ffffff',
+}
+
+const TERM_THEME_LIGHT = {
+  background:   '#ffffff',
+  foreground:   '#1e293b',
+  cursor:       '#9333ea',
+  cursorAccent: '#ffffff',
+  black:        '#1e293b',
+  red:          '#dc2626',
+  green:        '#16a34a',
+  yellow:       '#ca8a04',
+  blue:         '#2563eb',
+  magenta:      '#9333ea',
+  cyan:         '#0891b2',
+  white:        '#475569',
+  brightBlack:  '#94a3b8',
+  brightWhite:  '#0f172a',
 }
 
 interface CanvasUpdate {
@@ -94,6 +115,8 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
     const fitRef         = useRef<FitAddon | null>(null)
     const parseBufferRef = useRef<string>('')
     const assistantId = ASSISTANT_IDS[mode]
+    const { theme } = useInterfaceSettings()
+    const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
 
     // Mirrored synchronously into a ref so callbacks (RO, debounce tail) can
     // read the current visibility without needing stale-closure gymnastics.
@@ -223,7 +246,7 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       if (!containerRef.current) return
 
       const term = new Terminal({
-        theme: TERM_THEME,
+        theme: xtermTheme,
         fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
         fontSize: 13,
         lineHeight: 1.4,
@@ -262,6 +285,14 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
         fitRef.current  = null
       }
     }, [assistantId, measure, requestResize])
+
+    // Push theme updates into the live xterm without disposing it. xterm's
+    // setter rerenders the buffer with the new palette but keeps scrollback
+    // and PTY state intact.
+    useEffect(() => {
+      if (!termRef.current) return
+      termRef.current.options.theme = xtermTheme
+    }, [xtermTheme])
 
     // Visibility gate + flush. useLayoutEffect so the measure happens after
     // React commits the display flip but before the browser paints — matches
@@ -357,7 +388,7 @@ export default function AssistantPanel({
 
   return (
     <div
-      className={`flex flex-col h-full w-full bg-[#0d0d0d] ${borderClass}`}
+      className={`flex flex-col h-full w-full bg-terminal ${borderClass}`}
       style={{ display: visible ? 'flex' : 'none' }}
     >
       {/* Header */}
@@ -382,7 +413,7 @@ export default function AssistantPanel({
             <Settings2 size={13} />
           </button>
           {/* Mode toggle — segmented control */}
-          <div className="flex items-center rounded border border-white/[0.08] bg-[#0d0d0d] overflow-hidden">
+          <div className="flex items-center rounded border border-white/[0.08] bg-terminal overflow-hidden">
             <button
               onClick={() => onModeChange('architecture')}
               className={

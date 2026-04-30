@@ -16,6 +16,12 @@ export default {
         canvas: v('bg-canvas'),
         panel: v('bg-panel'),
         node: v('bg-node'),
+        // Card surfaces inside the canvas (ComponentNode etc.) that need to
+        // flip from dark to white when the theme switches.
+        component: v('bg-component'),
+        // xterm wrapper background; flips to white in light mode. The xterm
+        // theme itself is updated separately in TerminalPanel/AssistantPanel.
+        terminal: v('bg-terminal'),
         'node-border': v('border-node'),
         'node-border-active': v('border-node-active'),
         accent: v('accent'),

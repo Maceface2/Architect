@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
+import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
   emptyLayout,
@@ -36,7 +37,11 @@ interface Props {
   getCanvasSnapshot: () => { nodes: unknown[]; edges: unknown[]; settings: unknown }
 }
 
-const TERM_THEME = {
+// xterm themes for the two app themes. ANSI palette mostly stable across
+// modes; only the surface + foreground swap. Light-mode greens/yellows are
+// darkened so they remain readable on a white background (the dark-mode
+// values wash out).
+const TERM_THEME_DARK = {
   background:  '#0d0d0d',
   foreground:  '#e2e8f0',
   cursor:      '#58A6FF',
@@ -53,6 +58,23 @@ const TERM_THEME = {
   brightWhite: '#ffffff',
 }
 
+const TERM_THEME_LIGHT = {
+  background:  '#ffffff',
+  foreground:  '#1e293b',  // slate-800
+  cursor:      '#2563eb',  // blue-600
+  cursorAccent:'#ffffff',
+  black:       '#1e293b',
+  red:         '#dc2626',
+  green:       '#16a34a',
+  yellow:      '#ca8a04',
+  blue:        '#2563eb',
+  magenta:     '#9333ea',
+  cyan:        '#0891b2',
+  white:       '#475569',
+  brightBlack: '#94a3b8',
+  brightWhite: '#0f172a',
+}
+
 const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
 const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
@@ -63,6 +85,8 @@ const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isCoordinated = !!info.coordinatedMode
+  const { theme } = useInterfaceSettings()
+  const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
   // Plan-mode pill state. The conductor's prompt instructs it to wait for
   // the user to type `GO` on its own line before emitting any assignments.
   // We mirror that locally: while the user hasn't typed GO yet, render a
@@ -90,7 +114,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
     let instance = termInstances.get(info.id)
     if (!instance) {
       const term = new Terminal({
-        theme: TERM_THEME,
+        theme: xtermTheme,
         fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
         fontSize: 13,
         lineHeight: 1.4,
@@ -172,6 +196,15 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       return () => ro.disconnect()
     }
   }, [info.id, active])
+
+  // Push theme updates into the cached xterm instance whenever the app
+  // theme flips. Setting `term.options.theme` re-renders the buffer with
+  // the new palette without losing scrollback or PTY state.
+  useEffect(() => {
+    const instance = termInstances.get(info.id)
+    if (!instance) return
+    instance.term.options.theme = xtermTheme
+  }, [info.id, xtermTheme])
 
   // Stream data → term (subscribed once per id, regardless of mount).
   useEffect(() => {
@@ -346,7 +379,7 @@ function PaneView({
   }
 
   return (
-    <div className="flex flex-col h-full bg-[#0d0d0d] min-w-0 min-h-0">
+    <div className="flex flex-col h-full bg-terminal min-w-0 min-h-0">
       <div
         className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto relative"
         onDragOver={handleStripDragOver}
@@ -797,7 +830,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   }
 
   if (!layout) {
-    return <div className="h-full bg-[#0d0d0d]" />
+    return <div className="h-full bg-terminal" />
   }
 
   const paneProps = {
@@ -820,7 +853,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   }
 
   return (
-    <div className="h-full bg-[#0d0d0d]">
+    <div className="h-full bg-terminal">
       <LayoutRenderer
         node={layout.root}
         paneProps={paneProps}
