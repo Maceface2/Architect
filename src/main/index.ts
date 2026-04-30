@@ -428,11 +428,10 @@ ipcMain.handle('terminal-page:popout', (_event, opts: TerminalPagePopoutOpts) =>
     // app's own title bar so the renderer can paint a tab strip flush
     // against the top edge with the lights tucked into its left padding.
     titleBarStyle: 'hiddenInset',
-    // The popout title bar is two rows: a 28px drag strip on top, then
-    // the 36px tab row. Lights at y=8 sit centered inside the drag strip
-    // (which is the natural place to grab the window), well clear of the
-    // tabs below.
-    trafficLightPosition: { x: 14, y: 8 },
+    // Title bar is a 6px drag micro-strip + the tab row underneath. y=14
+    // visually centers the lights against the tab content while leaving
+    // the micro-strip clear above for click-and-drag grabs.
+    trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,

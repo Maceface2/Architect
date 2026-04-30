@@ -529,22 +529,22 @@ function PaneView({
     <div className="flex flex-col h-full bg-terminal min-w-0 min-h-0">
       {isTitleBar ? (
         // Title-bar mode is a two-row flex column:
-        //   Row A: tall drag-only strip on top, separated by a hairline —
-        //          gives the user a comfortable area to grab the window
-        //          without their pointer landing on a tab (which would
-        //          tear it out instead). Traffic lights sit inside this
-        //          row (y=8 in main config), centered vertically.
+        //   Row A: micro drag-only strip — just enough to give somewhere
+        //          to grab the window without grazing a tab. No separator,
+        //          no extra visual weight. macOS users can also grab the
+        //          window edge along the top, which makes 6px sufficient.
         //   Row B: traffic-light reservation + Architect mark + bounded
-        //          scroll zone for the tabs (same three zones as before,
-        //          ensures tabs can't scroll under the lights).
+        //          scroll zone for the tabs (ensures tabs can't scroll
+        //          under the lights).
         <div
-          className="flex flex-col h-16 border-b border-white/[0.06] flex-shrink-0"
+          className="flex flex-col border-b border-white/[0.06] flex-shrink-0"
           style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <div className="h-7 flex-shrink-0 border-b border-white/[0.06]" aria-hidden />
-          <div className="flex items-stretch flex-1 min-h-0">
+          <div className="h-3 flex-shrink-0" aria-hidden />
+          <div className="flex items-stretch bg-white/[0.05]">
+            <div style={{ width: 80, flexShrink: 0 }} aria-hidden />
             <div
-              className="flex items-center justify-center pl-3 pr-2.5 flex-shrink-0"
+              className="flex items-center justify-center pl-1 pr-2.5 flex-shrink-0"
               style={titleBarItemStyle}
               aria-label="Architect"
             >

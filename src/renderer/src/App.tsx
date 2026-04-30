@@ -5,6 +5,7 @@ import {
   useMemo,
   useRef,
   useSyncExternalStore,
+  type CSSProperties,
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
@@ -229,6 +230,15 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 
   return (
     <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+      {/* Drag strip across the top so the user can move the window before
+          they've picked a project (TopNav, which is the normal drag region,
+          isn't mounted yet). Sits behind the centered content; everything
+          interactive opts out via no-drag. */}
+      <div
+        className="absolute top-0 left-0 right-0 h-9"
+        style={{ WebkitAppRegion: 'drag' } as CSSProperties}
+        aria-hidden
+      />
       <UserMenu />
 
       <div className="flex flex-col items-center gap-4">
