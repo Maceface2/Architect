@@ -1,11 +1,6 @@
 import { useState, useEffect } from 'react'
 import { Folder, File, ArrowLeft, FolderOpen } from 'lucide-react'
-
-interface FileEntry {
-  name: string
-  isDirectory: boolean
-  path: string
-}
+import type { FileEntry } from '../../../../shared/electronTypes'
 
 interface Props {
   rootDir: string

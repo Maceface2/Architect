@@ -96,6 +96,12 @@ function bumpSeq(): number { nextSeq += 1; return nextSeq }
 
 const listeners = new Set<() => void>()
 let bound = false
+// Disposers for the currently-bound IPC subscriptions. Kept so HMR (or an
+// explicit reset) can detach the prior set before re-binding — without this,
+// Vite's renderer HMR re-evaluates this module and `bound = false` again,
+// which would double-subscribe and apply every event twice (bogus seqs,
+// duplicated log rows).
+let ipcDisposers: Array<() => void> = []
 
 function notify() {
   for (const l of listeners) l()
@@ -105,21 +111,38 @@ function ensureBound() {
   if (bound) return
   if (typeof window === 'undefined' || !window.electron?.activity) return
   bound = true
-  window.electron.activity.onEvent((payload: ActivityEnvelope) => {
-    snapshot = applyEvent(snapshot, payload)
-    notify()
-  })
-  window.electron.activity.onState(payload => {
-    snapshot = applyState(snapshot, payload)
-    notify()
-  })
-  window.electron.activity.onDispatchComplete(({ dispatchId, summary }) => {
-    snapshot = applyComplete(snapshot, dispatchId, summary)
-    notify()
-  })
-  window.electron.activity.onOrchestration((payload: OrchestrationEnvelope) => {
-    snapshot = applyOrchestration(snapshot, payload)
-    notify()
+  ipcDisposers = [
+    window.electron.activity.onEvent((payload: ActivityEnvelope) => {
+      snapshot = applyEvent(snapshot, payload)
+      notify()
+    }),
+    window.electron.activity.onState(payload => {
+      snapshot = applyState(snapshot, payload)
+      notify()
+    }),
+    window.electron.activity.onDispatchComplete(({ dispatchId, summary }) => {
+      snapshot = applyComplete(snapshot, dispatchId, summary)
+      notify()
+    }),
+    window.electron.activity.onOrchestration((payload: OrchestrationEnvelope) => {
+      snapshot = applyOrchestration(snapshot, payload)
+      notify()
+    }),
+  ]
+}
+
+// Vite HMR hook. On dispose (module replaced), detach IPC subscriptions and
+// reset the bound flag so the new module instance can re-bind cleanly. Guarded
+// by `import.meta.hot` so production builds (where HMR is undefined) don't
+// pay any cost.
+if (import.meta.hot) {
+  import.meta.hot.dispose(() => {
+    for (const off of ipcDisposers) {
+      try { off() } catch { /* listener already detached */ }
+    }
+    ipcDisposers = []
+    bound = false
+    listeners.clear()
   })
 }
 

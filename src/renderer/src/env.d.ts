@@ -1,25 +1,16 @@
+/// <reference types="vite/client" />
+// vite/client gives ImportMeta { env, hot } typings — needed for both the
+// RENDERER_VITE_* env reads in App.tsx and the import.meta.hot HMR guard
+// in lib/activityStore.ts.
+
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import type {
+  AuthLoginResult,
+  FileEntry,
+  SessionInfo,
+  TerminalInfo,
+} from '../../shared/electronTypes'
 import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord } from './types'
-
-interface FileEntry {
-  name: string
-  isDirectory: boolean
-  path: string
-}
-
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  coordinatedMode?: boolean
-  planMode?: boolean
-}
-
-interface AuthLoginResult {
-  ok: boolean
-  error?: string
-  session?: SessionInfo
-}
 
 interface ElectronAPI {
   platform: string
@@ -252,10 +243,6 @@ interface ElectronAPI {
 declare global {
   interface Window {
     electron: ElectronAPI
-  }
-  type SessionInfo = {
-    userId: string
-    email: string
   }
 }
 

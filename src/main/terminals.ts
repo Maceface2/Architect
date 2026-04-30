@@ -225,26 +225,8 @@ function pickSession(
   return rec
 }
 
-export interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  // True when this terminal is part of a scheduler-driven dispatch (any zone
-  // OR the Conductor). The renderer uses it to lock user input by default so
-  // accidental typing doesn't interleave with scheduler-delivered prompts —
-  // the scheduler's two-step submit (text → 120ms → \r) races with concurrent
-  // user keystrokes and corrupts whichever turn is mid-flight. The user can
-  // click "Take manual control" to type (e.g. to send GO in plan mode or chat
-  // with the Conductor mid-dispatch). Never set on solo-zone launches, the
-  // assistant, or shell sessions.
-  coordinatedMode?: boolean
-  // True when this terminal is the Conductor of a dispatch the user has
-  // requested in plan mode. The renderer renders a "plan mode — waiting
-  // for GO" pill in the terminal's header until the user types GO. The
-  // conductor's prompt teaches it to discuss the plan with the user
-  // before emitting any {type:"assign"} decisions.
-  planMode?: boolean
-}
+import type { TerminalInfo } from '../shared/electronTypes'
+export type { TerminalInfo }
 
 // Position + dimensions come straight from React Flow nodes.
 export interface NodePosition { x: number; y: number }

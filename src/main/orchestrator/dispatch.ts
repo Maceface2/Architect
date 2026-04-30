@@ -38,7 +38,7 @@ import {
   type ComponentGraphNode,
 } from '../terminals'
 import { runZone } from '../terminals'
-import { CONDUCTOR_PARTICIPANT_ID, Scheduler, type SchedulerZone } from './scheduler'
+import { CONDUCTOR_PARTICIPANT_ID, Scheduler, type SchedulerDeps, type SchedulerZone } from './scheduler'
 import { composeInitialTurn, composePlanModeInitialTurn } from './conductor'
 import { activityLogPath } from './activity'
 import { appendOrchestration, orchestrationLogPath, type OrchestrationEvent } from './orchestrationLog'
@@ -265,25 +265,25 @@ function emitOrchestrationDirect(
 // Shared SchedulerDeps builder used by both startDispatchV5 and resumeDispatchV5.
 // Keeps the wiring identical between the two entry points so a deps change
 // (e.g. adding recordOrchestration) doesn't have to be remembered in two places.
+// Annotated with `: SchedulerDeps` so a future field addition fails compilation
+// here rather than letting the inferred shape silently drift from the contract.
 function buildSchedulerDeps(
   projectDir: string,
   dispatchId: string,
   broadcastFn: typeof broadcast,
-) {
+): SchedulerDeps {
   return {
-    submitTurn: (ptyId: string, text: string) => submitTurnToTerminal(ptyId, text),
-    broadcastActivity: (event: { dispatchId: string; participantId: string; event: unknown }) =>
-      broadcastFn('activity:event', event),
-    broadcastState: (event: { dispatchId: string; participantId: string; status: string; lastTaskId?: string }) =>
-      broadcastFn('activity:state', event),
-    onDispatchComplete: (summary: string) => broadcastFn('dispatch:complete', { dispatchId, summary }),
+    submitTurn: (ptyId, text) => submitTurnToTerminal(ptyId, text),
+    broadcastActivity: event => broadcastFn('activity:event', event),
+    broadcastState: event => broadcastFn('activity:state', event),
+    onDispatchComplete: summary => broadcastFn('dispatch:complete', { dispatchId, summary }),
     onPendingTasksChanged: () => {
       // setDispatchPendingTasks is called inside the scheduler for durable
       // persistence; this callback is the IPC broadcast hook. (No listeners
       // today — renderer reads state via activity:state.)
     },
-    getPtyLastActivityMs: (ptyId: string) => getSessionLastActivityMs(ptyId),
-    recordOrchestration: (event: OrchestrationEvent) =>
+    getPtyLastActivityMs: ptyId => getSessionLastActivityMs(ptyId),
+    recordOrchestration: event =>
       emitOrchestrationDirect(projectDir, dispatchId, broadcastFn, event),
   }
 }

@@ -71,12 +71,7 @@ import DispatchView from './components/dispatch/DispatchView'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
-
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-}
+import type { SessionInfo, TerminalInfo } from '../../shared/electronTypes'
 
 interface CanvasUpdate {
   zones?: unknown[]
@@ -1534,7 +1529,10 @@ Only discuss and advise without editing the file when the user is asking for cri
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
-  const isDispatch = activeTab === 'Logs'
+  // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
+  // the DispatchView (swimlane + flat log). Keep the variable name aligned
+  // with the tab string so a future tab rename only has to be made in one place.
+  const isLogs = activeTab === 'Logs'
   const isSettings = activeTab === 'Settings'
 
   // Mirror the activity store's latestDispatchId so we render the most
@@ -1734,7 +1732,7 @@ Only discuss and advise without editing the file when the user is asking for cri
             )}
           </div>
 
-          {isDispatch && (
+          {isLogs && (
             <div className="flex-1 overflow-hidden">
               <DispatchView
                 dispatchId={activeDispatchId}

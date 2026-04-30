@@ -6,6 +6,7 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
+import type { TerminalInfo } from '../../../../shared/electronTypes'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
@@ -18,14 +19,6 @@ import {
   setSplitSizes,
   splitPaneWithTab,
 } from './terminalLayoutOps'
-
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  coordinatedMode?: boolean
-  planMode?: boolean
-}
 
 interface Props {
   sessions: TerminalInfo[]

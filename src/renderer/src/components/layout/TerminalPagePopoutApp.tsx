@@ -6,18 +6,7 @@ import { ProjectDirProvider } from '../../context/ProjectDirContext'
 import { InterfaceSettingsProvider } from '../../context/InterfaceSettingsContext'
 import { DEFAULT_INTERFACE_SETTINGS } from '../../lib/canvas'
 import type { InterfaceSettings } from '../../types'
-import type { AgentRuntime } from '../../../../shared/agentRuntimes'
-
-// Mirrors the TerminalInfo shape declared in App.tsx and env.d.ts. There is
-// no shared module for this type today; the existing App.tsx redefines it
-// locally and we follow suit until someone consolidates.
-interface TerminalInfo {
-  id: string
-  label: string
-  runtime: AgentRuntime | 'shell'
-  coordinatedMode?: boolean
-  planMode?: boolean
-}
+import type { TerminalInfo } from '../../../../shared/electronTypes'
 
 // The detached terminal page. Loads in its own BrowserWindow when the user
 // clicks "Popout" on the docked panel. State (sessions / layout / theme /
@@ -31,6 +20,13 @@ export default function TerminalPagePopoutApp() {
   const [sessions, setSessions] = useState<TerminalInfo[]>([])
   const [layout, setLayout] = useState<TerminalLayout | null>(null)
   const [projectDir, setProjectDir] = useState<string>('')
+  // The terminal page only exercises `theme` from InterfaceSettings (xterm
+  // palette + chrome colors). `zoneTreatment` and `canvasBackground` are
+  // canvas-only and have no effect here, so the popout seeds from defaults
+  // and only mirrors theme over the IPC bus. If a future change makes
+  // another field meaningful inside the terminal page, extend
+  // `terminalPage.publish*` / `onTheme` (in preload + main) and the
+  // snapshot payload here to match.
   const [interfaceSettings, setInterfaceSettings] = useState<InterfaceSettings>(DEFAULT_INTERFACE_SETTINGS)
 
   useEffect(() => {
