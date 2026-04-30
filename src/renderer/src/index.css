@@ -158,3 +158,14 @@ body {
 .react-flow__node.dragging {
   opacity: 0.8;
 }
+
+/* Hide horizontal scrollbar while keeping the element scrollable. Used by
+   the popout title-bar tab strip — tabs scroll within a bounded zone
+   instead of showing a hairline scrollbar. */
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}

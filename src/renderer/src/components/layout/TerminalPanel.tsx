@@ -35,6 +35,16 @@ interface Props {
   onLayoutChange: (next: TerminalLayout) => void
   onRemoveSession: (id: string) => void
   getCanvasSnapshot: () => { nodes: unknown[]; edges: unknown[]; settings: unknown }
+  // Optional popout handler — when set, the panel renders a corner button
+  // that pops the entire panel into a detached window. The popout itself
+  // doesn't render this button (no point popping the popout out again).
+  onPanelPopout?: () => void
+  // True when this TerminalPanel is rendered inside a detached BrowserWindow
+  // with `titleBarStyle: 'hiddenInset'`. The top-left pane's tab strip then
+  // becomes the macOS title bar: left-padded so tabs sit clear of the
+  // traffic lights, and tagged as a drag region so empty space lets the
+  // user grab the bar to move the window.
+  popoutMode?: boolean
 }
 
 // xterm themes for the two app themes. ANSI palette mostly stable across
@@ -311,6 +321,8 @@ function PaneView({
   onClose,
   onResume,
   onNewShell,
+  topLeft,
+  popoutMode,
 }: {
   pane: PaneNode
   sessionsById: Map<string, TerminalInfo>
@@ -326,7 +338,16 @@ function PaneView({
   onClose: (tabId: string) => void
   onResume: (info: TerminalInfo) => void
   onNewShell: () => void
+  topLeft?: boolean
+  popoutMode?: boolean
 }) {
+  // Only the leftmost-topmost pane in the layout absorbs the traffic-light
+  // inset. Other panes (right of a vertical split, below a horizontal one)
+  // render their tab strip flush as usual.
+  const isTitleBar = !!(popoutMode && topLeft)
+  const titleBarItemStyle = isTitleBar
+    ? ({ WebkitAppRegion: 'no-drag' } as React.CSSProperties)
+    : undefined
   const [dropHint, setDropHint] = useState<DropEdge | null>(null)
   const [tabDropIdx, setTabDropIdx] = useState<number | null>(null)
   const bodyRef = useRef<HTMLDivElement>(null)
@@ -378,131 +399,185 @@ function PaneView({
     onSplitDrop(pane.id, tabId, edge)
   }
 
-  return (
-    <div className="flex flex-col h-full bg-terminal min-w-0 min-h-0">
-      <div
-        className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto relative"
-        onDragOver={handleStripDragOver}
-        onDragLeave={() => setTabDropIdx(null)}
-        onDrop={handleStripDrop}
-      >
-        {pane.tabs.map((tabId, i) => {
-          const s = sessionsById.get(tabId)
-          if (!s) return null
-          const isShell = s.runtime === 'shell'
-          const isConductor = s.id === 'conductor-agent'
-          const isActive = tabId === pane.activeTab
-          const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
-          const canResume = !isShell && RESUMABLE_RUNTIMES.has(s.runtime as AgentRuntime) && exitedIds.has(s.id) && resumableIds.has(s.id)
-          const isResuming = resumingIds.has(s.id)
-          const resumeLabel = canResume && runtime ? `Resume saved ${runtime.label} session` : 'Resume saved session'
-          return (
-            <Fragment key={tabId}>
-              {tabDropIdx === i && (
-                <div className="w-0.5 self-stretch bg-[#58A6FF]" />
-              )}
-              <div
-                data-tab-id={tabId}
-                draggable
-                onDragStart={(e) => {
-                  e.dataTransfer.setData(TAB_DRAG_MIME, tabId)
-                  e.dataTransfer.effectAllowed = 'move'
-                }}
-                className={`flex items-center border-b-2 transition-colors flex-shrink-0 ${
-                  isActive
-                    ? 'border-[#58A6FF] bg-white/[0.04]'
-                    : 'border-transparent hover:bg-white/[0.02]'
+  // Tab strip content shared between the two outer wrappers (title-bar
+  // mode vs. regular). Defined as JSX rather than a separate component so
+  // it captures the surrounding handlers and styles without prop drilling.
+  const tabsContent = (
+    <>
+      {pane.tabs.map((tabId, i) => {
+        const s = sessionsById.get(tabId)
+        if (!s) return null
+        const isShell = s.runtime === 'shell'
+        const isConductor = s.id === 'conductor-agent'
+        const isActive = tabId === pane.activeTab
+        const runtime = isShell ? null : getAgentRuntime(s.runtime as AgentRuntime)
+        const canResume = !isShell && RESUMABLE_RUNTIMES.has(s.runtime as AgentRuntime) && exitedIds.has(s.id) && resumableIds.has(s.id)
+        const isResuming = resumingIds.has(s.id)
+        const resumeLabel = canResume && runtime ? `Resume saved ${runtime.label} session` : 'Resume saved session'
+        return (
+          <Fragment key={tabId}>
+            {tabDropIdx === i && (
+              <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+            )}
+            <div
+              data-tab-id={tabId}
+              draggable
+              onDragStart={(e) => {
+                e.dataTransfer.setData(TAB_DRAG_MIME, tabId)
+                e.dataTransfer.effectAllowed = 'move'
+              }}
+              style={titleBarItemStyle}
+              className={`flex items-center border-b-2 transition-colors flex-shrink-0 ${
+                isActive
+                  ? 'border-[#58A6FF] bg-white/[0.04]'
+                  : 'border-transparent hover:bg-white/[0.02]'
+              }`}
+            >
+              <button
+                onClick={() => onActivate(pane.id, tabId)}
+                className={`flex items-center gap-2 pl-3 pr-2 py-2 text-xs whitespace-nowrap ${
+                  isActive ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
                 }`}
               >
-                <button
-                  onClick={() => onActivate(pane.id, tabId)}
-                  className={`flex items-center gap-2 pl-3 pr-2 py-2 text-xs whitespace-nowrap ${
-                    isActive ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
-                  }`}
-                >
-                  {isShell ? (
-                    <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
-                  ) : (
-                    <span
-                      className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                        isConductor ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
-                      } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
-                    />
-                  )}
-                  {s.coordinatedMode && !isShell && (
-                    <Lock size={10} className="text-fg-subtle flex-shrink-0" aria-label="Scheduler-coordinated" />
-                  )}
-                  <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
-                    {isShell ? (s.label || 'Shell') : isConductor ? '⬡ Conductor' : s.label}
-                  </span>
-                  {runtime && (
-                    <span
-                      className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
-                      style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
-                    >
-                      {runtime.shortLabel}
-                    </span>
-                  )}
-                </button>
-                {canResume && (
-                  <button
-                    onClick={() => onResume(s)}
-                    disabled={isResuming}
-                    className={`flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors ${
-                      isResuming
-                        ? 'text-fg-subtle cursor-wait'
-                        : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
-                    }`}
-                    title={isResuming ? 'Resuming…' : resumeLabel}
-                    aria-label={resumeLabel}
-                  >
-                    <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
-                  </button>
+                {isShell ? (
+                  <TerminalIcon size={12} className="text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <span
+                    className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
+                      isConductor ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                    } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
+                  />
                 )}
+                {s.coordinatedMode && !isShell && (
+                  <Lock size={10} className="text-fg-subtle flex-shrink-0" aria-label="Scheduler-coordinated" />
+                )}
+                <span className={exitedIds.has(s.id) && !isShell ? 'opacity-60' : ''}>
+                  {isShell ? (s.label || 'Shell') : isConductor ? '⬡ Conductor' : s.label}
+                </span>
+                {runtime && (
+                  <span
+                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                    style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
+                  >
+                    {runtime.shortLabel}
+                  </span>
+                )}
+              </button>
+              {canResume && (
                 <button
-                  onClick={() => onPopout(s)}
-                  className="flex items-center justify-center w-6 h-6 rounded text-fg-subtle hover:text-fg hover:bg-white/[0.06] transition-colors"
-                  title="Pop out terminal to new window"
-                  aria-label="Pop out terminal"
+                  onClick={() => onResume(s)}
+                  disabled={isResuming}
+                  className={`flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors ${
+                    isResuming
+                      ? 'text-fg-subtle cursor-wait'
+                      : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
+                  }`}
+                  title={isResuming ? 'Resuming…' : resumeLabel}
+                  aria-label={resumeLabel}
                 >
-                  <ExternalLink size={11} />
+                  <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
                 </button>
-                {(() => {
-                  const isClosing = closingIds.has(s.id)
-                  const disabled = isClosing
-                  const title = isClosing ? 'Closing…' : 'Close terminal'
-                  return (
-                    <button
-                      onClick={() => !disabled && onClose(tabId)}
-                      disabled={disabled}
-                      className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
-                        disabled
-                          ? 'text-fg-subtle cursor-not-allowed'
-                          : 'text-fg-subtle hover:text-fg hover:bg-white/[0.06]'
-                      }`}
-                      title={title}
-                      aria-label="Close terminal"
-                    >
-                      <X size={11} />
-                    </button>
-                  )
-                })()}
-              </div>
-            </Fragment>
-          )
-        })}
-        {tabDropIdx === pane.tabs.length && (
-          <div className="w-0.5 self-stretch bg-[#58A6FF]" />
-        )}
-        <button
-          onClick={onNewShell}
-          className="flex items-center justify-center w-7 h-7 ml-1 rounded text-fg-subtle hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
-          title="New shell"
-          aria-label="New shell"
+              )}
+              <button
+                onClick={() => onPopout(s)}
+                className="flex items-center justify-center w-6 h-6 rounded text-fg-subtle hover:text-fg hover:bg-white/[0.06] transition-colors"
+                title="Pop out terminal to new window"
+                aria-label="Pop out terminal"
+              >
+                <ExternalLink size={11} />
+              </button>
+              {(() => {
+                const isClosing = closingIds.has(s.id)
+                const disabled = isClosing
+                const title = isClosing ? 'Closing…' : 'Close terminal'
+                return (
+                  <button
+                    onClick={() => !disabled && onClose(tabId)}
+                    disabled={disabled}
+                    className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
+                      disabled
+                        ? 'text-fg-subtle cursor-not-allowed'
+                        : 'text-fg-subtle hover:text-fg hover:bg-white/[0.06]'
+                    }`}
+                    title={title}
+                    aria-label="Close terminal"
+                  >
+                    <X size={11} />
+                  </button>
+                )
+              })()}
+            </div>
+          </Fragment>
+        )
+      })}
+      {tabDropIdx === pane.tabs.length && (
+        <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+      )}
+      <button
+        onClick={onNewShell}
+        style={titleBarItemStyle}
+        className="flex items-center justify-center w-7 h-7 ml-1 rounded text-fg-subtle hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
+        title="New shell"
+        aria-label="New shell"
+      >
+        <Plus size={13} />
+      </button>
+    </>
+  )
+
+  return (
+    <div className="flex flex-col h-full bg-terminal min-w-0 min-h-0">
+      {isTitleBar ? (
+        // Title-bar mode is a two-row flex column:
+        //   Row A: tall drag-only strip on top, separated by a hairline —
+        //          gives the user a comfortable area to grab the window
+        //          without their pointer landing on a tab (which would
+        //          tear it out instead). Traffic lights sit inside this
+        //          row (y=8 in main config), centered vertically.
+        //   Row B: traffic-light reservation + Architect mark + bounded
+        //          scroll zone for the tabs (same three zones as before,
+        //          ensures tabs can't scroll under the lights).
+        <div
+          className="flex flex-col h-16 border-b border-white/[0.06] flex-shrink-0"
+          style={{ WebkitAppRegion: 'drag' } as React.CSSProperties}
         >
-          <Plus size={13} />
-        </button>
-      </div>
+          <div className="h-7 flex-shrink-0 border-b border-white/[0.06]" aria-hidden />
+          <div className="flex items-stretch flex-1 min-h-0">
+            <div
+              className="flex items-center justify-center pl-3 pr-2.5 flex-shrink-0"
+              style={titleBarItemStyle}
+              aria-label="Architect"
+            >
+              <svg width="14" height="14" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
+                <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
+                <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
+                <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
+                <circle cx="40" cy="360" r="28" fill="#58A6FF" />
+                <circle cx="200" cy="360" r="28" fill="#58A6FF" />
+                <circle cx="360" cy="40" r="28" fill="#58A6FF" />
+              </svg>
+            </div>
+            <div
+              className="flex items-center gap-0 overflow-x-auto scrollbar-hide flex-1 min-w-0 relative"
+              style={titleBarItemStyle}
+              onDragOver={handleStripDragOver}
+              onDragLeave={() => setTabDropIdx(null)}
+              onDrop={handleStripDrop}
+            >
+              {tabsContent}
+            </div>
+          </div>
+        </div>
+      ) : (
+        <div
+          className="flex items-center gap-0 border-b border-white/[0.06] flex-shrink-0 overflow-x-auto relative"
+          onDragOver={handleStripDragOver}
+          onDragLeave={() => setTabDropIdx(null)}
+          onDrop={handleStripDrop}
+        >
+          {tabsContent}
+        </div>
+      )}
 
       <div
         ref={bodyRef}
@@ -552,13 +627,17 @@ function LayoutRenderer({
   node,
   paneProps,
   onResize,
+  // True when this subtree contains the top-left pane of the layout. Only
+  // that pane needs the macOS traffic-light padding when popoutMode is on.
+  isTopLeft = true,
 }: {
   node: LayoutNode
   paneProps: Omit<React.ComponentProps<typeof PaneView>, 'pane'>
   onResize: (splitId: string, sizes: number[]) => void
+  isTopLeft?: boolean
 }) {
   if (node.kind === 'pane') {
-    return <PaneView pane={node} {...paneProps} />
+    return <PaneView pane={node} topLeft={isTopLeft} {...paneProps} />
   }
   return (
     <PanelGroup
@@ -581,6 +660,10 @@ function LayoutRenderer({
               node={child}
               paneProps={paneProps}
               onResize={onResize}
+              // Only the first child stays a top-left candidate. Works for
+              // both horizontal (row) and vertical splits — the recursion
+              // narrows down to the leftmost-topmost descendant pane.
+              isTopLeft={isTopLeft && i === 0}
             />
           </Panel>
         </Fragment>
@@ -589,7 +672,7 @@ function LayoutRenderer({
   )
 }
 
-export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot }: Props) {
+export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot, onPanelPopout, popoutMode }: Props) {
   const [shellSessions, setShellSessions] = useState<TerminalInfo[]>([])
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
   const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
@@ -850,15 +933,30 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     onClose: handleCloseTab,
     onResume: handleResume,
     onNewShell: handleNewShell,
+    popoutMode,
   }
 
   return (
-    <div className="h-full bg-terminal">
+    <div className="h-full bg-terminal relative">
       <LayoutRenderer
         node={layout.root}
         paneProps={paneProps}
         onResize={(splitId, sizes) => onLayoutChange(setSplitSizes(layout, splitId, sizes))}
       />
+      {onPanelPopout && (
+        // Sits over the right edge of the tab strip. Pointer-events: auto on
+        // the button itself so it can be clicked through the otherwise-empty
+        // overlay zone; the wrapping span is just a positioning anchor.
+        <button
+          onClick={onPanelPopout}
+          className="absolute top-1.5 right-2 z-20 flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium text-fg-muted hover:text-fg bg-node/70 hover:bg-node border border-node-border transition-colors"
+          title="Pop the entire terminal page into its own window"
+          aria-label="Pop out terminal page"
+        >
+          <ExternalLink size={11} />
+          Popout
+        </button>
+      )}
     </div>
   )
 }

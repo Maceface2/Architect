@@ -32,6 +32,7 @@ import type { AssistantRelaunchOpts } from './components/layout/AssistantLaunchM
 import FilesPanel from './components/layout/FilesPanel'
 import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
+import TerminalPagePopoutApp from './components/layout/TerminalPagePopoutApp'
 import ResizablePanel from './components/layout/ResizablePanel'
 import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
@@ -260,6 +261,27 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   )
 }
 
+// Renders inside the docked Terminal tab while the terminal page is open
+// in a detached BrowserWindow. The terminals themselves keep running in
+// main; this placeholder just gives the user a way to bring the panel back.
+function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
+  return (
+    <div className="h-full w-full flex flex-col items-center justify-center gap-3 bg-terminal text-fg-muted">
+      <p className="text-sm">Terminal page is open in a separate window.</p>
+      <button
+        onClick={onDock}
+        className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-accent/90 transition-colors"
+      >
+        Dock back here
+      </button>
+      <p className="text-[11px] text-fg-subtle max-w-md text-center">
+        Closing the popout window also docks. Sessions and PTY state are
+        preserved across the move; on-screen scrollback may reset.
+      </p>
+    </div>
+  )
+}
+
 function CanvasConflictModal({
   onLoadIncoming,
   onKeepLocal,
@@ -342,6 +364,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
+  // True while the terminal page is rendering in a detached BrowserWindow.
+  // The docked panel hides itself and shows a "popped out" placeholder; all
+  // session/layout/theme updates flow over the terminalPage IPC bus until
+  // the popout window is closed.
+  const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
@@ -455,12 +482,87 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const handleTerminalLayoutChange = useCallback((next: TerminalLayout) => {
     setTerminalLayout(next)
+    // Publish to the detached terminal page (no-op if no popout is open —
+    // the IPC handler short-circuits when there's no peer). Doing this at
+    // the call site (rather than via a setTerminalLayout-watching effect)
+    // avoids the inbound→setState→re-publish loop that would otherwise
+    // bounce layout edits back to the originating window.
+    if (terminalPagePoppedOut) {
+      window.electron.terminalPage.publishLayout(next)
+    }
     if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
     terminalLayoutSaveTimer.current = setTimeout(() => {
       terminalLayoutSaveTimer.current = null
       void window.electron.saveTerminalLayout(projectDir, next)
     }, 400)
-  }, [projectDir])
+  }, [projectDir, terminalPagePoppedOut])
+
+  // Open the terminal page in a detached window. Sends the current
+  // sessions + layout + theme + projectDir as the initial snapshot so the
+  // popout can render immediately without round-tripping for state.
+  const handlePopoutTerminalPage = useCallback(() => {
+    void window.electron.terminalPage.popout({
+      sessions: terminalSessions,
+      layout: terminalLayout,
+      projectDir,
+      theme: projectSettings.interface.theme,
+    })
+    setTerminalPagePoppedOut(true)
+  }, [terminalSessions, terminalLayout, projectDir, projectSettings.interface.theme])
+
+  // Subscribe to inbound updates from the popout window. Layout edits in
+  // the popout flow back here so the docked panel state stays in sync (and
+  // so the layout persists correctly when the popout closes). Sessions
+  // are pushed back when the popout removes a terminal.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    const offLayout = window.electron.terminalPage.onLayout(next => {
+      const incoming = next as TerminalLayout | null
+      if (!incoming) return
+      setTerminalLayout(incoming)
+      // Persist popout-originated layout edits to disk too. Goes through
+      // the same debounced save path as in-window edits (via the timer
+      // ref), but skips re-publishing — the popout already has this.
+      if (terminalLayoutSaveTimer.current) clearTimeout(terminalLayoutSaveTimer.current)
+      terminalLayoutSaveTimer.current = setTimeout(() => {
+        terminalLayoutSaveTimer.current = null
+        void window.electron.saveTerminalLayout(projectDir, incoming)
+      }, 400)
+    })
+    const offSessions = window.electron.terminalPage.onSessions(next => {
+      setTerminalSessions(next)
+    })
+    return () => {
+      offLayout()
+      offSessions()
+    }
+  }, [terminalPagePoppedOut, projectDir])
+
+  // Popout window closed → resume rendering the docked panel. The closed
+  // event carries the popout's last-known layout in case the IPC bus
+  // dropped any updates between its final edit and the window-closed event.
+  useEffect(() => {
+    const off = window.electron.terminalPage.onClosed(({ layout }) => {
+      setTerminalPagePoppedOut(false)
+      const incoming = layout as TerminalLayout | null
+      if (incoming) setTerminalLayout(incoming)
+    })
+    return off
+  }, [])
+
+  // Push sessions to the popout whenever they change while it's open.
+  // Cheap — the IPC handler is a no-op when no popout window exists.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    window.electron.terminalPage.publishSessions(terminalSessions)
+  }, [terminalPagePoppedOut, terminalSessions])
+
+  // Mirror theme into the popout so a flip on the parent updates the
+  // detached terminal page in lockstep.
+  useEffect(() => {
+    if (!terminalPagePoppedOut) return
+    window.electron.terminalPage.publishTheme(projectSettings.interface.theme)
+  }, [terminalPagePoppedOut, projectSettings.interface.theme])
 
   const queueFitView = useCallback(() => {
     requestAnimationFrame(() => {
@@ -1598,21 +1700,28 @@ Only discuss and advise without editing the file when the user is asking for cri
           )}
 
           <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
-            <TerminalPanel
-              sessions={terminalSessions}
-              isVisible={isTerminal}
-              projectDir={projectDir}
-              layout={terminalLayout}
-              onLayoutChange={handleTerminalLayoutChange}
-              onRemoveSession={(id) =>
-                setTerminalSessions(prev => prev.filter(s => s.id !== id))
-              }
-              getCanvasSnapshot={() => ({
-                nodes: nodesRef.current,
-                edges: edgesRef.current,
-                settings: settingsRef.current,
-              })}
-            />
+            {terminalPagePoppedOut ? (
+              <PoppedOutPlaceholder
+                onDock={() => void window.electron.terminalPage.dock()}
+              />
+            ) : (
+              <TerminalPanel
+                sessions={terminalSessions}
+                isVisible={isTerminal && !terminalPagePoppedOut}
+                projectDir={projectDir}
+                layout={terminalLayout}
+                onLayoutChange={handleTerminalLayoutChange}
+                onRemoveSession={(id) =>
+                  setTerminalSessions(prev => prev.filter(s => s.id !== id))
+                }
+                getCanvasSnapshot={() => ({
+                  nodes: nodesRef.current,
+                  edges: edgesRef.current,
+                  settings: settingsRef.current,
+                })}
+                onPanelPopout={handlePopoutTerminalPage}
+              />
+            )}
           </div>
 
           {isDispatch && (
@@ -1725,6 +1834,9 @@ export default function App() {
   const popoutId = params.get('popout')
   if (popoutId) {
     return <PopoutTerminalApp id={popoutId} label={params.get('label') ?? popoutId} />
+  }
+  if (params.get('panel') === 'terminal-page') {
+    return <TerminalPagePopoutApp />
   }
   return (
     <AuthGate>

@@ -132,6 +132,28 @@ interface ElectronAPI {
   }
   loadTerminalLayout: (projectDir: string) => Promise<unknown>
   saveTerminalLayout: (projectDir: string, json: unknown) => Promise<{ ok: boolean; error?: string }>
+  terminalPage: {
+    popout: (snapshot: {
+      sessions: TerminalInfo[]
+      layout: unknown
+      projectDir: string
+      theme: 'dark' | 'light'
+    }) => Promise<{ ok: boolean }>
+    dock: () => Promise<{ ok: boolean }>
+    requestInitial: () => Promise<{
+      sessions: TerminalInfo[] | null
+      layout: unknown
+      projectDir: string
+      theme: 'dark' | 'light'
+    }>
+    publishSessions: (sessions: TerminalInfo[]) => void
+    publishLayout: (layout: unknown) => void
+    publishTheme: (theme: 'dark' | 'light') => void
+    onSessions: (cb: (sessions: TerminalInfo[]) => void) => () => void
+    onLayout: (cb: (layout: unknown) => void) => () => void
+    onTheme: (cb: (theme: 'dark' | 'light') => void) => () => void
+    onClosed: (cb: (event: { layout: unknown }) => void) => () => void
+  }
   zone: {
     listSessions: (
       projectDir: string,

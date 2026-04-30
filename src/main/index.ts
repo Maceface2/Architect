@@ -386,6 +386,8 @@ ipcMain.handle('terminal:dock', (_event, id: string) => {
 let terminalPagePopout: BrowserWindow | null = null
 let terminalPageSessionsCache: unknown = null
 let terminalPageLayoutCache: unknown = null
+let terminalPageProjectDirCache: string = ''
+let terminalPageThemeCache: 'dark' | 'light' = 'dark'
 
 function broadcastToTerminalPagePeers(channel: string, payload: unknown, except?: BrowserWindow): void {
   if (mainWindow && !mainWindow.isDestroyed() && mainWindow !== except) {
@@ -396,7 +398,14 @@ function broadcastToTerminalPagePeers(channel: string, payload: unknown, except?
   }
 }
 
-ipcMain.handle('terminal-page:popout', (_event, opts: { sessions: unknown; layout: unknown }) => {
+interface TerminalPagePopoutOpts {
+  sessions: unknown
+  layout: unknown
+  projectDir: string
+  theme: 'dark' | 'light'
+}
+
+ipcMain.handle('terminal-page:popout', (_event, opts: TerminalPagePopoutOpts) => {
   if (terminalPagePopout && !terminalPagePopout.isDestroyed()) {
     terminalPagePopout.focus()
     return { ok: true }
@@ -407,12 +416,23 @@ ipcMain.handle('terminal-page:popout', (_event, opts: { sessions: unknown; layou
   // by the time it asks for it.
   terminalPageSessionsCache = opts.sessions
   terminalPageLayoutCache = opts.layout
+  terminalPageProjectDirCache = opts.projectDir ?? ''
+  terminalPageThemeCache = opts.theme === 'light' ? 'light' : 'dark'
 
   const win = new BrowserWindow({
     width: 1200,
     height: 720,
     backgroundColor: '#0d0d0d',
     title: 'Terminal',
+    // Match the main window's macOS chrome: traffic lights inset over the
+    // app's own title bar so the renderer can paint a tab strip flush
+    // against the top edge with the lights tucked into its left padding.
+    titleBarStyle: 'hiddenInset',
+    // The popout title bar is two rows: a 28px drag strip on top, then
+    // the 36px tab row. Lights at y=8 sit centered inside the drag strip
+    // (which is the natural place to grab the window), well clear of the
+    // tabs below.
+    trafficLightPosition: { x: 14, y: 8 },
     webPreferences: {
       preload: join(__dirname, '../preload/index.js'),
       sandbox: false,
@@ -448,7 +468,12 @@ ipcMain.handle('terminal-page:dock', () => {
 // Returns the cached snapshot. The popout window asks for this once after
 // mount because `did-finish-load` fires before its IPC subscribers attach.
 ipcMain.handle('terminal-page:request-initial', () => {
-  return { sessions: terminalPageSessionsCache, layout: terminalPageLayoutCache }
+  return {
+    sessions: terminalPageSessionsCache,
+    layout: terminalPageLayoutCache,
+    projectDir: terminalPageProjectDirCache,
+    theme: terminalPageThemeCache,
+  }
 })
 
 // Sender publishes its sessions list. We cache + forward to peer windows.
@@ -463,6 +488,15 @@ ipcMain.on('terminal-page:publish-layout', (event, layout: unknown) => {
   terminalPageLayoutCache = layout
   const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
   broadcastToTerminalPagePeers('terminal-page:layout', layout, sender)
+})
+
+// Theme broadcast from main window. The popout mirrors it via the same bus
+// so a theme flip in the parent app updates the detached terminal page too.
+ipcMain.on('terminal-page:publish-theme', (event, theme: unknown) => {
+  const next = theme === 'light' ? 'light' : 'dark'
+  terminalPageThemeCache = next
+  const sender = BrowserWindow.fromWebContents(event.sender) ?? undefined
+  broadcastToTerminalPagePeers('terminal-page:theme', next, sender)
 })
 
 // ── Terminal layout persistence ────────────────────────────────────────────
