@@ -12,14 +12,11 @@
 // task blocks for the swimlane, plus a flat per-dispatch event log for the
 // raw view.
 
+import type { OrchestrationEnvelope, OrchestrationEvent } from '../../../shared/orchestration'
+
 type ActivityKind = 'task-received' | 'progress' | 'ask' | 'answer' | 'done' | 'failed' | 'note'
 
-export type OrchestrationKind =
-  | 'dispatch-started'
-  | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
-  | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
-  | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
-  | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
+export type { OrchestrationEnvelope, OrchestrationEvent, OrchestrationKind } from '../../../shared/orchestration'
 
 export type ParticipantStatus = 'starting' | 'running' | 'idle' | 'blocked' | 'failed' | 'stale' | 'exited'
 
@@ -37,20 +34,6 @@ export interface ActivityEnvelope {
   dispatchId: string
   participantId: string
   event: ActivityEventEntry
-}
-
-export interface OrchestrationEvent {
-  ts: string
-  kind: OrchestrationKind
-  participantId?: string
-  taskId?: string
-  summary: string
-  structured?: Record<string, unknown>
-}
-
-export interface OrchestrationEnvelope {
-  dispatchId: string
-  event: OrchestrationEvent
 }
 
 export interface TaskBlock {

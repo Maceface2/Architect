@@ -1,5 +1,6 @@
 import fs from 'fs'
 import { dirname, join } from 'path'
+import type { OrchestrationEvent, OrchestrationKind } from '../../shared/orchestration'
 
 // Harness-only orchestration log. Mirrors activity.ts but every line is
 // authored by the scheduler/dispatch layer — never by an agent CLI. One
@@ -8,24 +9,12 @@ import { dirname, join } from 'path'
 // conductor decisions parsed, PTY exits, stale escalations, etc.) so the
 // view becomes a debugging-quality orchestration log without asking the
 // CLIs to emit anything beyond the existing activity events.
+//
+// Wire shape (OrchestrationKind / OrchestrationEvent) lives in
+// src/shared/orchestration.ts so preload + renderer can import it without
+// pulling in main-only code.
 
-export type OrchestrationKind =
-  | 'dispatch-started'
-  | 'task-dispatched'
-  | 'task-superseded'
-  | 'task-retried'
-  | 'task-exhausted'
-  | 'task-answered'
-  | 'all-done-detected'
-  | 'conductor-decision'
-  | 'assign-rejected'
-  | 'premature-final'
-  | 'pty-exit'
-  | 'status-change'
-  | 'stale-escalation'
-  | 'unassigned-ask-dropped'
-  | 'deadlock-detected'
-  | 'redispatched'
+export type { OrchestrationEvent, OrchestrationKind } from '../../shared/orchestration'
 
 const KNOWN_KINDS: ReadonlySet<string> = new Set<OrchestrationKind>([
   'dispatch-started', 'task-dispatched', 'task-superseded', 'task-retried',
@@ -33,17 +22,6 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<OrchestrationKind>([
   'assign-rejected', 'premature-final', 'pty-exit', 'status-change',
   'stale-escalation', 'unassigned-ask-dropped', 'deadlock-detected', 'redispatched',
 ])
-
-export interface OrchestrationEvent {
-  ts: string
-  kind: OrchestrationKind
-  // Empty for dispatch-wide events (e.g. premature-final, all-done-detected).
-  participantId?: string
-  taskId?: string
-  // Short, harness-authored, one-line. Rendered as primary card text.
-  summary: string
-  structured?: Record<string, unknown>
-}
 
 function runtimeRoot(projectDir: string, dispatchId: string): string {
   return join(projectDir, 'ARCHITECT', 'runtime', dispatchId)

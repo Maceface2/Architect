@@ -149,6 +149,23 @@ export class Scheduler {
     return this.participantById.get(participantId)?.label ?? participantId
   }
 
+  // Emit a status-change orchestration line iff status actually moved. Both
+  // the 15s tick path and the per-event broadcast path call this — without
+  // dedup against `lastStatusByParticipant`, ticks would spam the log with
+  // no-op transitions on every interval.
+  private emitStatusChange(participantId: string, status: ParticipantStatus, lastTaskId: string | undefined): void {
+    const prevStatus = this.lastStatusByParticipant.get(participantId)
+    if (prevStatus === status) return
+    this.lastStatusByParticipant.set(participantId, status)
+    this.recordOrchestration({
+      kind: 'status-change',
+      participantId,
+      taskId: lastTaskId,
+      summary: `${this.participantLabel(participantId)}: ${prevStatus ?? '—'} → ${status}`,
+      structured: { from: prevStatus ?? null, to: status },
+    })
+  }
+
   // ─── lifecycle ────────────────────────────────────────────────────────────
 
   start(): void {
@@ -871,17 +888,7 @@ export class Scheduler {
       this.updateStateAtomic(participantId, { staleAt: undefined })
     }
 
-    const prevStatus = this.lastStatusByParticipant.get(participantId)
-    if (prevStatus !== status) {
-      this.lastStatusByParticipant.set(participantId, status)
-      this.recordOrchestration({
-        kind: 'status-change',
-        participantId,
-        taskId: state.lastTaskId,
-        summary: `${this.participantLabel(participantId)}: ${prevStatus ?? '—'} → ${status}`,
-        structured: { from: prevStatus ?? null, to: status },
-      })
-    }
+    this.emitStatusChange(participantId, status, state.lastTaskId)
     this.deps.broadcastState({
       dispatchId: this.config.dispatchId,
       participantId,
@@ -941,17 +948,7 @@ export class Scheduler {
       activityIdleMs,
       idleThresholdMs: this.config.idleThresholdMs,
     })
-    const prevStatus = this.lastStatusByParticipant.get(participantId)
-    if (prevStatus !== status) {
-      this.lastStatusByParticipant.set(participantId, status)
-      this.recordOrchestration({
-        kind: 'status-change',
-        participantId,
-        taskId: state.lastTaskId,
-        summary: `${this.participantLabel(participantId)}: ${prevStatus ?? '—'} → ${status}`,
-        structured: { from: prevStatus ?? null, to: status },
-      })
-    }
+    this.emitStatusChange(participantId, status, state.lastTaskId)
     this.deps.broadcastState({
       dispatchId: this.config.dispatchId,
       participantId,

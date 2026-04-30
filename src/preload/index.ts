@@ -1,4 +1,5 @@
 import { contextBridge, ipcRenderer } from 'electron'
+import type { OrchestrationEnvelope } from '../shared/orchestration'
 
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
@@ -248,25 +249,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.on('dispatch:complete', handler)
       return () => ipcRenderer.removeListener('dispatch:complete', handler)
     },
-    onOrchestration: (
-      cb: (event: {
-        dispatchId: string
-        event: {
-          ts: string
-          kind:
-            | 'dispatch-started'
-            | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
-            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
-            | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
-            | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
-          participantId?: string
-          taskId?: string
-          summary: string
-          structured?: Record<string, unknown>
-        }
-      }) => void,
-    ) => {
-      const handler = (_: unknown, event: Parameters<typeof cb>[0]) => cb(event)
+    onOrchestration: (cb: (event: OrchestrationEnvelope) => void) => {
+      const handler = (_: unknown, event: OrchestrationEnvelope) => cb(event)
       ipcRenderer.on('activity:orchestration', handler)
       return () => ipcRenderer.removeListener('activity:orchestration', handler)
     },

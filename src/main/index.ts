@@ -2,6 +2,7 @@ import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electro
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
+import type { ActivityEvent } from './orchestrator/activity'
 import {
   initShellEnv,
   startDispatch,
@@ -225,11 +226,24 @@ ipcMain.handle('dispatches:resume', (_event, opts: ResumeDispatchOptions) => {
   return resumeDispatch(mainWindow, opts)
 })
 
+// Defense-in-depth check on the dispatchId IPC argument. Renderer is trusted
+// today, but joining an attacker-controlled `../` into the runtime path would
+// let any caller read arbitrary JSONL files outside ARCHITECT/runtime/. A
+// dispatchId is a UUID-like token in practice — slashes, backslashes, NUL,
+// and parent refs have no legitimate use.
+function isSafeDispatchId(id: unknown): id is string {
+  if (typeof id !== 'string' || id.length === 0 || id.length > 256) return false
+  if (id.includes('/') || id.includes('\\') || id.includes('\0')) return false
+  if (id === '.' || id === '..' || id.includes('..')) return false
+  return true
+}
+
 // Read every persisted activity-log line for a dispatch, oldest first.
 // Used so the swimlane shows the previous session's history when a user
 // resumes a dispatch — without it, the wipe in setupWorkspaceV5 would
 // drop those lines before the new run starts.
 ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, dispatchId: string) => {
+  if (!isSafeDispatchId(dispatchId)) return []
   const fsMod = await import('fs')
   const pathMod = await import('path')
   const { activityDir, readAllActivity } = await import('./orchestrator/activity')
@@ -238,15 +252,21 @@ ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, di
   try {
     entries = fsMod.readdirSync(dir).filter(n => n.endsWith('.jsonl'))
   } catch {
-    return [] as Array<{ participantId: string; event: unknown }>
+    return [] as Array<{ participantId: string; event: ActivityEvent }>
   }
-  const out: Array<{ participantId: string; event: unknown }> = []
+  const out: Array<{ participantId: string; event: ActivityEvent }> = []
   for (const file of entries) {
     const participantId = file.replace(/\.jsonl$/, '')
     const events = readAllActivity(pathMod.join(dir, file), participantId)
     for (const event of events) out.push({ participantId, event })
   }
-  out.sort((a, b) => Date.parse((a.event as { ts: string }).ts) - Date.parse((b.event as { ts: string }).ts))
+  out.sort((a, b) => {
+    const aTs = Date.parse(a.event.ts)
+    const bTs = Date.parse(b.event.ts)
+    // Treat unparseable ts as 0 so they sort to the head rather than producing
+    // NaN comparisons (which leave order undefined).
+    return (Number.isFinite(aTs) ? aTs : 0) - (Number.isFinite(bTs) ? bTs : 0)
+  })
   return out
 })
 
@@ -254,6 +274,7 @@ ipcMain.handle('dispatches:load-activity', async (_event, projectDir: string, di
 // Lets the renderer seed the swimlane on resume with prior-session decisions
 // (status transitions, retries, conductor decisions, etc.) before the wipe.
 ipcMain.handle('dispatches:load-orchestration', async (_event, projectDir: string, dispatchId: string) => {
+  if (!isSafeDispatchId(dispatchId)) return []
   const { orchestrationLogPath, readAllOrchestration } = await import('./orchestrator/orchestrationLog')
   return readAllOrchestration(orchestrationLogPath(projectDir, dispatchId))
 })
