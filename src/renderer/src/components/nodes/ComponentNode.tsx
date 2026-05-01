@@ -9,7 +9,7 @@ import type { ComponentNodeData } from '../../types'
 
 type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 
-function ComponentNode({ id, data }: ComponentNodeProps) {
+function ComponentNode({ id, data, selected }: ComponentNodeProps) {
   const { setNodes, deleteElements } = useReactFlow()
   const { theme } = useInterfaceSettings()
   const isLight = theme === 'light'
@@ -76,6 +76,7 @@ function ComponentNode({ id, data }: ComponentNodeProps) {
             ? 'border-slate-300 hover:border-slate-400'
             : 'border-white/[0.06] hover:border-white/20'
         }`}
+        style={selected ? { outline: `2px solid ${color}`, outlineOffset: '2px' } : undefined}
         onDoubleClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
       >
         <div className="absolute left-0 top-0 bottom-0 w-[4px]" style={{ backgroundColor: color }} />

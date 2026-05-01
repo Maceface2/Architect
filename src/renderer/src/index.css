@@ -121,6 +121,10 @@ body {
   stroke: #8fc2ff;
 }
 
+.react-flow__edges {
+  z-index: 1 !important;
+}
+
 /* Component connection points */
 .architect-component-handle {
   opacity: 0;

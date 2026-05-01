@@ -160,26 +160,22 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
         }}
       />
 
-      <EdgeLabelRenderer>
-        <button
-          type="button"
-          className={`nodrag nopan absolute -translate-x-1/2 -translate-y-1/2 rounded border px-2 py-0.5 text-[10px] font-medium shadow-lg transition-colors ${
-            label
-              ? 'border-white/10 bg-[#1e1e1e] text-fg'
-              : selected && editable
-                ? 'border-white/10 bg-[#1e1e1e]/80 text-fg-subtle'
-                : 'pointer-events-none opacity-0'
-          }`}
-          style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
-          onDoubleClick={event => {
-            event.stopPropagation()
-            if (editable) setEditorOpen(true)
-          }}
-          title={editable ? 'Double-click to edit edge' : undefined}
-        >
-          {label || DIRECTION_LABELS[direction]}
-        </button>
-      </EdgeLabelRenderer>
+      {label && (
+        <EdgeLabelRenderer>
+          <button
+            type="button"
+            className="nodrag nopan absolute -translate-x-1/2 -translate-y-1/2 rounded border border-white/10 bg-[#1e1e1e] px-2 py-0.5 text-[10px] font-medium text-fg shadow-lg"
+            style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
+            onDoubleClick={event => {
+              event.stopPropagation()
+              if (editable) setEditorOpen(true)
+            }}
+            title={editable ? 'Double-click to edit edge' : undefined}
+          >
+            {label}
+          </button>
+        </EdgeLabelRenderer>
+      )}
 
       {editorOpen && editable && createPortal(
         <EdgeEditorModal

@@ -97,11 +97,13 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
                 backgroundColor: 'transparent',
                 border: `1px solid ${hexToRgba(zoneColor, selected ? 0.55 : 0.3)}`,
                 boxShadow: 'none',
+                pointerEvents: 'none',
               }
             : {
                 backgroundColor: hexToRgba(zoneColor, fillAlpha),
                 border: `1.5px ${selected ? 'solid' : 'dashed'} ${hexToRgba(zoneColor, selected ? 0.6 : 0.35)}`,
                 boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.15)}` : 'none',
+                pointerEvents: 'none',
               }
         }
       >
@@ -111,10 +113,11 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
           className={`absolute left-0 right-0 top-0 flex items-center justify-between gap-2 px-3 py-2 ${isArchitectural ? '' : 'rounded-t-2xl'}`}
           style={
             isArchitectural
-              ? { backgroundColor: 'transparent', borderBottom: 'none' }
+              ? { backgroundColor: 'transparent', borderBottom: 'none', pointerEvents: 'auto' }
               : {
                   backgroundColor: hexToRgba(zoneColor, headerAlpha),
                   borderBottom: `1px solid ${hexToRgba(zoneColor, headerBorderAlpha)}`,
+                  pointerEvents: 'auto',
                 }
           }
         >
