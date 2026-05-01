@@ -204,7 +204,7 @@ export default function SettingsPanel({
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
-              Refresh asks each CLI for its current model list (LLM round-trip, ~10–60s).
+              Refresh asks each CLI for its current model list (LLM round-trip, ~30s–2min).
             </span>
             <button
               onClick={() => void detection.refreshModels()}

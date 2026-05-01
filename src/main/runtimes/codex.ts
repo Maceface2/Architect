@@ -27,8 +27,13 @@ async function probeCodexModelsFromCache(): Promise<string[]> {
   } catch {
     throw new Error('~/.codex/models_cache.json not found — log in via `codex login` first')
   }
-  const parsed = JSON.parse(raw)
-  const models = parsed?.models
+  let parsed: unknown
+  try {
+    parsed = JSON.parse(raw)
+  } catch {
+    throw new Error('models_cache.json: not valid JSON — try `codex login` to regenerate it')
+  }
+  const models = (parsed as { models?: unknown } | null)?.models
   if (!Array.isArray(models)) throw new Error('models_cache.json: models field missing')
   const ids: string[] = []
   const seen = new Set<string>()

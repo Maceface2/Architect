@@ -69,17 +69,25 @@ export function createDefaultProjectSettings(): ProjectSettings {
   }
 }
 
-// If the saved/default dispatchRuntime isn't installed on this machine,
-// promote the first installed runtime instead. Saved per-runtime model
-// entries in dispatchModels are left intact — pickers handle the warning
-// chip for saved-but-uninstalled selections.
+// If the saved/default dispatchRuntime or conductorRuntime isn't installed
+// on this machine, promote the first installed runtime instead. Saved
+// per-runtime model entries in dispatchModels are left intact — pickers
+// handle the warning chip for saved-but-uninstalled selections.
 export function applyDetectionToProjectSettings(
   settings: ProjectSettings,
   installedIds: AgentRuntime[],
 ): ProjectSettings {
   if (installedIds.length === 0) return settings
-  if (installedIds.includes(settings.dispatchRuntime)) return settings
-  return { ...settings, dispatchRuntime: installedIds[0] }
+  const fallback = installedIds[0]
+  const dispatchOk = installedIds.includes(settings.dispatchRuntime)
+  const conductorOk =
+    settings.conductorRuntime === undefined || installedIds.includes(settings.conductorRuntime)
+  if (dispatchOk && conductorOk) return settings
+  return {
+    ...settings,
+    ...(dispatchOk ? {} : { dispatchRuntime: fallback }),
+    ...(conductorOk ? {} : { conductorRuntime: fallback }),
+  }
 }
 
 function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {

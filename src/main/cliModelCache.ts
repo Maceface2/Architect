@@ -33,7 +33,7 @@ function read(): CacheShape {
     const raw = fs.readFileSync(cachePath(), 'utf-8')
     const parsed = JSON.parse(raw)
     if (parsed && parsed.version === 1 && parsed.entries && typeof parsed.entries === 'object') {
-      memo = parsed as CacheShape
+      memo = { version: 1, entries: sanitizeEntries(parsed.entries as Record<string, unknown>) }
       return memo
     }
   } catch {
@@ -41,6 +41,23 @@ function read(): CacheShape {
   }
   memo = { version: 1, entries: {} }
   return memo
+}
+
+// Drop any entry whose inner shape doesn't match { ids: string[], probedAt: number }.
+// A hand-edited or partially-written cache file shouldn't smuggle non-strings
+// into pickers downstream.
+function sanitizeEntries(raw: Record<string, unknown>): Partial<Record<AgentRuntime, CacheEntry>> {
+  const out: Partial<Record<AgentRuntime, CacheEntry>> = {}
+  for (const [runtime, value] of Object.entries(raw)) {
+    if (!value || typeof value !== 'object') continue
+    const entry = value as Partial<CacheEntry>
+    if (!Array.isArray(entry.ids)) continue
+    if (typeof entry.probedAt !== 'number' || !Number.isFinite(entry.probedAt)) continue
+    const ids = entry.ids.filter((id): id is string => typeof id === 'string' && id.trim().length > 0)
+    if (ids.length === 0) continue
+    out[runtime as AgentRuntime] = { ids, probedAt: entry.probedAt }
+  }
+  return out
 }
 
 function write(next: CacheShape): void {
