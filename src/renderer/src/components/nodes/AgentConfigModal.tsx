@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react'
 import { Plus, X, FileText, RotateCcw } from 'lucide-react'
 import {
-  AGENT_RUNTIMES,
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
   type AgentRuntime,
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import type {
   ZoneNodeData,
   NodeSkillFile,
@@ -70,7 +71,13 @@ export default function AgentConfigModal({
   const labelInputRef = useRef<HTMLInputElement>(null)
   const projectSettings = useProjectSettings()
   const projectDir = useProjectDir()
+  const detection = useRuntimeDetection()
   const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime)
+  const effectiveDetected = detection.byId[effectiveRuntime]
+  const runtimeOptions = pickerRuntimes(detection.byId, configuredRuntime)
+  const effectiveModelSuggestions = effectiveDetected.models.length > 0
+    ? effectiveDetected.models
+    : effectiveRuntimeMeta.suggestedModels
 
   const handleReset = async () => {
     if (!projectDir) return
@@ -215,27 +222,39 @@ export default function AgentConfigModal({
                   <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-fg-muted">
                     Canvas default: {getAgentRuntime(projectSettings.dispatchRuntime).label}. Pick a different CLI to override this zone only.
                   </div>
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {AGENT_RUNTIMES.map(runtime => {
-                      const selected = configuredRuntime === runtime.id
-                      return (
-                        <button
-                          key={runtime.id}
-                          onClick={() => setConfiguredRuntime(runtime.id)}
-                          className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
-                            selected
-                              ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
-                              : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                          }`}
-                        >
-                          <span className="text-[12px] font-medium">{runtime.label}</span>
-                          <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
-                            {runtime.shortLabel}
-                          </span>
-                        </button>
-                      )
-                    })}
-                  </div>
+                  {detection.installed.length === 0 ? (
+                    <RuntimeEmptyState compact />
+                  ) : (
+                    <div className="grid grid-cols-2 gap-1.5">
+                      {runtimeOptions.map(detected => {
+                        const def = getAgentRuntime(detected.id)
+                        const selected = configuredRuntime === detected.id
+                        const notInstalled = !detected.installed
+                        return (
+                          <button
+                            key={detected.id}
+                            onClick={() => setConfiguredRuntime(detected.id)}
+                            title={notInstalled ? 'Selected but not installed on this machine' : undefined}
+                            className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
+                              selected
+                                ? notInstalled
+                                  ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
+                                  : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                                : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
+                            }`}
+                          >
+                            <span className="text-[12px] font-medium">
+                              {def.label}
+                              {notInstalled && <span className="ml-1 text-[9px] text-amber-300">(missing)</span>}
+                            </span>
+                            <span className="text-[10px] uppercase tracking-wider" style={{ color: def.accentColor }}>
+                              {def.shortLabel}
+                            </span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
                 </div>
               </Section>
 
@@ -252,7 +271,7 @@ export default function AgentConfigModal({
                     className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5">
-                    {effectiveRuntimeMeta.suggestedModels.map(model => (
+                    {effectiveModelSuggestions.map(model => (
                       <button
                         key={model}
                         onClick={() => setRuntimeModel(effectiveRuntime, model)}

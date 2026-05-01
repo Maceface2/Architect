@@ -10,6 +10,7 @@ import type {
   SessionInfo,
   TerminalInfo,
 } from '../../shared/electronTypes'
+import type { RuntimeDetectionResult } from '../../shared/runtimeDetection'
 import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord } from './types'
 
 interface ElectronAPI {
@@ -199,6 +200,14 @@ interface ElectronAPI {
         dispatchId?: string
       }) => void,
     ) => () => void
+  }
+  runtime: {
+    getDetected: () => Promise<RuntimeDetectionResult>
+    rescan: () => Promise<RuntimeDetectionResult>
+    refreshModels: () => Promise<{
+      reports: Array<{ runtime: AgentRuntime; ok: boolean; count: number; error?: string }>
+      detection: RuntimeDetectionResult
+    }>
   }
   activity: {
     onEvent: (

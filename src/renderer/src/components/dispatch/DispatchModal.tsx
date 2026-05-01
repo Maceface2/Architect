@@ -3,10 +3,13 @@ import { Check, History, Pencil, Rocket, Trash2, X } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_MODEL_BY_RUNTIME,
+  getAgentRuntime,
   type AgentRuntime,
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import type { DispatchRecord, DispatchRequest } from '../../types'
 
 interface ZoneOption {
@@ -34,10 +37,17 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   // Orchestrator (Conductor) CLI: defaults to last-used (persisted) or the
   // canvas default on first run. Local state so the user can re-pick per
   // dispatch without mutating settings until submit.
+  const detection = useRuntimeDetection()
   const [conductorRuntime, setConductorRuntime] = useState<AgentRuntime>(
     projectSettings.conductorRuntime ?? projectSettings.dispatchRuntime
   )
   const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === conductorRuntime) ?? AGENT_RUNTIMES[0]
+  const conductorDetected = detection.byId[conductorRuntime]
+  const runtimeOptions = pickerRuntimes(detection.byId, conductorRuntime)
+  const modelSuggestions = conductorDetected.models.length > 0
+    ? conductorDetected.models
+    : runtimeMeta.suggestedModels
+  const conductorNotInstalled = !conductorDetected.installed
   const [model, setModel] = useState<string>(
     projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
   )
@@ -225,15 +235,33 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 Orchestrator CLI
                 <span className="ml-1 text-[10px] text-fg-subtle uppercase tracking-wider">Conductor</span>
               </label>
-              <select
-                value={conductorRuntime}
-                onChange={e => setConductorRuntime(e.target.value as AgentRuntime)}
-                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
-              >
-                {AGENT_RUNTIMES.map(r => (
-                  <option key={r.id} value={r.id}>{r.label}</option>
-                ))}
-              </select>
+              {detection.installed.length === 0 ? (
+                <RuntimeEmptyState compact />
+              ) : (
+                <>
+                  <select
+                    value={conductorRuntime}
+                    onChange={e => setConductorRuntime(e.target.value as AgentRuntime)}
+                    className={`w-full bg-canvas border rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent ${
+                      conductorNotInstalled ? 'border-amber-400/40' : 'border-white/10'
+                    }`}
+                  >
+                    {runtimeOptions.map(r => {
+                      const def = getAgentRuntime(r.id)
+                      return (
+                        <option key={r.id} value={r.id}>
+                          {def.label}{!r.installed ? ' (not installed)' : ''}
+                        </option>
+                      )
+                    })}
+                  </select>
+                  {conductorNotInstalled && (
+                    <p className="text-[11px] text-amber-300 mt-1">
+                      {runtimeMeta.label} is selected but not installed. Install it or pick another CLI.
+                    </p>
+                  )}
+                </>
+              )}
               <p className="text-[11px] text-fg-subtle mt-1">
                 Runs the multi-zone Conductor. Zones keep their individually configured CLIs.
               </p>
@@ -247,10 +275,10 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                   onChange={e => setModel(e.target.value)}
                   className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
                 >
-                  {runtimeMeta.suggestedModels.map(m => (
+                  {modelSuggestions.map(m => (
                     <option key={m} value={m}>{m}</option>
                   ))}
-                  {!runtimeMeta.suggestedModels.includes(model) && (
+                  {!modelSuggestions.includes(model) && (
                     <option value={model}>{model}</option>
                   )}
                 </select>

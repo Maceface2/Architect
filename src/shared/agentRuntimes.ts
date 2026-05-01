@@ -31,7 +31,7 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     binary: 'claude',
     accentColor: '#f59e0b',
     defaultModel: 'claude-sonnet-4-6',
-    suggestedModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-6'],
+    suggestedModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
   },
   {
     id: 'codex',

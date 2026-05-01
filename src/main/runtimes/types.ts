@@ -70,4 +70,11 @@ export interface RuntimeAdapter {
   // Called before resume to fail fast on stale ids (user cleared session
   // dir, etc). Runtimes without a stable check just return true.
   revalidateSession(cwd: string, sessionId: string): boolean
+
+  // Optional. Best-effort probe of the CLI's available models. Implementers
+  // MUST honor signal-based cancellation; the detection cache races this
+  // against a 3 s timeout and falls back to suggestedModels on any throw,
+  // timeout, or non-array result. Omit on adapters whose CLI doesn't
+  // surface a stable, parseable model list.
+  probeModels?(opts: { binaryPath: string; signal: AbortSignal }): Promise<string[]>
 }

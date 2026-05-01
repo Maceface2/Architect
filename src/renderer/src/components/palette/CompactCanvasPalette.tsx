@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react'
 import { Box, GitBranch, Layers, MousePointer2, X } from 'lucide-react'
-import { AGENT_RUNTIMES, DEFAULT_MODEL_BY_RUNTIME, getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import { DEFAULT_MODEL_BY_RUNTIME, getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import type { ComponentEdgeDirection } from '../../types'
 
 export type CanvasPaletteTool = 'edge' | 'zone' | 'component'
@@ -231,6 +233,10 @@ function ZoneCreateDialog({
   const [model, setModel] = useState(defaultModel || DEFAULT_MODEL_BY_RUNTIME[defaultRuntime])
   const [color, setColor] = useState('#58A6FF')
   const runtimeDef = getAgentRuntime(runtime)
+  const detection = useRuntimeDetection()
+  const runtimeOptions = pickerRuntimes(detection.byId, runtime)
+  const runtimeDetected = detection.byId[runtime]
+  const modelSuggestions = runtimeDetected.models.length > 0 ? runtimeDetected.models : runtimeDef.suggestedModels
 
   return (
     <PaletteDialog title="New Zone" onClose={onClose}>
@@ -244,27 +250,41 @@ function ZoneCreateDialog({
       />
       <div>
         <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-widest text-fg-subtle">Runtime</p>
-        <div className="grid grid-cols-2 gap-1">
-          {AGENT_RUNTIMES.map(option => (
-            <button
-              key={option.id}
-              type="button"
-              onClick={() => {
-                setRuntime(option.id)
-                setModel(DEFAULT_MODEL_BY_RUNTIME[option.id])
-              }}
-              className={`rounded px-2 py-1.5 text-xs transition-colors ${
-                runtime === option.id ? 'bg-accent text-fg' : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
-              }`}
-            >
-              {option.shortLabel}
-            </button>
-          ))}
-        </div>
+        {detection.installed.length === 0 ? (
+          <RuntimeEmptyState compact />
+        ) : (
+          <div className="grid grid-cols-2 gap-1">
+            {runtimeOptions.map(detected => {
+              const option = getAgentRuntime(detected.id)
+              const notInstalled = !detected.installed
+              return (
+                <button
+                  key={option.id}
+                  type="button"
+                  onClick={() => {
+                    setRuntime(option.id)
+                    setModel(DEFAULT_MODEL_BY_RUNTIME[option.id])
+                  }}
+                  title={notInstalled ? 'Selected but not installed on this machine' : undefined}
+                  className={`rounded px-2 py-1.5 text-xs transition-colors ${
+                    runtime === option.id
+                      ? notInstalled
+                        ? 'bg-amber-400/15 text-amber-100 border border-amber-400/40'
+                        : 'bg-accent text-fg'
+                      : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
+                  }`}
+                >
+                  {option.shortLabel}
+                  {notInstalled && <span className="ml-1 text-[9px] text-amber-300">!</span>}
+                </button>
+              )
+            })}
+          </div>
+        )}
       </div>
       <TextField label="Model" value={model} onChange={setModel} />
       <div className="flex flex-wrap gap-1">
-        {runtimeDef.suggestedModels.map(option => (
+        {modelSuggestions.map(option => (
           <button
             key={option}
             type="button"

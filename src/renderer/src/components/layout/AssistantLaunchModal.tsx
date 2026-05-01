@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Check, History, Pencil, Rocket, Settings2, Trash2, X } from 'lucide-react'
-import { AGENT_RUNTIMES, getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../../../shared/agentRuntimes'
+import { getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../../../shared/agentRuntimes'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import type { ProjectSettings, ZoneSessionRecord } from '../../types'
 
 export interface AssistantRelaunchOpts {
@@ -32,6 +34,13 @@ export default function AssistantLaunchModal({
 }: Props) {
   const [selectedRuntime, setSelectedRuntime] = useState<AgentRuntime>(runtime)
   const runtimeMeta = getAgentRuntime(selectedRuntime)
+  const detection = useRuntimeDetection()
+  const runtimeOptions = pickerRuntimes(detection.byId, selectedRuntime)
+  const runtimeDetected = detection.byId[selectedRuntime]
+  const modelSuggestions = runtimeDetected.models.length > 0
+    ? runtimeDetected.models
+    : runtimeMeta.suggestedModels
+  const runtimeNotInstalled = !runtimeDetected.installed
 
   const resolveDefaultModel = useCallback((rt: AgentRuntime): string => {
     const meta = getAgentRuntime(rt)
@@ -170,27 +179,44 @@ export default function AssistantLaunchModal({
         <div className="flex-1 overflow-y-auto px-6 py-5 space-y-5">
           <section>
             <label className="block text-xs font-medium text-fg-muted mb-1.5">CLI</label>
-            <div className="grid grid-cols-2 gap-2">
-              {AGENT_RUNTIMES.map(rt => {
-                const selected = selectedRuntime === rt.id
-                return (
-                  <button
-                    key={rt.id}
-                    onClick={() => handleRuntimeChange(rt.id)}
-                    className={`flex items-center justify-between px-3 py-2 rounded-md border text-left transition-colors ${
-                      selected
-                        ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
-                        : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                    }`}
-                  >
-                    <span className="text-sm font-medium">{rt.label}</span>
-                    <span className="text-[10px] uppercase tracking-wider" style={{ color: rt.accentColor }}>
-                      {rt.shortLabel}
-                    </span>
-                  </button>
-                )
-              })}
-            </div>
+            {detection.installed.length === 0 ? (
+              <RuntimeEmptyState />
+            ) : (
+              <div className="grid grid-cols-2 gap-2">
+                {runtimeOptions.map(detected => {
+                  const rt = getAgentRuntime(detected.id)
+                  const selected = selectedRuntime === detected.id
+                  const notInstalled = !detected.installed
+                  return (
+                    <button
+                      key={rt.id}
+                      onClick={() => handleRuntimeChange(rt.id)}
+                      title={notInstalled ? 'Selected but not installed on this machine' : undefined}
+                      className={`flex items-center justify-between px-3 py-2 rounded-md border text-left transition-colors ${
+                        selected
+                          ? notInstalled
+                            ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
+                            : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                          : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
+                      }`}
+                    >
+                      <span className="text-sm font-medium">
+                        {rt.label}
+                        {notInstalled && <span className="ml-1.5 text-[10px] text-amber-300">(missing)</span>}
+                      </span>
+                      <span className="text-[10px] uppercase tracking-wider" style={{ color: rt.accentColor }}>
+                        {rt.shortLabel}
+                      </span>
+                    </button>
+                  )
+                })}
+              </div>
+            )}
+            {runtimeNotInstalled && detection.installed.length > 0 && (
+              <p className="text-[11px] text-amber-300 mt-2">
+                {runtimeMeta.label} is not installed on this machine — launching it will fail.
+              </p>
+            )}
             {runtimeChanged && (
               <p className="text-[11px] text-amber-400/90 mt-2">
                 Changing the CLI will kill the current {modeLabel.toLowerCase()} assistant session and spawn a new one.
@@ -205,10 +231,10 @@ export default function AssistantLaunchModal({
               onChange={e => setModel(e.target.value)}
               className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
             >
-              {runtimeMeta.suggestedModels.map(m => (
+              {modelSuggestions.map(m => (
                 <option key={m} value={m}>{m}</option>
               ))}
-              {!runtimeMeta.suggestedModels.includes(model) && (
+              {!modelSuggestions.includes(model) && (
                 <option value={model}>{model}</option>
               )}
             </select>

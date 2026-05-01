@@ -41,6 +41,8 @@ function composeSystemAndUser(systemPrompt: string, userPrompt: string): Compose
   }
 }
 
+// No reliable probe: `claude --help` doesn't surface a stable parseable
+// model list. Detection falls back to suggestedModels in agentRuntimes.ts.
 export const claudeAdapter: RuntimeAdapter = {
   id,
   supportsSystemPromptFlag: true,

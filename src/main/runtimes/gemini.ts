@@ -30,6 +30,8 @@ function buildResumeArgs(opts: ResumeArgs): string[] {
   return args
 }
 
+// No reliable probe: gemini's --model accepts free-form strings; no
+// `models list` subcommand. Detection falls back to suggestedModels.
 export const geminiAdapter: RuntimeAdapter = {
   id,
   supportsSystemPromptFlag: false,

@@ -13,6 +13,8 @@ import type {
   ZoneNodeType,
 } from '../../types'
 import type { AssistantOrientation } from '../layout/AssistantPanel'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 
 interface Props {
   settings: ProjectSettings
@@ -56,6 +58,12 @@ export default function SettingsPanel({
   const activeZoneRuntime: AgentRuntime | null = zonesAreCustom
     ? null
     : (zoneRuntimes[0] ?? settings.dispatchRuntime)
+
+  const detection = useRuntimeDetection()
+  const runtimeOptions = pickerRuntimes(detection.byId, activeZoneRuntime ?? settings.dispatchRuntime)
+  const lastScanned = detection.result.scannedAt
+    ? new Date(detection.result.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
 
   const setModel = (runtime: AgentRuntime, model: string) => {
     onChange({ dispatchModels: { ...settings.dispatchModels, [runtime]: model } })
@@ -113,57 +121,133 @@ export default function SettingsPanel({
         </Section>
 
         <Section title="Canvas Zone CLI" hint="Picking a CLI here bulk-applies it to every zone on the canvas and seeds newly dragged zones. Individual zones may still override via the zone config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
-          <div className="grid grid-cols-2 gap-2">
-            {AGENT_RUNTIMES.map(runtime => {
-              const selected = activeZoneRuntime === runtime.id
-              return (
-                <button
-                  key={runtime.id}
-                  onClick={() => onChange({ dispatchRuntime: runtime.id })}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-colors ${
-                    selected
-                      ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
-                      : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                  }`}
-                >
-                  <span className="text-sm font-medium">{runtime.label}</span>
-                  <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
-                    {runtime.shortLabel}
-                  </span>
-                </button>
-              )
-            })}
-            <div
-              className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
-                zonesAreCustom
-                  ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
-                  : 'border-white/[0.04] text-fg-subtle'
-              }`}
-              title={
-                zonesAreCustom
-                  ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
-                  : 'Highlights when zones diverge from the canvas default.'
-              }
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
+              {lastScanned ? `Scanned ${lastScanned}` : 'Scanning…'}
+            </span>
+            <button
+              onClick={() => void detection.rescan()}
+              disabled={detection.rescanning}
+              className="px-2 py-0.5 rounded border border-white/10 text-[10px] uppercase tracking-wider text-fg-subtle hover:text-fg hover:border-white/30 disabled:opacity-50"
             >
-              <span className="text-sm font-medium">Custom</span>
-              <span className="text-[10px] uppercase tracking-wider">
-                {zonesAreCustom ? `${uniqueZoneRuntimes.size} clis in use` : '—'}
-              </span>
-            </div>
+              {detection.rescanning ? 'Rescanning…' : 'Rescan CLIs'}
+            </button>
           </div>
+          {detection.installed.length === 0 ? (
+            <RuntimeEmptyState />
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {runtimeOptions.map(detected => {
+                const def = getAgentRuntime(detected.id)
+                const selected = activeZoneRuntime === detected.id
+                const notInstalled = !detected.installed
+                return (
+                  <button
+                    key={detected.id}
+                    onClick={() => onChange({ dispatchRuntime: detected.id })}
+                    title={notInstalled ? 'Selected but not installed on this machine' : undefined}
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                      selected
+                        ? notInstalled
+                          ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
+                          : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                        : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
+                    }`}
+                  >
+                    <span className="text-sm font-medium">
+                      {def.label}
+                      {notInstalled && <span className="ml-1.5 text-[10px] text-amber-300">(not installed)</span>}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wider" style={{ color: def.accentColor }}>
+                      {def.shortLabel}
+                    </span>
+                  </button>
+                )
+              })}
+              <div
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
+                  zonesAreCustom
+                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
+                    : 'border-white/[0.04] text-fg-subtle'
+                }`}
+                title={
+                  zonesAreCustom
+                    ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
+                    : 'Highlights when zones diverge from the canvas default.'
+                }
+              >
+                <span className="text-sm font-medium">Custom</span>
+                <span className="text-[10px] uppercase tracking-wider">
+                  {zonesAreCustom ? `${uniqueZoneRuntimes.size} clis in use` : '—'}
+                </span>
+              </div>
+            </div>
+          )}
         </Section>
 
         <Section
           title="Models"
           hint="Per-CLI default model. Seeds new zones and pre-fills the Dispatch model picker."
         >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
+              Refresh asks each CLI for its current model list (LLM round-trip, ~10–60s).
+            </span>
+            <button
+              onClick={() => void detection.refreshModels()}
+              disabled={detection.refreshing || detection.installed.length === 0}
+              className="px-2 py-0.5 rounded border border-white/10 text-[10px] uppercase tracking-wider text-fg-subtle hover:text-fg hover:border-white/30 disabled:opacity-50"
+              title="Invokes claude -p / codex exec / gemini -p with a JSON-list prompt and caches the result."
+            >
+              {detection.refreshing ? 'Refreshing…' : 'Refresh models'}
+            </button>
+          </div>
+          {detection.lastRefreshReports && detection.lastRefreshReports.length > 0 && (
+            <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2 space-y-1">
+              {detection.lastRefreshReports.map(report => {
+                const def = getAgentRuntime(report.runtime)
+                return (
+                  <div key={report.runtime} className="flex items-center justify-between text-[11px]">
+                    <span className="text-fg-muted">{def.label}</span>
+                    {report.ok ? (
+                      <span className="text-emerald-400">✓ {report.count} models</span>
+                    ) : (
+                      <span className="text-amber-400 truncate max-w-[60%]" title={report.error}>
+                        failed{report.error ? ` — ${report.error.split('\n')[0]}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           <div className="space-y-3">
-            {AGENT_RUNTIMES.map(runtime => {
+            {AGENT_RUNTIMES.filter(r => detection.byId[r.id].installed).map(runtime => {
+              const detected = detection.byId[runtime.id]
               const current = settings.dispatchModels[runtime.id] ?? runtime.defaultModel
+              const suggestions = detected.models.length > 0 ? detected.models : runtime.suggestedModels
+              const probedAtLabel = detected.probedAt
+                ? new Date(detected.probedAt).toLocaleString([], {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : null
               return (
                 <div key={runtime.id}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-fg-muted">{runtime.label}</span>
+                    <span className="text-[11px] text-fg-muted">
+                      {runtime.label}
+                      {detected.modelsSource === 'probed' && (
+                        <span
+                          className="ml-1.5 text-[10px] text-emerald-400/80"
+                          title={probedAtLabel ? `Models probed at ${probedAtLabel}` : 'Models probed live from the CLI'}
+                        >
+                          probed{probedAtLabel ? ` · ${probedAtLabel}` : ''}
+                        </span>
+                      )}
+                    </span>
                     <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
                       {runtime.shortLabel}
                     </span>
@@ -175,7 +259,7 @@ export default function SettingsPanel({
                     className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
-                    {runtime.suggestedModels.map(model => (
+                    {suggestions.map(model => (
                       <button
                         key={model}
                         onClick={() => setModel(runtime.id, model)}
@@ -192,6 +276,11 @@ export default function SettingsPanel({
                 </div>
               )
             })}
+            {detection.installed.length === 0 && (
+              <p className="text-[11px] text-fg-subtle leading-relaxed">
+                Install a CLI to configure its default model.
+              </p>
+            )}
           </div>
         </Section>
 
