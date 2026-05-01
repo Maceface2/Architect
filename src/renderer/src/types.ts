@@ -74,6 +74,12 @@ export interface DispatchSettings {
   // Per-CLI default model for zones/dispatch. Seeds new zones + pre-fills
   // the Dispatch model picker.
   dispatchModels: RuntimeModelMap
+  // Per-CLI shortlist of models surfaced as quick-pick chips in zone
+  // configs (AgentConfigModal, palette zone-create dialog). Capped at 5
+  // per runtime — primarily there to tame opencode's 80+ model list. When
+  // empty for a runtime, the zone falls back to the first 5 of its
+  // detected/probed model list.
+  pinnedModels?: Partial<Record<AgentRuntime, string[]>>
   // Reasoning-effort level applied at zone/dispatch spawn time.
   dispatchEffort: EffortLevel
   // Default plan-mode checkbox state in the Dispatch modal (Claude-only).

@@ -2,7 +2,9 @@ import { useEffect, useState } from 'react'
 import { Box, GitBranch, Layers, MousePointer2, X } from 'lucide-react'
 import { DEFAULT_MODEL_BY_RUNTIME, getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
+import { resolveZoneModelSuggestions } from '../../lib/canvas'
 import type { ComponentEdgeDirection } from '../../types'
 
 export type CanvasPaletteTool = 'edge' | 'zone' | 'component'
@@ -234,9 +236,17 @@ function ZoneCreateDialog({
   const [color, setColor] = useState('#58A6FF')
   const runtimeDef = getAgentRuntime(runtime)
   const detection = useRuntimeDetection()
-  const runtimeOptions = pickerRuntimes(detection.byId, runtime)
+  const projectSettings = useProjectSettings()
+  const runtimeOptions = pickerRuntimes(detection.byId)
   const runtimeDetected = detection.byId[runtime]
-  const modelSuggestions = runtimeDetected.models.length > 0 ? runtimeDetected.models : runtimeDef.suggestedModels
+  // Match AgentConfigModal's chip-cap logic so zone creation and zone
+  // editing surface the same shortlist.
+  const modelSuggestions = resolveZoneModelSuggestions({
+    runtime,
+    settings: projectSettings,
+    detectedModels: runtimeDetected.models,
+    fallbackSuggested: runtimeDef.suggestedModels,
+  })
 
   return (
     <PaletteDialog title="New Zone" onClose={onClose}>

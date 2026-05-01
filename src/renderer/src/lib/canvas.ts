@@ -269,12 +269,14 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
 
   const rawDispatchModels = rawSettings.dispatchModels ?? rawSettings.defaultModels
   const rawDispatchTools = rawSettings.dispatchTools ?? rawSettings.defaultTools
+  const pinnedModels = normalizePinnedModels(rawSettings.pinnedModels)
 
   return {
     dispatchRuntime,
     ...(conductorRuntime ? { conductorRuntime } : {}),
     assistantMode,
     dispatchModels: normalizeDispatchModels(rawDispatchModels),
+    ...(pinnedModels ? { pinnedModels } : {}),
     ...(assistantModels ? { assistantModels } : {}),
     ...(assistantRuntimeByMode ? { assistantRuntimeByMode } : {}),
     ...(assistantLastSessionByMode ? { assistantLastSessionByMode } : {}),
@@ -285,6 +287,47 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
     harnessTimeouts: normalizeHarnessTimeouts(rawSettings.harnessTimeouts),
     interface: normalizeInterfaceSettings(rawSettings.interface),
   }
+}
+
+// Cap stored pin lists at 5 (defense-in-depth — UI also enforces). Drop
+// any entries that aren't strings or repeat a pin already present, so a
+// hand-edited canvas file can't smuggle weird payloads into the chip row.
+export const ZONE_MODEL_PIN_LIMIT = 5
+
+function normalizePinnedModels(raw: unknown): Partial<Record<AgentRuntime, string[]>> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: Partial<Record<AgentRuntime, string[]>> = {}
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isAgentRuntime(runtime) || !Array.isArray(value)) continue
+    const seen = new Set<string>()
+    const ids: string[] = []
+    for (const entry of value) {
+      if (typeof entry !== 'string') continue
+      const trimmed = entry.trim()
+      if (!trimmed || seen.has(trimmed)) continue
+      seen.add(trimmed)
+      ids.push(trimmed)
+      if (ids.length >= ZONE_MODEL_PIN_LIMIT) break
+    }
+    if (ids.length > 0) map[runtime] = ids
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+// The ≤5 model list a zone-scoped picker should show. Pinned models win;
+// otherwise we slice the first ZONE_MODEL_PIN_LIMIT of whatever detection
+// produced (probed list or hardcoded suggestedModels). Used by
+// AgentConfigModal and the palette zone-create dialog.
+export function resolveZoneModelSuggestions(opts: {
+  runtime: AgentRuntime
+  settings: ProjectSettings
+  detectedModels: string[]
+  fallbackSuggested: string[]
+}): string[] {
+  const pinned = opts.settings.pinnedModels?.[opts.runtime]
+  if (pinned && pinned.length > 0) return pinned.slice(0, ZONE_MODEL_PIN_LIMIT)
+  const source = opts.detectedModels.length > 0 ? opts.detectedModels : opts.fallbackSuggested
+  return source.slice(0, ZONE_MODEL_PIN_LIMIT)
 }
 
 function normalizeAssistantModels(raw: unknown): RuntimeModelMap | undefined {

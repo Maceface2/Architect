@@ -9,6 +9,7 @@ import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
+import { resolveZoneModelSuggestions } from '../../lib/canvas'
 import type {
   ZoneNodeData,
   NodeSkillFile,
@@ -74,10 +75,22 @@ export default function AgentConfigModal({
   const detection = useRuntimeDetection()
   const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime)
   const effectiveDetected = detection.byId[effectiveRuntime]
-  const runtimeOptions = pickerRuntimes(detection.byId, configuredRuntime)
-  const effectiveModelSuggestions = effectiveDetected.models.length > 0
-    ? effectiveDetected.models
-    : effectiveRuntimeMeta.suggestedModels
+  const runtimeOptions = pickerRuntimes(detection.byId)
+  // Zone configs only ever show ≤5 quick-pick chips. The user picks which
+  // models those are in Settings → Models → "Pinned for zones"; without
+  // pins we fall back to the first 5 of the detected/probed list.
+  const effectiveModelSuggestions = resolveZoneModelSuggestions({
+    runtime: effectiveRuntime,
+    settings: projectSettings,
+    detectedModels: effectiveDetected.models,
+    fallbackSuggested: effectiveRuntimeMeta.suggestedModels,
+  })
+  // True when the zone has explicitly diverged from the canvas default.
+  // Drives the "Use default" button visibility — clicking it sets
+  // agentRuntime back to the canvas default so isOverride flips false.
+  const isOverride = configuredRuntime !== projectSettings.dispatchRuntime
+  const canvasDefaultInstalled = detection.byId[projectSettings.dispatchRuntime].installed
+  const configuredRuntimeInstalled = detection.byId[configuredRuntime].installed
 
   const handleReset = async () => {
     if (!projectDir) return
@@ -219,9 +232,28 @@ export default function AgentConfigModal({
             <div className="p-6 space-y-6">
               <Section title="Runtime">
                 <div className="space-y-3">
-                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 text-[11px] text-fg-muted">
-                    Canvas default: {getAgentRuntime(projectSettings.dispatchRuntime).label}. Pick a different CLI to override this zone only.
+                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Canvas default</p>
+                      <p className="text-[12px] text-fg-muted mt-0.5 truncate">
+                        {getAgentRuntime(projectSettings.dispatchRuntime).label}
+                      </p>
+                    </div>
+                    {isOverride && canvasDefaultInstalled && (
+                      <button
+                        onClick={() => setConfiguredRuntime(projectSettings.dispatchRuntime)}
+                        className="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-white/10 text-fg-subtle hover:text-fg hover:border-white/30"
+                        title="Drop the per-zone CLI override and inherit the canvas default."
+                      >
+                        Use default
+                      </button>
+                    )}
                   </div>
+                  {!configuredRuntimeInstalled && (
+                    <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-[11px] text-amber-200">
+                      This zone is configured for <span className="font-mono">{effectiveRuntimeMeta.label}</span>, which isn&apos;t installed on this machine. Pick another CLI below or run <span className="font-mono">Rescan CLIs</span> in Settings.
+                    </div>
+                  )}
                   {detection.installed.length === 0 ? (
                     <RuntimeEmptyState compact />
                   ) : (
@@ -229,24 +261,17 @@ export default function AgentConfigModal({
                       {runtimeOptions.map(detected => {
                         const def = getAgentRuntime(detected.id)
                         const selected = configuredRuntime === detected.id
-                        const notInstalled = !detected.installed
                         return (
                           <button
                             key={detected.id}
                             onClick={() => setConfiguredRuntime(detected.id)}
-                            title={notInstalled ? 'Selected but not installed on this machine' : undefined}
                             className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
                               selected
-                                ? notInstalled
-                                  ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
-                                  : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                                ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
                                 : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                             }`}
                           >
-                            <span className="text-[12px] font-medium">
-                              {def.label}
-                              {notInstalled && <span className="ml-1 text-[9px] text-amber-300">(missing)</span>}
-                            </span>
+                            <span className="text-[12px] font-medium">{def.label}</span>
                             <span className="text-[10px] uppercase tracking-wider" style={{ color: def.accentColor }}>
                               {def.shortLabel}
                             </span>
@@ -285,6 +310,13 @@ export default function AgentConfigModal({
                       </button>
                     ))}
                   </div>
+                  {effectiveDetected.models.length > effectiveModelSuggestions.length && (
+                    <ZoneModelBrowse
+                      available={effectiveDetected.models}
+                      current={effectiveModel}
+                      onPick={id => setRuntimeModel(effectiveRuntime, id)}
+                    />
+                  )}
                 </div>
               </Section>
 
@@ -501,4 +533,57 @@ function Seg<T extends string>({ options, value, onChange }: { options: T[]; val
 
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
+}
+
+// Search dropdown for picking from the full available model list. Shown
+// in the zone modal under the ≤5 quick-pick chips when the runtime exposes
+// more than 5 models (opencode etc.). Click a result to set this zone's
+// model. The free-text input above still wins for typing arbitrary IDs.
+function ZoneModelBrowse({
+  available,
+  current,
+  onPick,
+}: {
+  available: string[]
+  current: string
+  onPick: (id: string) => void
+}) {
+  const [query, setQuery] = useState('')
+  const trimmed = query.trim().toLowerCase()
+  const filtered = trimmed
+    ? available.filter(m => m.toLowerCase().includes(trimmed)).slice(0, 8)
+    : available.slice(0, 8)
+
+  const choose = (id: string) => {
+    onPick(id)
+    setQuery('')
+  }
+
+  return (
+    <div className="relative">
+      <input
+        value={query}
+        onChange={event => setQuery(event.target.value)}
+        placeholder={`Browse all ${available.length} models…`}
+        className="w-full bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
+      />
+      {filtered.length > 0 && (
+        <div className="absolute z-10 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded border border-white/10 bg-[#161616] shadow-lg">
+          {filtered.map(id => (
+            <button
+              key={id}
+              onClick={() => choose(id)}
+              className={`block w-full text-left px-2 py-1 text-[11px] font-mono ${
+                current === id
+                  ? 'text-[#58A6FF] bg-[#58A6FF]/10'
+                  : 'text-fg-subtle hover:bg-white/[0.05] hover:text-fg'
+              }`}
+            >
+              {id}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
 }

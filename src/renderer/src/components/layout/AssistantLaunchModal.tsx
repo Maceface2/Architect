@@ -35,7 +35,7 @@ export default function AssistantLaunchModal({
   const [selectedRuntime, setSelectedRuntime] = useState<AgentRuntime>(runtime)
   const runtimeMeta = getAgentRuntime(selectedRuntime)
   const detection = useRuntimeDetection()
-  const runtimeOptions = pickerRuntimes(detection.byId, selectedRuntime)
+  const runtimeOptions = pickerRuntimes(detection.byId)
   const runtimeDetected = detection.byId[selectedRuntime]
   const modelSuggestions = runtimeDetected.models.length > 0
     ? runtimeDetected.models

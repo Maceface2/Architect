@@ -43,7 +43,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   )
   const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === conductorRuntime) ?? AGENT_RUNTIMES[0]
   const conductorDetected = detection.byId[conductorRuntime]
-  const runtimeOptions = pickerRuntimes(detection.byId, conductorRuntime)
+  const runtimeOptions = pickerRuntimes(detection.byId)
   const modelSuggestions = conductorDetected.models.length > 0
     ? conductorDetected.models
     : runtimeMeta.suggestedModels

@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { Pin, X as XIcon } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
@@ -15,6 +17,7 @@ import type {
 import type { AssistantOrientation } from '../layout/AssistantPanel'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
+import { ZONE_MODEL_PIN_LIMIT } from '../../lib/canvas'
 
 interface Props {
   settings: ProjectSettings
@@ -60,13 +63,23 @@ export default function SettingsPanel({
     : (zoneRuntimes[0] ?? settings.dispatchRuntime)
 
   const detection = useRuntimeDetection()
-  const runtimeOptions = pickerRuntimes(detection.byId, activeZoneRuntime ?? settings.dispatchRuntime)
+  const runtimeOptions = pickerRuntimes(detection.byId)
   const lastScanned = detection.result.scannedAt
     ? new Date(detection.result.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : null
 
   const setModel = (runtime: AgentRuntime, model: string) => {
     onChange({ dispatchModels: { ...settings.dispatchModels, [runtime]: model } })
+  }
+
+  const setPinnedModels = (runtime: AgentRuntime, ids: string[]) => {
+    const next = { ...(settings.pinnedModels ?? {}) }
+    if (ids.length === 0) {
+      delete next[runtime]
+    } else {
+      next[runtime] = ids.slice(0, ZONE_MODEL_PIN_LIMIT)
+    }
+    onChange({ pinnedModels: next })
   }
 
   const toggleTool = (key: keyof NodeTools) => {
@@ -273,6 +286,11 @@ export default function SettingsPanel({
                       </button>
                     ))}
                   </div>
+                  <PinnedModelsEditor
+                    pinned={settings.pinnedModels?.[runtime.id] ?? []}
+                    available={suggestions}
+                    onChange={ids => setPinnedModels(runtime.id, ids)}
+                  />
                 </div>
               )
             })}
@@ -514,4 +532,102 @@ function NumberField({
 
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
+}
+
+// Per-runtime pin picker. The pinned chips drive the ≤5 quick-pick buttons
+// shown in zone configs. Search filters the full available list (which can
+// be 80+ for opencode); free-form Enter adds whatever was typed even if it
+// isn't in the available list, so users can pin a CLI alias the probe
+// missed.
+function PinnedModelsEditor({
+  pinned,
+  available,
+  onChange,
+}: {
+  pinned: string[]
+  available: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [query, setQuery] = useState('')
+  const atLimit = pinned.length >= ZONE_MODEL_PIN_LIMIT
+  const trimmedQuery = query.trim()
+  const lower = trimmedQuery.toLowerCase()
+  const filtered = trimmedQuery
+    ? available.filter(m => !pinned.includes(m) && m.toLowerCase().includes(lower)).slice(0, 8)
+    : []
+
+  const tryAdd = (id: string) => {
+    const trimmed = id.trim()
+    if (!trimmed || atLimit || pinned.includes(trimmed)) return
+    onChange([...pinned, trimmed])
+    setQuery('')
+  }
+
+  const remove = (id: string) => {
+    onChange(pinned.filter(p => p !== id))
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+          <Pin size={10} /> Pinned for zones
+        </span>
+        <span className="text-[10px] text-fg-subtle">
+          {pinned.length}/{ZONE_MODEL_PIN_LIMIT}
+        </span>
+      </div>
+      {pinned.length === 0 ? (
+        <p className="text-[11px] text-fg-subtle leading-relaxed mb-1.5">
+          No pins yet — zones show the first {ZONE_MODEL_PIN_LIMIT} of the available list. Add up to {ZONE_MODEL_PIN_LIMIT} models below to override.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {pinned.map(id => (
+            <span
+              key={id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#58A6FF]/40 bg-[#58A6FF]/10 text-[#58A6FF] text-[11px]"
+            >
+              <span className="font-mono">{shortModelLabel(id)}</span>
+              <button
+                onClick={() => remove(id)}
+                className="text-[#58A6FF]/70 hover:text-[#58A6FF]"
+                aria-label={`Remove ${id}`}
+              >
+                <XIcon size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative">
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && trimmedQuery) {
+              event.preventDefault()
+              tryAdd(trimmedQuery)
+            }
+          }}
+          disabled={atLimit}
+          placeholder={atLimit ? 'Remove a pin to add another' : 'Search or type a model id, then Enter'}
+          className="w-full bg-black/40 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono disabled:opacity-50"
+        />
+        {filtered.length > 0 && !atLimit && (
+          <div className="absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded border border-white/10 bg-[#161616] shadow-lg">
+            {filtered.map(id => (
+              <button
+                key={id}
+                onClick={() => tryAdd(id)}
+                className="block w-full text-left px-2 py-1 text-[11px] font-mono text-fg-subtle hover:bg-white/[0.05] hover:text-fg"
+              >
+                {id}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

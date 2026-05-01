@@ -130,16 +130,17 @@ export function useRuntimeDetection(): RuntimeDetectionContextValue {
   return ctx
 }
 
-// Returns "installed runtimes ∪ {currentSelected}" in canonical AGENT_RUNTIMES
-// order. Keeps a saved-but-not-installed selection visible (with a warning
-// chip in the UI) instead of silently dropping it from the picker.
+// Returns the installed runtimes in canonical AGENT_RUNTIMES order.
+// Saved-but-not-installed runtimes are intentionally dropped — callers that
+// need to surface "your saved choice is missing" should detect that via
+// byId[currentSelectedId].installed === false and render a banner / recovery
+// affordance themselves, not by leaking the missing entry into the grid.
+// (Earlier behavior leaked the missing CLI in with a warning chip; users
+// found it confusing and asked for strict filtering.)
 export function pickerRuntimes(
   byId: Record<AgentRuntime, DetectedRuntime>,
-  currentSelectedId?: AgentRuntime,
 ): DetectedRuntime[] {
-  return AGENT_RUNTIMES
-    .map(def => byId[def.id])
-    .filter(r => r.installed || r.id === currentSelectedId)
+  return AGENT_RUNTIMES.map(def => byId[def.id]).filter(r => r.installed)
 }
 
 export function getRuntimeLabel(id: AgentRuntime): string {
