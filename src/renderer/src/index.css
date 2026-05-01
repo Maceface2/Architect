@@ -121,6 +121,8 @@ body {
   stroke: #8fc2ff;
 }
 
+/* Lift edges above the zone fill — React Flow stacks edges under nodes by
+   default, which puts them beneath translucent zone bodies and unclickable. */
 .react-flow__edges {
   z-index: 1 !important;
 }
