@@ -1,3 +1,4 @@
+import { execFile } from 'child_process'
 import { effortArgsFor, type AgentRuntime } from '../../shared/agentRuntimes'
 import {
   captureNewOpencodeSession,
@@ -5,6 +6,25 @@ import {
 } from '../sessionCapture'
 import { foldComposeSystemAndUser } from './fold'
 import type { ResumeArgs, RuntimeAdapter, SpawnArgs } from './types'
+
+// `opencode models` prints one slug per line. Most are `provider/model`
+// (e.g. opencode/big-pickle) but some providers emit multi-segment paths
+// (e.g. nvidia/deepseek-ai/deepseek-r1). Drop lines without a slash, with
+// whitespace, or starting with non-slug chars to filter banners/blanks.
+const MODEL_SLUG_RE = /^[A-Za-z0-9][A-Za-z0-9._:/-]+$/
+
+function probeOpencodeModels(opts: { binaryPath: string; signal: AbortSignal }): Promise<string[]> {
+  return new Promise((resolve, reject) => {
+    execFile(opts.binaryPath, ['models'], { signal: opts.signal, timeout: 3000 }, (err, stdout) => {
+      if (err) return reject(err)
+      const models = stdout
+        .split('\n')
+        .map(line => line.trim())
+        .filter(line => line.includes('/') && MODEL_SLUG_RE.test(line))
+      resolve(models)
+    })
+  })
+}
 
 const id: AgentRuntime = 'opencode'
 
@@ -40,4 +60,5 @@ export const opencodeAdapter: RuntimeAdapter = {
   captureNewSession: (_cwd, before, timeoutMs) =>
     captureNewOpencodeSession(before, timeoutMs),
   revalidateSession: () => true,
+  probeModels: probeOpencodeModels,
 }

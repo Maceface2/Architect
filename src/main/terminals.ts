@@ -169,7 +169,7 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
   }
 }
 
-function resolveBinary(runtime: AgentRuntime): string | null {
+export function resolveBinary(runtime: AgentRuntime): string | null {
   const { binary } = getAgentRuntime(runtime)
 
   for (const dir of (process.env.PATH || '').split(':')) {

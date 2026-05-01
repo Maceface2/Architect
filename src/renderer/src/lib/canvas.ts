@@ -69,6 +69,27 @@ export function createDefaultProjectSettings(): ProjectSettings {
   }
 }
 
+// If the saved/default dispatchRuntime or conductorRuntime isn't installed
+// on this machine, promote the first installed runtime instead. Saved
+// per-runtime model entries in dispatchModels are left intact — pickers
+// handle the warning chip for saved-but-uninstalled selections.
+export function applyDetectionToProjectSettings(
+  settings: ProjectSettings,
+  installedIds: AgentRuntime[],
+): ProjectSettings {
+  if (installedIds.length === 0) return settings
+  const fallback = installedIds[0]
+  const dispatchOk = installedIds.includes(settings.dispatchRuntime)
+  const conductorOk =
+    settings.conductorRuntime === undefined || installedIds.includes(settings.conductorRuntime)
+  if (dispatchOk && conductorOk) return settings
+  return {
+    ...settings,
+    ...(dispatchOk ? {} : { dispatchRuntime: fallback }),
+    ...(conductorOk ? {} : { conductorRuntime: fallback }),
+  }
+}
+
 function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
   const base = { ...DEFAULT_INTERFACE_SETTINGS }
   if (!raw || typeof raw !== 'object') return base
@@ -256,12 +277,14 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
 
   const rawDispatchModels = rawSettings.dispatchModels ?? rawSettings.defaultModels
   const rawDispatchTools = rawSettings.dispatchTools ?? rawSettings.defaultTools
+  const pinnedModels = normalizePinnedModels(rawSettings.pinnedModels)
 
   return {
     dispatchRuntime,
     ...(conductorRuntime ? { conductorRuntime } : {}),
     assistantMode,
     dispatchModels: normalizeDispatchModels(rawDispatchModels),
+    ...(pinnedModels ? { pinnedModels } : {}),
     ...(assistantModels ? { assistantModels } : {}),
     ...(assistantRuntimeByMode ? { assistantRuntimeByMode } : {}),
     ...(assistantLastSessionByMode ? { assistantLastSessionByMode } : {}),
@@ -272,6 +295,47 @@ export function normalizeProjectSettings(raw: unknown): ProjectSettings {
     harnessTimeouts: normalizeHarnessTimeouts(rawSettings.harnessTimeouts),
     interface: normalizeInterfaceSettings(rawSettings.interface),
   }
+}
+
+// Cap stored pin lists at 5 (defense-in-depth — UI also enforces). Drop
+// any entries that aren't strings or repeat a pin already present, so a
+// hand-edited canvas file can't smuggle weird payloads into the chip row.
+export const ZONE_MODEL_PIN_LIMIT = 5
+
+function normalizePinnedModels(raw: unknown): Partial<Record<AgentRuntime, string[]>> | undefined {
+  if (!raw || typeof raw !== 'object') return undefined
+  const map: Partial<Record<AgentRuntime, string[]>> = {}
+  for (const [runtime, value] of Object.entries(raw as Record<string, unknown>)) {
+    if (!isAgentRuntime(runtime) || !Array.isArray(value)) continue
+    const seen = new Set<string>()
+    const ids: string[] = []
+    for (const entry of value) {
+      if (typeof entry !== 'string') continue
+      const trimmed = entry.trim()
+      if (!trimmed || seen.has(trimmed)) continue
+      seen.add(trimmed)
+      ids.push(trimmed)
+      if (ids.length >= ZONE_MODEL_PIN_LIMIT) break
+    }
+    if (ids.length > 0) map[runtime] = ids
+  }
+  return Object.keys(map).length > 0 ? map : undefined
+}
+
+// The ≤5 model list a zone-scoped picker should show. Pinned models win;
+// otherwise we slice the first ZONE_MODEL_PIN_LIMIT of whatever detection
+// produced (probed list or hardcoded suggestedModels). Used by
+// AgentConfigModal and the palette zone-create dialog.
+export function resolveZoneModelSuggestions(opts: {
+  runtime: AgentRuntime
+  settings: ProjectSettings
+  detectedModels: string[]
+  fallbackSuggested: string[]
+}): string[] {
+  const pinned = opts.settings.pinnedModels?.[opts.runtime]
+  if (pinned && pinned.length > 0) return pinned.slice(0, ZONE_MODEL_PIN_LIMIT)
+  const source = opts.detectedModels.length > 0 ? opts.detectedModels : opts.fallbackSuggested
+  return source.slice(0, ZONE_MODEL_PIN_LIMIT)
 }
 
 function normalizeAssistantModels(raw: unknown): RuntimeModelMap | undefined {

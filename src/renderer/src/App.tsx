@@ -59,6 +59,7 @@ import type {
 import {
   createDefaultZoneAgentConfig,
   createDefaultProjectSettings,
+  applyDetectionToProjectSettings,
   migrateCanvasData,
   mintParticipantId,
   normalizeEdgeData,
@@ -66,6 +67,7 @@ import {
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
+import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
@@ -428,6 +430,22 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [nodes, setNodes, onNodesChange] = useNodesState<CanvasNode>([])
   const [edges, setEdges, onEdgesChange] = useEdgesState<CanvasEdge>([])
   const [projectSettings, setProjectSettings] = useState<ProjectSettings>(createDefaultProjectSettings())
+  const runtimeDetection = useRuntimeDetection()
+
+  // Once the renderer has the real detection snapshot (scannedAt > 0), if
+  // the canvas's saved/default dispatchRuntime isn't installed, promote the
+  // first installed runtime. Only runs when the runtime would actually
+  // change, so it doesn't fight user edits.
+  useEffect(() => {
+    if (runtimeDetection.result.scannedAt === 0) return
+    setProjectSettings(prev => {
+      const next = applyDetectionToProjectSettings(
+        prev,
+        runtimeDetection.installed.map(r => r.id),
+      )
+      return next === prev ? prev : next
+    })
+  }, [runtimeDetection.result.scannedAt, runtimeDetection.installed])
   const [activeTab, setActiveTab] = useState('Canvas')
   const [terminalSessions, setTerminalSessions] = useState<TerminalInfo[]>([])
   const [dispatching, setDispatching] = useState(false)
@@ -1991,7 +2009,9 @@ export default function App() {
   }
   return (
     <AuthGate>
-      <MainApp />
+      <RuntimeDetectionProvider>
+        <MainApp />
+      </RuntimeDetectionProvider>
     </AuthGate>
   )
 }

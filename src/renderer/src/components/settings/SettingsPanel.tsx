@@ -1,3 +1,5 @@
+import { useState } from 'react'
+import { Pin, X as XIcon } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
@@ -13,6 +15,9 @@ import type {
   ZoneNodeType,
 } from '../../types'
 import type { AssistantOrientation } from '../layout/AssistantPanel'
+import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
+import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
+import { ZONE_MODEL_PIN_LIMIT } from '../../lib/canvas'
 
 interface Props {
   settings: ProjectSettings
@@ -57,8 +62,24 @@ export default function SettingsPanel({
     ? null
     : (zoneRuntimes[0] ?? settings.dispatchRuntime)
 
+  const detection = useRuntimeDetection()
+  const runtimeOptions = pickerRuntimes(detection.byId)
+  const lastScanned = detection.result.scannedAt
+    ? new Date(detection.result.scannedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+    : null
+
   const setModel = (runtime: AgentRuntime, model: string) => {
     onChange({ dispatchModels: { ...settings.dispatchModels, [runtime]: model } })
+  }
+
+  const setPinnedModels = (runtime: AgentRuntime, ids: string[]) => {
+    const next = { ...(settings.pinnedModels ?? {}) }
+    if (ids.length === 0) {
+      delete next[runtime]
+    } else {
+      next[runtime] = ids.slice(0, ZONE_MODEL_PIN_LIMIT)
+    }
+    onChange({ pinnedModels: next })
   }
 
   const toggleTool = (key: keyof NodeTools) => {
@@ -113,57 +134,133 @@ export default function SettingsPanel({
         </Section>
 
         <Section title="Canvas Zone CLI" hint="Picking a CLI here bulk-applies it to every zone on the canvas and seeds newly dragged zones. Individual zones may still override via the zone config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
-          <div className="grid grid-cols-2 gap-2">
-            {AGENT_RUNTIMES.map(runtime => {
-              const selected = activeZoneRuntime === runtime.id
-              return (
-                <button
-                  key={runtime.id}
-                  onClick={() => onChange({ dispatchRuntime: runtime.id })}
-                  className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-colors ${
-                    selected
-                      ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
-                      : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                  }`}
-                >
-                  <span className="text-sm font-medium">{runtime.label}</span>
-                  <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
-                    {runtime.shortLabel}
-                  </span>
-                </button>
-              )
-            })}
-            <div
-              className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
-                zonesAreCustom
-                  ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
-                  : 'border-white/[0.04] text-fg-subtle'
-              }`}
-              title={
-                zonesAreCustom
-                  ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
-                  : 'Highlights when zones diverge from the canvas default.'
-              }
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
+              {lastScanned ? `Scanned ${lastScanned}` : 'Scanning…'}
+            </span>
+            <button
+              onClick={() => void detection.rescan()}
+              disabled={detection.rescanning}
+              className="px-2 py-0.5 rounded border border-white/10 text-[10px] uppercase tracking-wider text-fg-subtle hover:text-fg hover:border-white/30 disabled:opacity-50"
             >
-              <span className="text-sm font-medium">Custom</span>
-              <span className="text-[10px] uppercase tracking-wider">
-                {zonesAreCustom ? `${uniqueZoneRuntimes.size} clis in use` : '—'}
-              </span>
-            </div>
+              {detection.rescanning ? 'Rescanning…' : 'Rescan CLIs'}
+            </button>
           </div>
+          {detection.installed.length === 0 ? (
+            <RuntimeEmptyState />
+          ) : (
+            <div className="grid grid-cols-2 gap-2">
+              {runtimeOptions.map(detected => {
+                const def = getAgentRuntime(detected.id)
+                const selected = activeZoneRuntime === detected.id
+                const notInstalled = !detected.installed
+                return (
+                  <button
+                    key={detected.id}
+                    onClick={() => onChange({ dispatchRuntime: detected.id })}
+                    title={notInstalled ? 'Selected but not installed on this machine' : undefined}
+                    className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left transition-colors ${
+                      selected
+                        ? notInstalled
+                          ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
+                          : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                        : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
+                    }`}
+                  >
+                    <span className="text-sm font-medium">
+                      {def.label}
+                      {notInstalled && <span className="ml-1.5 text-[10px] text-amber-300">(not installed)</span>}
+                    </span>
+                    <span className="text-[10px] uppercase tracking-wider" style={{ color: def.accentColor }}>
+                      {def.shortLabel}
+                    </span>
+                  </button>
+                )
+              })}
+              <div
+                className={`flex items-center justify-between px-3 py-2.5 rounded-lg border text-left col-span-2 ${
+                  zonesAreCustom
+                    ? 'border-amber-400/40 bg-amber-400/10 text-amber-100'
+                    : 'border-white/[0.04] text-fg-subtle'
+                }`}
+                title={
+                  zonesAreCustom
+                    ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
+                    : 'Highlights when zones diverge from the canvas default.'
+                }
+              >
+                <span className="text-sm font-medium">Custom</span>
+                <span className="text-[10px] uppercase tracking-wider">
+                  {zonesAreCustom ? `${uniqueZoneRuntimes.size} clis in use` : '—'}
+                </span>
+              </div>
+            </div>
+          )}
         </Section>
 
         <Section
           title="Models"
           hint="Per-CLI default model. Seeds new zones and pre-fills the Dispatch model picker."
         >
+          <div className="flex items-center justify-between mb-3">
+            <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
+              Refresh asks each CLI for its current model list (LLM round-trip, ~30s–2min).
+            </span>
+            <button
+              onClick={() => void detection.refreshModels()}
+              disabled={detection.refreshing || detection.installed.length === 0}
+              className="px-2 py-0.5 rounded border border-white/10 text-[10px] uppercase tracking-wider text-fg-subtle hover:text-fg hover:border-white/30 disabled:opacity-50"
+              title="Invokes claude -p / codex exec / gemini -p with a JSON-list prompt and caches the result."
+            >
+              {detection.refreshing ? 'Refreshing…' : 'Refresh models'}
+            </button>
+          </div>
+          {detection.lastRefreshReports && detection.lastRefreshReports.length > 0 && (
+            <div className="mb-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2 space-y-1">
+              {detection.lastRefreshReports.map(report => {
+                const def = getAgentRuntime(report.runtime)
+                return (
+                  <div key={report.runtime} className="flex items-center justify-between text-[11px]">
+                    <span className="text-fg-muted">{def.label}</span>
+                    {report.ok ? (
+                      <span className="text-emerald-400">✓ {report.count} models</span>
+                    ) : (
+                      <span className="text-amber-400 truncate max-w-[60%]" title={report.error}>
+                        failed{report.error ? ` — ${report.error.split('\n')[0]}` : ''}
+                      </span>
+                    )}
+                  </div>
+                )
+              })}
+            </div>
+          )}
           <div className="space-y-3">
-            {AGENT_RUNTIMES.map(runtime => {
+            {AGENT_RUNTIMES.filter(r => detection.byId[r.id].installed).map(runtime => {
+              const detected = detection.byId[runtime.id]
               const current = settings.dispatchModels[runtime.id] ?? runtime.defaultModel
+              const suggestions = detected.models.length > 0 ? detected.models : runtime.suggestedModels
+              const probedAtLabel = detected.probedAt
+                ? new Date(detected.probedAt).toLocaleString([], {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })
+                : null
               return (
                 <div key={runtime.id}>
                   <div className="flex items-center justify-between mb-1">
-                    <span className="text-[11px] text-fg-muted">{runtime.label}</span>
+                    <span className="text-[11px] text-fg-muted">
+                      {runtime.label}
+                      {detected.modelsSource === 'probed' && (
+                        <span
+                          className="ml-1.5 text-[10px] text-emerald-400/80"
+                          title={probedAtLabel ? `Models probed at ${probedAtLabel}` : 'Models probed live from the CLI'}
+                        >
+                          probed{probedAtLabel ? ` · ${probedAtLabel}` : ''}
+                        </span>
+                      )}
+                    </span>
                     <span className="text-[10px] uppercase tracking-wider" style={{ color: runtime.accentColor }}>
                       {runtime.shortLabel}
                     </span>
@@ -175,7 +272,7 @@ export default function SettingsPanel({
                     className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5 mt-1.5">
-                    {runtime.suggestedModels.map(model => (
+                    {suggestions.map(model => (
                       <button
                         key={model}
                         onClick={() => setModel(runtime.id, model)}
@@ -189,9 +286,19 @@ export default function SettingsPanel({
                       </button>
                     ))}
                   </div>
+                  <PinnedModelsEditor
+                    pinned={settings.pinnedModels?.[runtime.id] ?? []}
+                    available={suggestions}
+                    onChange={ids => setPinnedModels(runtime.id, ids)}
+                  />
                 </div>
               )
             })}
+            {detection.installed.length === 0 && (
+              <p className="text-[11px] text-fg-subtle leading-relaxed">
+                Install a CLI to configure its default model.
+              </p>
+            )}
           </div>
         </Section>
 
@@ -425,4 +532,102 @@ function NumberField({
 
 function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
+}
+
+// Per-runtime pin picker. The pinned chips drive the ≤5 quick-pick buttons
+// shown in zone configs. Search filters the full available list (which can
+// be 80+ for opencode); free-form Enter adds whatever was typed even if it
+// isn't in the available list, so users can pin a CLI alias the probe
+// missed.
+function PinnedModelsEditor({
+  pinned,
+  available,
+  onChange,
+}: {
+  pinned: string[]
+  available: string[]
+  onChange: (ids: string[]) => void
+}) {
+  const [query, setQuery] = useState('')
+  const atLimit = pinned.length >= ZONE_MODEL_PIN_LIMIT
+  const trimmedQuery = query.trim()
+  const lower = trimmedQuery.toLowerCase()
+  const filtered = trimmedQuery
+    ? available.filter(m => !pinned.includes(m) && m.toLowerCase().includes(lower)).slice(0, 8)
+    : []
+
+  const tryAdd = (id: string) => {
+    const trimmed = id.trim()
+    if (!trimmed || atLimit || pinned.includes(trimmed)) return
+    onChange([...pinned, trimmed])
+    setQuery('')
+  }
+
+  const remove = (id: string) => {
+    onChange(pinned.filter(p => p !== id))
+  }
+
+  return (
+    <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
+      <div className="flex items-center justify-between mb-1.5">
+        <span className="text-[10px] uppercase tracking-wider text-fg-subtle flex items-center gap-1">
+          <Pin size={10} /> Pinned for zones
+        </span>
+        <span className="text-[10px] text-fg-subtle">
+          {pinned.length}/{ZONE_MODEL_PIN_LIMIT}
+        </span>
+      </div>
+      {pinned.length === 0 ? (
+        <p className="text-[11px] text-fg-subtle leading-relaxed mb-1.5">
+          No pins yet — zones show the first {ZONE_MODEL_PIN_LIMIT} of the available list. Add up to {ZONE_MODEL_PIN_LIMIT} models below to override.
+        </p>
+      ) : (
+        <div className="flex flex-wrap gap-1.5 mb-1.5">
+          {pinned.map(id => (
+            <span
+              key={id}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#58A6FF]/40 bg-[#58A6FF]/10 text-[#58A6FF] text-[11px]"
+            >
+              <span className="font-mono">{shortModelLabel(id)}</span>
+              <button
+                onClick={() => remove(id)}
+                className="text-[#58A6FF]/70 hover:text-[#58A6FF]"
+                aria-label={`Remove ${id}`}
+              >
+                <XIcon size={10} />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative">
+        <input
+          value={query}
+          onChange={event => setQuery(event.target.value)}
+          onKeyDown={event => {
+            if (event.key === 'Enter' && trimmedQuery) {
+              event.preventDefault()
+              tryAdd(trimmedQuery)
+            }
+          }}
+          disabled={atLimit}
+          placeholder={atLimit ? 'Remove a pin to add another' : 'Search or type a model id, then Enter'}
+          className="w-full bg-black/40 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono disabled:opacity-50"
+        />
+        {filtered.length > 0 && !atLimit && (
+          <div className="absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded border border-white/10 bg-[#161616] shadow-lg">
+            {filtered.map(id => (
+              <button
+                key={id}
+                onClick={() => tryAdd(id)}
+                className="block w-full text-left px-2 py-1 text-[11px] font-mono text-fg-subtle hover:bg-white/[0.05] hover:text-fg"
+              >
+                {id}
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }

@@ -257,6 +257,18 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
+  // CLI auto-detection. Snapshot is pre-warmed by main before the renderer
+  // mounts, so getDetected() returns a populated cache on first call.
+  // refreshModels triggers a CLI-prompt probe (headless invocation of each
+  // installed CLI to ask the model itself for its supported IDs). Results
+  // are cached on disk; the user clicks "Refresh models" in Settings to
+  // re-run.
+  runtime: {
+    getDetected: () => ipcRenderer.invoke('runtime:get-detected'),
+    rescan: () => ipcRenderer.invoke('runtime:rescan'),
+    refreshModels: () => ipcRenderer.invoke('runtime:refresh-models'),
+  },
+
   // v5 coordination observability — one event per activity-log line, plus
   // status-transition events from the scheduler's tick loop.
   activity: {

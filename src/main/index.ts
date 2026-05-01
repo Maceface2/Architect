@@ -36,6 +36,7 @@ import {
   updateDispatchSummary,
 } from './dispatchCapture'
 import { registerAuthIpc, setAuthMainWindow, setAuthLogoutHandler } from './auth'
+import { detectRuntimes, getDetected, rescanRuntimes, refreshCliPromptModels } from './runtimeDetection'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -579,10 +580,19 @@ setAuthLogoutHandler(() => {
   closeAllPopouts()
 })
 
+// ── Runtime detection IPC ──────────────────────────────────────────────────
+
+ipcMain.handle('runtime:get-detected', () => getDetected())
+ipcMain.handle('runtime:rescan', () => rescanRuntimes())
+ipcMain.handle('runtime:refresh-models', () => refreshCliPromptModels())
+
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
   await initShellEnv()
+  // Pre-warm the runtime cache before the renderer mounts so its first
+  // getDetected() call returns a populated snapshot synchronously.
+  await detectRuntimes()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
