@@ -44,6 +44,8 @@ process.title = 'Architect'
 
 const iconPath = join(__dirname, '../../resources/icon.png')
 const CANVAS_FILENAME = 'architect-canvas.json'
+const ARCHITECT_DIRNAME = 'ARCHITECT'
+const IGNORED_PROJECT_ENTRIES = new Set(['.DS_Store'])
 
 let mainWindow: BrowserWindow | null = null
 let canvasWatcher: fs.FSWatcher | null = null
@@ -162,6 +164,42 @@ ipcMain.handle('open-directory', async () => {
     properties: ['openDirectory', 'createDirectory']
   })
   return result.filePaths[0] ?? null
+})
+
+ipcMain.handle('inspect-project', (_event, projectDir: string) => {
+  const architectDir = path.join(projectDir, ARCHITECT_DIRNAME)
+  const canvasFile = path.join(projectDir, CANVAS_FILENAME)
+  let hasArchitectDir = false
+  let hasCanvasFile = false
+  let projectIsNonEmpty = false
+  let canvasIsEmpty = false
+
+  try { hasArchitectDir = fs.statSync(architectDir).isDirectory() } catch {}
+  try { hasCanvasFile = fs.statSync(canvasFile).isFile() } catch {}
+
+  try {
+    projectIsNonEmpty = fs
+      .readdirSync(projectDir, { withFileTypes: true })
+      .some(entry => entry.name !== ARCHITECT_DIRNAME && !IGNORED_PROJECT_ENTRIES.has(entry.name))
+  } catch {
+    projectIsNonEmpty = false
+  }
+
+  if (hasCanvasFile) {
+    try {
+      const raw = JSON.parse(fs.readFileSync(canvasFile, 'utf-8')) as {
+        nodes?: unknown
+        edges?: unknown
+      }
+      const nodeCount = Array.isArray(raw.nodes) ? raw.nodes.length : 0
+      const edgeCount = Array.isArray(raw.edges) ? raw.edges.length : 0
+      canvasIsEmpty = nodeCount === 0 && edgeCount === 0
+    } catch {
+      canvasIsEmpty = false
+    }
+  }
+
+  return { projectIsNonEmpty, hasArchitectDir, hasCanvasFile, canvasIsEmpty }
 })
 
 ipcMain.handle('save-canvas', (_event, projectDir: string, data: string) => {

@@ -23,6 +23,8 @@ interface Props {
   onChange: (partial: Partial<ProjectSettings>) => void
   assistantOrientation: AssistantOrientation
   onAssistantOrientationChange: (next: AssistantOrientation) => void
+  onGenerateCanvasFromCodebase: () => void
+  generatingCanvasFromCodebase?: boolean
 }
 
 const TOOL_ROWS: [keyof NodeTools, string][] = [
@@ -42,6 +44,8 @@ export default function SettingsPanel({
   onChange,
   assistantOrientation,
   onAssistantOrientationChange,
+  onGenerateCanvasFromCodebase,
+  generatingCanvasFromCodebase = false,
 }: Props) {
   // When zones disagree on runtime, highlight a "Custom" pill instead of any
   // concrete CLI — the canvas default still exists (seeds new zones) but no
@@ -297,6 +301,21 @@ export default function SettingsPanel({
           <p className="text-[11px] text-fg-subtle leading-relaxed mt-2">
             Architecture and General assistants each pick their own CLI + model from the gear icon on the assistant panel — those choices are independent of the Dispatch/Zone CLI above. Dock position is saved per machine; both mode terminals keep running when you close the panel or switch modes.
           </p>
+          <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-white/[0.08] bg-black/20 px-3 py-3">
+            <div>
+              <p className="text-[12px] font-medium text-fg-muted">Generate Canvas From Codebase</p>
+              <p className="mt-0.5 text-[11px] leading-relaxed text-fg-subtle">
+                Starts a fresh Architecture Assistant session to inspect this project and write an architecture canvas.
+              </p>
+            </div>
+            <button
+              onClick={onGenerateCanvasFromCodebase}
+              disabled={generatingCanvasFromCodebase}
+              className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+            >
+              {generatingCanvasFromCodebase ? 'Opening assistant...' : 'Generate Canvas From Codebase'}
+            </button>
+          </div>
           <div className="mt-3 space-y-1 text-[11px] text-fg-subtle">
             <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Current per-mode CLI</p>
             {(['architecture', 'general'] as const).map(mode => {

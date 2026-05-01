@@ -109,6 +109,43 @@ const ZONE_DEFAULT_HEIGHT = 280
 const COMPONENT_APPROX_W = 180
 const COMPONENT_APPROX_H = 78
 const FIT_VIEW_OPTIONS = { padding: 0.18, duration: 280 }
+const AUTO_CANVAS_DISMISS_PREFIX = 'architect:auto-canvas-dismissed:'
+const AUTO_CANVAS_INITIAL_PROMPT = `# Task
+
+Do a deep architecture discovery pass over this existing codebase and generate an Architect canvas.
+
+# Workflow
+
+1. Explore before writing:
+   - Inspect the repository structure.
+   - Identify package/build files, app entry points, backend services, frontend apps, data/storage layers, integrations, config, tests, and deployment files.
+   - Prefer fast targeted commands such as \`rg --files\`, \`find\`, and reading manifests before opening large files.
+   - Manage context carefully: summarize discoveries as you go instead of dumping large files.
+
+2. Build an architecture model:
+   - Identify 5-12 meaningful components. A component should be a real subsystem, package, service, module, UI surface, data store, external integration, or workflow boundary.
+   - Identify 2-5 zones representing useful future agent ownership areas, not just folders.
+   - Add component edges for important dependencies, calls, data flow, auth flow, event flow, or build/deploy relationships.
+   - Use uncertainty honestly. If a relationship is inferred from filenames or config rather than confirmed code, say that in the component specs.
+
+3. Write the canvas:
+   - Create or replace \`architect-canvas.json\` at the project root.
+   - Use the modern Architect JSON format from your context file.
+   - Pretty-print with 2-space indentation.
+   - Preserve any existing \`settings\` if present.
+   - Give zones durable role-style \`systemPrompt\` values. Do not turn zone prompts into build checklists.
+   - Place components inside their owning zone by geometry.
+   - Keep labels concise and specs specific.
+
+4. Verify:
+   - Re-read \`architect-canvas.json\`.
+   - Confirm it is valid JSON with top-level \`nodes\`, \`edges\`, and \`settings\`.
+   - Confirm every edge references existing component ids.
+   - Give a brief final summary of the discovered architecture and any uncertain areas.
+
+# Scope
+
+Do not modify source code. Only write \`architect-canvas.json\`.`
 const edgeTypes = {
   'component-edge': ComponentEdge,
 }
@@ -329,6 +366,46 @@ function CanvasConflictModal({
   )
 }
 
+function AutoCanvasOnboardingModal({
+  starting,
+  onGenerate,
+  onDismiss,
+}: {
+  starting: boolean
+  onGenerate: () => void
+  onDismiss: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-fg">Generate an architecture canvas?</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
+            This looks like an existing codebase without an Architect canvas. Architect can open the Architecture Assistant and ask it to map the project into zones, components, and dependencies.
+          </p>
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onDismiss}
+            disabled={starting}
+            className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node disabled:opacity-50 disabled:pointer-events-none transition-colors"
+          >
+            Not now
+          </button>
+          <button
+            onClick={onGenerate}
+            disabled={starting}
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+          >
+            {starting ? 'Opening assistant...' : 'Generate Canvas'}
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function zoneHash(n: ZoneNodeType): string {
   const { data: { status: _s, ...data } } = n
   return JSON.stringify(data)
@@ -360,6 +437,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchPrefill, setDispatchPrefill] = useState<string>('')
   const [assistantOpen, setAssistantOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
+  const [autoCanvasOfferOpen, setAutoCanvasOfferOpen] = useState(false)
+  const [autoCanvasStarting, setAutoCanvasStarting] = useState(false)
   const [assistantOrientation, setAssistantOrientation] = useState<AssistantOrientation>(() => {
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('architect:assistant-orientation') : null
     return raw === 'bottom' ? 'bottom' : 'right'
@@ -651,6 +730,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     lastAppliedCanvasRef.current = ''
     dismissedExternalCanvasRef.current = null
     setPendingExternalCanvasRaw(null)
+    setAutoCanvasOfferOpen(false)
+    setAutoCanvasStarting(false)
     void window.electron.watchCanvas(projectDir)
 
     const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedProjectDir, raw }) => {
@@ -682,15 +763,31 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       applyRawCanvas(raw, true)
     })
 
-    window.electron.loadCanvas(projectDir).then((raw: string | null) => {
+    Promise.all([
+      window.electron.loadCanvas(projectDir),
+      window.electron.inspectProject(projectDir).catch(() => ({
+        projectIsNonEmpty: false,
+        hasArchitectDir: false,
+        hasCanvasFile: false,
+        canvasIsEmpty: false,
+      })),
+    ]).then(([raw, projectInfo]) => {
       if (disposed) return
       if (raw) {
         if (!applyRawCanvas(raw, true)) {
           lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
         }
-        return
+      } else {
+        lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
       }
-      lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+
+      let dismissed = false
+      try {
+        dismissed = localStorage.getItem(`${AUTO_CANVAS_DISMISS_PREFIX}${projectDir}`) === 'true'
+      } catch {}
+
+      const lacksMeaningfulCanvas = !projectInfo.hasCanvasFile || projectInfo.canvasIsEmpty
+      setAutoCanvasOfferOpen(projectInfo.projectIsNonEmpty && lacksMeaningfulCanvas && !dismissed)
     })
 
     return () => {
@@ -1401,6 +1498,42 @@ Only discuss and advise without editing the file when the user is asking for cri
     setAssistantOpen(true)
   }, [assistantOpen, nodes, edges, projectDir, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
 
+  const handleAutoCanvasDismiss = useCallback(() => {
+    try {
+      localStorage.setItem(`${AUTO_CANVAS_DISMISS_PREFIX}${projectDir}`, 'true')
+    } catch {}
+    setAutoCanvasOfferOpen(false)
+  }, [projectDir])
+
+  const handleAutoCanvasGenerate = useCallback(async () => {
+    if (autoCanvasStarting) return
+    setAutoCanvasStarting(true)
+    try {
+      const mode: AssistantMode = 'architecture'
+      const runtime = effectiveAssistantRuntime(mode)
+      const contextMd = buildAssistantContext(mode, nodesRef.current, edgesRef.current)
+      setProjectSettings(current => ({ ...current, assistantMode: mode }))
+      const session = await window.electron.assistant.start(
+        projectDir,
+        contextMd,
+        runtime,
+        mode,
+        {
+          session: { mode: 'new' },
+          initialPrompt: AUTO_CANVAS_INITIAL_PROMPT,
+          force: true,
+        },
+      )
+      const sessionRuntime = session?.runtime
+      setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
+      setAssistantOpen(true)
+      setActiveTab('Canvas')
+      setAutoCanvasOfferOpen(false)
+    } finally {
+      setAutoCanvasStarting(false)
+    }
+  }, [autoCanvasStarting, buildAssistantContext, effectiveAssistantRuntime, projectDir])
+
   const handleAssistantClose = useCallback(() => {
     // Hide only — do not tear down PTYs. See handleAssistantToggle.
     setAssistantOpen(false)
@@ -1680,6 +1813,14 @@ Only discuss and advise without editing the file when the user is asking for cri
               onCancel={cancelCanvasTool}
             />
 
+            {autoCanvasOfferOpen && (
+              <AutoCanvasOnboardingModal
+                starting={autoCanvasStarting}
+                onGenerate={() => void handleAutoCanvasGenerate()}
+                onDismiss={handleAutoCanvasDismiss}
+              />
+            )}
+
             {pendingExternalCanvasRaw && (
               <CanvasConflictModal
                 onLoadIncoming={handleLoadIncomingCanvas}
@@ -1754,6 +1895,8 @@ Only discuss and advise without editing the file when the user is asking for cri
                 onChange={handleSettingsChange}
                 assistantOrientation={assistantOrientation}
                 onAssistantOrientationChange={handleAssistantOrientationChange}
+                onGenerateCanvasFromCodebase={() => void handleAutoCanvasGenerate()}
+                generatingCanvasFromCodebase={autoCanvasStarting}
               />
             </div>
           )}

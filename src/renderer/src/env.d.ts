@@ -18,6 +18,12 @@ interface ElectronAPI {
   readFile: (filePath: string) => Promise<string | null>
   getHomeDir: () => Promise<string>
   openDirectory: () => Promise<string | null>
+  inspectProject: (projectDir: string) => Promise<{
+    projectIsNonEmpty: boolean
+    hasArchitectDir: boolean
+    hasCanvasFile: boolean
+    canvasIsEmpty: boolean
+  }>
   saveCanvas: (projectDir: string, data: string) => Promise<void>
   loadCanvas: (projectDir: string) => Promise<string | null>
   watchCanvas: (projectDir: string) => Promise<void>
