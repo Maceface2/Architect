@@ -51,7 +51,6 @@ export function ensureClaudeProjectTrusted(cwd: string): void {
     mcpServers: {},
     enabledMcpjsonServers: [],
     disabledMcpjsonServers: [],
-    hasTrustDialogAccepted: true,
     projectOnboardingSeenCount: 1,
     hasClaudeMdExternalIncludesApproved: false,
     hasClaudeMdExternalIncludesWarningShown: false,

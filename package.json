@@ -41,7 +41,11 @@
           ]
         }
       ],
-      "hardenedRuntime": false
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
     "dmg": {
       "title": "Architect",
@@ -50,6 +54,25 @@
         "width": 540,
         "height": 380
       }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "publisherName": "Henry Ostman"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "npmRebuild": true,
     "nodeGypRebuild": false
