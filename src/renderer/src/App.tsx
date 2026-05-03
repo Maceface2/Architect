@@ -162,80 +162,6 @@ function createNodeId(prefix: string): string {
   return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
-function buildDemoGraph(settings: ProjectSettings): { nodes: CanvasNode[]; edges: CanvasEdge[] } {
-  const zoneX = 120
-  const zoneY = 120
-  const zone: ZoneNodeType = {
-    id: 'demo-zone-1',
-    type: 'zone',
-    position: { x: zoneX, y: zoneY },
-    width: 520,
-    height: 360,
-    zIndex: 0,
-    data: {
-      participantId: mintParticipantId('Backend Platform', new Set()),
-      label: 'Backend Platform',
-      description: 'API + auth + storage',
-      color: '#58A6FF',
-      status: 'idle',
-      systemPrompt: 'You are a backend platform agent. Build a small Express API backed by Postgres with JWT auth. Keep it minimal and runnable.',
-      ...createDefaultZoneAgentConfig(settings),
-    },
-  }
-  const comps: ComponentNodeType[] = [
-    {
-      id: 'demo-c-1',
-      type: 'component',
-      position: { x: zoneX + 30, y: zoneY + 70 },
-      zIndex: 1,
-      data: {
-        label: 'API Gateway',
-        description: 'Request routing',
-        specs: 'Express server listening on :3000.\nRoutes: /api/* → service handlers.\nDelegates auth to the Auth component before dispatching protected routes.',
-        category: 'infrastructure',
-        iconName: 'Shield',
-        color: '#fb923c',
-        tag: 'API',
-      },
-    },
-    {
-      id: 'demo-c-2',
-      type: 'component',
-      position: { x: zoneX + 300, y: zoneY + 70 },
-      zIndex: 1,
-      data: {
-        label: 'Auth',
-        description: 'JWT sessions',
-        specs: 'POST /auth/login { email, password } → { token }.\nGET /auth/me with Bearer token → user profile.\nTokens signed with HS256, 1h expiry.',
-        category: 'infrastructure',
-        iconName: 'Lock',
-        color: '#4ade80',
-        tag: 'AUTH',
-      },
-    },
-    {
-      id: 'demo-c-3',
-      type: 'component',
-      position: { x: zoneX + 165, y: zoneY + 220 },
-      zIndex: 1,
-      data: {
-        label: 'PostgreSQL',
-        description: 'Persistent storage',
-        specs: 'Schema: users(id uuid PK, email unique, password_hash, created_at).\nRun migrations via scripts/migrate.js.',
-        category: 'storage',
-        iconName: 'Database',
-        color: '#60a5fa',
-        tag: 'DB',
-      },
-    },
-  ]
-  const edges: CanvasEdge[] = [
-    { id: 'demo-ce-1', type: 'component-edge', source: 'demo-c-1', target: 'demo-c-2', data: { label: 'calls', direction: 'source-to-target' } },
-    { id: 'demo-ce-2', type: 'component-edge', source: 'demo-c-1', target: 'demo-c-3', data: { label: 'persists to', direction: 'source-to-target' } },
-  ]
-  return { nodes: [zone, ...comps], edges }
-}
-
 function serializeCanvasData(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
@@ -471,6 +397,17 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   // session/layout/theme updates flow over the terminalPage IPC bus until
   // the popout window is closed.
   const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
+  const [updateReady, setUpdateReady] = useState(false)
+
+  useEffect(() => {
+    const off = window.electron.update.onDownloaded(() => setUpdateReady(true))
+    return () => { off() }
+  }, [])
+
+  const onUpdateInstall = useCallback(() => {
+    void window.electron.update.install()
+  }, [])
+
   const terminalLayoutSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const autoSaveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const nodesRef = useRef<CanvasNode[]>([])
@@ -1008,20 +945,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     setEdges([])
     setIsDirty(true)
   }, [setEdges, setNodes, snapshotHistory])
-
-  const onLoadDemo = useCallback(() => {
-    snapshotHistory()
-    const demo = buildDemoGraph(projectSettings)
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current)
-      autoSaveTimerRef.current = null
-    }
-    setPendingExternalCanvasRaw(null)
-    dismissedExternalCanvasRef.current = null
-    setNodes(demo.nodes)
-    setEdges(demo.edges)
-    setIsDirty(true)
-  }, [projectSettings, setEdges, setNodes, snapshotHistory])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
 
@@ -1757,7 +1680,6 @@ Only discuss and advise without editing the file when the user is asking for cri
           activeTab={activeTab}
           onTabChange={setActiveTab}
           onClear={onClear}
-          onLoadDemo={onLoadDemo}
           onDispatch={onDispatch}
           dispatching={dispatching}
           nodeCount={zones.length}
@@ -1773,6 +1695,8 @@ Only discuss and advise without editing the file when the user is asking for cri
           onRedo={redoCanvas}
           canUndo={canUndo}
           canRedo={canRedo}
+          updateReady={updateReady}
+          onUpdateInstall={onUpdateInstall}
         />
         <div className="flex flex-1 overflow-hidden">
           <div

@@ -11,6 +11,8 @@
     "preview": "electron-vite preview",
     "package": "electron-vite build && electron-builder",
     "dmg": "electron-vite build && electron-builder --mac dmg",
+    "release": "electron-vite build && electron-builder --mac --publish always",
+    "release:dryrun": "electron-vite build && electron-builder --mac --publish never",
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null; chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null; true"
   },
   "build": {
@@ -39,10 +41,29 @@
             "arm64",
             "x64"
           ]
+        },
+        {
+          "target": "zip",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
         }
       ],
-      "hardenedRuntime": false
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Maceface2",
+        "repo": "Architect-releases",
+        "releaseType": "release"
+      }
+    ],
     "dmg": {
       "title": "Architect",
       "background": null,
@@ -50,6 +71,25 @@
         "width": 540,
         "height": 380
       }
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "icon": "resources/icon.png",
+      "publisherName": "Henry Ostman"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false
     },
     "npmRebuild": true,
     "nodeGypRebuild": false
@@ -59,6 +99,7 @@
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "@xyflow/react": "^12.3.6",
+    "electron-updater": "^6.8.3",
     "lucide-react": "^0.468.0",
     "node-pty": "^1.1.0",
     "react": "^18.3.1",

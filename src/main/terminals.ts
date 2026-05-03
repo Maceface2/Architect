@@ -1279,7 +1279,6 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const existing = sessions.get(zone.id)
   if (existing) {
     try { existing.pty.kill() } catch {}
-    try { existing.term.dispose() } catch {}
     sessions.delete(zone.id)
     clearCoordinationState(zone.id)
   }

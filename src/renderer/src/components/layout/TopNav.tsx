@@ -1,11 +1,10 @@
 import type { CSSProperties } from 'react'
-import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2 } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, RefreshCw } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
   onTabChange: (tab: string) => void
   onClear: () => void
-  onLoadDemo: () => void
   onDispatch: () => void
   dispatching: boolean
   nodeCount: number
@@ -21,16 +20,19 @@ interface TopNavProps {
   onRedo: () => void
   canUndo: boolean
   canRedo: boolean
+  updateReady: boolean
+  onUpdateInstall: () => void
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Logs', 'Settings']
 
 export default function TopNav({
-  activeTab, onTabChange, onClear, onLoadDemo,
+  activeTab, onTabChange, onClear,
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir, onSave, isDirty,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
   onUndo, onRedo, canUndo, canRedo,
+  updateReady, onUpdateInstall,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -117,9 +119,16 @@ export default function TopNav({
           <button onClick={onClear} className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors">
             Clear
           </button>
-          <button onClick={onLoadDemo} className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors">
-            Load demo
-          </button>
+          {updateReady && (
+            <button
+              onClick={onUpdateInstall}
+              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-200 border border-emerald-400/40 bg-emerald-400/10 rounded hover:bg-emerald-400/20 transition-colors"
+              title="A new version of Architect was downloaded. Click to restart and install."
+            >
+              <RefreshCw size={12} />
+              Update ready — Restart
+            </button>
+          )}
           <button
             onClick={onDispatch}
             disabled={dispatching || nodeCount === 0}
