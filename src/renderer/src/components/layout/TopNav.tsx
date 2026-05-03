@@ -1,6 +1,29 @@
 import type { CSSProperties } from 'react'
 import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, RefreshCw } from 'lucide-react'
 
+const IS_MAC = window.electron.platform === 'darwin'
+
+function WindowControls() {
+  const btn =
+    'flex items-center justify-center w-7 h-7 text-fg-muted hover:text-fg hover:bg-node rounded transition-colors'
+  return (
+    <div
+      className="flex items-center gap-0.5 pl-2 pr-1"
+      style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+    >
+      <button onClick={() => window.electron.windowControls.close()} className={btn} aria-label="Close" title="Close">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 1l8 8M9 1l-8 8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+      </button>
+      <button onClick={() => window.electron.windowControls.minimize()} className={btn} aria-label="Minimize" title="Minimize">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 5h8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round"/></svg>
+      </button>
+      <button onClick={() => window.electron.windowControls.toggleMaximize()} className={btn} aria-label="Maximize" title="Maximize">
+        <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><rect x="1.4" y="1.4" width="7.2" height="7.2" stroke="currentColor" strokeWidth="1.2" rx="1"/></svg>
+      </button>
+    </div>
+  )
+}
+
 interface TopNavProps {
   activeTab: string
   onTabChange: (tab: string) => void
@@ -38,14 +61,15 @@ export default function TopNav({
 
   return (
     <div className="flex flex-col bg-panel border-b border-node-border flex-shrink-0">
-      {/* Row 1 — drag region (so the user can move the window from this bar)
-          with the traffic lights inset over the left padding by hiddenInset.
-          Buttons inside opt out via no-drag so clicks aren't swallowed. */}
+      {/* Row 1 — drag region (so the user can move the window from this bar).
+          macOS: traffic lights inset over the left padding by hiddenInset (88px).
+          Other platforms: WindowControls paints its own X / – / + at the left. */}
       <div
         className="flex items-center justify-between h-11 pr-4"
-        style={{ WebkitAppRegion: 'drag', paddingLeft: 88 } as CSSProperties}
+        style={{ WebkitAppRegion: 'drag', paddingLeft: IS_MAC ? 88 : 4 } as CSSProperties}
       >
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
+          {!IS_MAC && <WindowControls />}
           <svg
             width="20"
             height="20"

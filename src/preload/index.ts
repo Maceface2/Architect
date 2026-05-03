@@ -4,6 +4,15 @@ import type { OrchestrationEnvelope } from '../shared/orchestration'
 contextBridge.exposeInMainWorld('electron', {
   platform: process.platform,
 
+  // Window controls — used by the renderer-painted X / – / + buttons in
+  // TopNav row 1 on non-darwin (where we run frameless). On macOS the OS
+  // traffic lights handle this and these calls go unused.
+  windowControls: {
+    minimize: () => ipcRenderer.send('window:minimize'),
+    toggleMaximize: () => ipcRenderer.send('window:toggle-maximize'),
+    close: () => ipcRenderer.send('window:close'),
+  },
+
   // File system
   readDir: (dirPath: string) => ipcRenderer.invoke('read-dir', dirPath),
   openDirectory: () => ipcRenderer.invoke('open-directory'),

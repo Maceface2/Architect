@@ -103,9 +103,10 @@ function createWindow(): void {
     backgroundColor: '#111111',
     icon,
     title: 'Architect',
-    // macOS: keep the traffic lights but drop the native title bar strip.
-    // Lights inset over TopNav row 1; the renderer reserves padding-left + a
-    // drag region so the user can grab the bar to move the window.
+    // macOS keeps the traffic lights via hiddenInset; everywhere else we drop
+    // the OS frame entirely and the renderer paints its own X / – / + buttons
+    // into TopNav row 1 (see WindowControls.tsx).
+    frame: process.platform === 'darwin',
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 14, y: 14 },
     webPreferences: {
@@ -136,6 +137,23 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
+
+// ── Window controls (renderer-painted X / – / + on non-darwin) ─────────────
+
+ipcMain.on('window:minimize', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.minimize()
+})
+
+ipcMain.on('window:toggle-maximize', (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win) return
+  if (win.isMaximized()) win.unmaximize()
+  else win.maximize()
+})
+
+ipcMain.on('window:close', (event) => {
+  BrowserWindow.fromWebContents(event.sender)?.close()
+})
 
 // ── File system IPC ────────────────────────────────────────────────────────
 

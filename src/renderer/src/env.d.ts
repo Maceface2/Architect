@@ -15,6 +15,11 @@ import type { AssistantMode, DispatchRecord, ProjectSettings, ZoneSessionRecord 
 
 interface ElectronAPI {
   platform: string
+  windowControls: {
+    minimize: () => void
+    toggleMaximize: () => void
+    close: () => void
+  }
   readDir: (dirPath: string) => Promise<FileEntry[]>
   readFile: (filePath: string) => Promise<string | null>
   getHomeDir: () => Promise<string>
