@@ -314,4 +314,40 @@ contextBridge.exposeInMainWorld('electron', {
       return () => ipcRenderer.removeListener('activity:orchestration', handler)
     },
   },
+
+  update: {
+    check: () => ipcRenderer.invoke('update:check') as Promise<{ ok: boolean; error?: string }>,
+    install: () => ipcRenderer.invoke('update:install'),
+    getVersion: () => ipcRenderer.invoke('app:get-version') as Promise<string>,
+    onChecking: (cb: () => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('update:checking', handler)
+      return () => ipcRenderer.removeListener('update:checking', handler)
+    },
+    onAvailable: (cb: (info: { version: string; releaseNotes?: string }) => void) => {
+      const handler = (_: unknown, info: { version: string; releaseNotes?: string }) => cb(info)
+      ipcRenderer.on('update:available', handler)
+      return () => ipcRenderer.removeListener('update:available', handler)
+    },
+    onNone: (cb: () => void) => {
+      const handler = () => cb()
+      ipcRenderer.on('update:none', handler)
+      return () => ipcRenderer.removeListener('update:none', handler)
+    },
+    onProgress: (cb: (progress: { percent: number; bytesPerSecond: number }) => void) => {
+      const handler = (_: unknown, progress: { percent: number; bytesPerSecond: number }) => cb(progress)
+      ipcRenderer.on('update:progress', handler)
+      return () => ipcRenderer.removeListener('update:progress', handler)
+    },
+    onDownloaded: (cb: (info: { version: string }) => void) => {
+      const handler = (_: unknown, info: { version: string }) => cb(info)
+      ipcRenderer.on('update:downloaded', handler)
+      return () => ipcRenderer.removeListener('update:downloaded', handler)
+    },
+    onError: (cb: (message: string) => void) => {
+      const handler = (_: unknown, message: string) => cb(message)
+      ipcRenderer.on('update:error', handler)
+      return () => ipcRenderer.removeListener('update:error', handler)
+    },
+  },
 })

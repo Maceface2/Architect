@@ -37,6 +37,7 @@ import {
 } from './dispatchCapture'
 import { registerAuthIpc, setAuthMainWindow, setAuthLogoutHandler } from './auth'
 import { detectRuntimes, getDetected, rescanRuntimes, refreshCliPromptModels } from './runtimeDetection'
+import { initAutoUpdater, checkForUpdatesManual, quitAndInstall } from './updater'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
@@ -586,6 +587,12 @@ ipcMain.handle('runtime:get-detected', () => getDetected())
 ipcMain.handle('runtime:rescan', () => rescanRuntimes())
 ipcMain.handle('runtime:refresh-models', () => refreshCliPromptModels())
 
+// ── Update IPC ─────────────────────────────────────────────────────────────
+
+ipcMain.handle('update:check', () => checkForUpdatesManual())
+ipcMain.handle('update:install', () => { quitAndInstall() })
+ipcMain.handle('app:get-version', () => app.getVersion())
+
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
@@ -594,6 +601,7 @@ app.whenReady().then(async () => {
   // getDetected() call returns a populated snapshot synchronously.
   await detectRuntimes()
   createWindow()
+  if (mainWindow) initAutoUpdater(mainWindow)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

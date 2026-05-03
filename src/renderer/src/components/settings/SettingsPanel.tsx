@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Pin, X as XIcon } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
@@ -440,8 +440,93 @@ export default function SettingsPanel({
             })}
           </div>
         </Section>
+
+        <AboutSection />
       </div>
     </div>
+  )
+}
+
+type UpdateStatus =
+  | { kind: 'idle' }
+  | { kind: 'checking' }
+  | { kind: 'none' }
+  | { kind: 'available'; version: string }
+  | { kind: 'downloaded'; version: string }
+  | { kind: 'error'; message: string }
+
+function AboutSection() {
+  const [version, setVersion] = useState<string>('')
+  const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' })
+
+  useEffect(() => {
+    window.electron.update.getVersion().then(setVersion).catch(() => setVersion(''))
+    const offChecking = window.electron.update.onChecking(() => setStatus({ kind: 'checking' }))
+    const offNone = window.electron.update.onNone(() => setStatus({ kind: 'none' }))
+    const offAvailable = window.electron.update.onAvailable(info =>
+      setStatus({ kind: 'available', version: info.version }),
+    )
+    const offDownloaded = window.electron.update.onDownloaded(info =>
+      setStatus({ kind: 'downloaded', version: info.version }),
+    )
+    const offError = window.electron.update.onError(message => setStatus({ kind: 'error', message }))
+    return () => {
+      offChecking(); offNone(); offAvailable(); offDownloaded(); offError()
+    }
+  }, [])
+
+  const onCheck = async () => {
+    setStatus({ kind: 'checking' })
+    const result = await window.electron.update.check()
+    if (!result.ok) setStatus({ kind: 'error', message: result.error ?? 'Update check failed.' })
+  }
+
+  const onInstall = () => { void window.electron.update.install() }
+
+  const statusLine = (() => {
+    switch (status.kind) {
+      case 'checking': return 'Checking for updates…'
+      case 'none': return "You're up to date."
+      case 'available': return `Update available — downloading v${status.version}…`
+      case 'downloaded': return `Update v${status.version} downloaded — restart to install.`
+      case 'error': return `Update error: ${status.message}`
+      default: return null
+    }
+  })()
+
+  return (
+    <Section title="About" hint="Architect auto-checks for updates in the background and installs them on quit.">
+      <div className="flex items-center justify-between gap-3">
+        <div>
+          <p className="text-[12px] font-medium text-fg-muted">
+            Architect <span className="font-mono text-fg-subtle">v{version || '…'}</span>
+          </p>
+          {statusLine && (
+            <p className={`mt-0.5 text-[11px] leading-relaxed ${status.kind === 'error' ? 'text-amber-300' : 'text-fg-subtle'}`}>
+              {statusLine}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center gap-2 flex-shrink-0">
+          {status.kind === 'downloaded' ? (
+            <button
+              onClick={onInstall}
+              className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            >
+              Restart to install
+            </button>
+          ) : (
+            <button
+              onClick={onCheck}
+              disabled={status.kind === 'checking'}
+              className="px-3 py-1.5 text-xs font-medium text-fg-muted border border-white/10 rounded hover:text-fg hover:border-white/30 disabled:opacity-50 transition-colors"
+            >
+              {status.kind === 'checking' ? 'Checking…' : 'Check for updates'}
+            </button>
+          )}
+        </div>
+      </div>
+    </Section>
   )
 }
 

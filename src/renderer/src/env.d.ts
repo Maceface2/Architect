@@ -253,6 +253,17 @@ interface ElectronAPI {
       }) => void,
     ) => () => void
   }
+  update: {
+    check: () => Promise<{ ok: boolean; error?: string }>
+    install: () => Promise<void>
+    getVersion: () => Promise<string>
+    onChecking: (cb: () => void) => () => void
+    onAvailable: (cb: (info: { version: string; releaseNotes?: string }) => void) => () => void
+    onNone: (cb: () => void) => () => void
+    onProgress: (cb: (progress: { percent: number; bytesPerSecond: number }) => void) => () => void
+    onDownloaded: (cb: (info: { version: string }) => void) => () => void
+    onError: (cb: (message: string) => void) => () => void
+  }
 }
 
 declare global {
