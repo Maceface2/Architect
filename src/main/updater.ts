@@ -8,25 +8,38 @@ let initialized = false
 let recheckTimer: ReturnType<typeof setInterval> | null = null
 let downloadedVersion: string | null = null
 
-function send(window: BrowserWindow, channel: string, payload?: unknown) {
-  if (window.isDestroyed()) return
-  window.webContents.send(channel, payload)
+type Snapshot = { channel: string; payload?: unknown }
+const latestByChannel = new Map<string, Snapshot>()
+
+function broadcast(channel: string, payload?: unknown) {
+  latestByChannel.set(channel, { channel, payload })
+  for (const win of BrowserWindow.getAllWindows()) {
+    if (win.isDestroyed()) continue
+    win.webContents.send(channel, payload)
+  }
 }
 
-function attachListeners(window: BrowserWindow) {
-  autoUpdater.on('checking-for-update', () => send(window, 'update:checking'))
+function replayTo(window: BrowserWindow) {
+  if (window.isDestroyed()) return
+  for (const { channel, payload } of latestByChannel.values()) {
+    window.webContents.send(channel, payload)
+  }
+}
+
+function attachListeners() {
+  autoUpdater.on('checking-for-update', () => broadcast('update:checking'))
 
   autoUpdater.on('update-available', (info) => {
-    send(window, 'update:available', {
+    broadcast('update:available', {
       version: info.version,
       releaseNotes: typeof info.releaseNotes === 'string' ? info.releaseNotes : undefined,
     })
   })
 
-  autoUpdater.on('update-not-available', () => send(window, 'update:none'))
+  autoUpdater.on('update-not-available', () => broadcast('update:none'))
 
   autoUpdater.on('download-progress', (progress) => {
-    send(window, 'update:progress', {
+    broadcast('update:progress', {
       percent: progress.percent,
       bytesPerSecond: progress.bytesPerSecond,
     })
@@ -34,16 +47,16 @@ function attachListeners(window: BrowserWindow) {
 
   autoUpdater.on('update-downloaded', (info) => {
     downloadedVersion = info.version
-    send(window, 'update:downloaded', { version: info.version })
+    broadcast('update:downloaded', { version: info.version })
   })
 
   autoUpdater.on('error', (err) => {
     const msg = err instanceof Error ? err.message : String(err)
-    send(window, 'update:error', msg)
+    broadcast('update:error', msg)
   })
 }
 
-export function initAutoUpdater(window: BrowserWindow) {
+export function initAutoUpdater() {
   if (initialized) return
   if (!app.isPackaged) return
   initialized = true
@@ -52,7 +65,11 @@ export function initAutoUpdater(window: BrowserWindow) {
   autoUpdater.autoDownload = true
   autoUpdater.autoInstallOnAppQuit = true
 
-  attachListeners(window)
+  attachListeners()
+
+  app.on('browser-window-created', (_event, win) => {
+    win.webContents.on('did-finish-load', () => replayTo(win))
+  })
 
   setTimeout(() => {
     autoUpdater.checkForUpdates().catch((err) => {

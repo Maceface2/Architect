@@ -600,8 +600,8 @@ app.whenReady().then(async () => {
   // Pre-warm the runtime cache before the renderer mounts so its first
   // getDetected() call returns a populated snapshot synchronously.
   await detectRuntimes()
+  initAutoUpdater()
   createWindow()
-  if (mainWindow) initAutoUpdater(mainWindow)
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })
