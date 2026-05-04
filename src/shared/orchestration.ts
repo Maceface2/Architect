@@ -7,10 +7,16 @@
 export type OrchestrationKind =
   | 'dispatch-started'
   | 'task-dispatched'
+  | 'task-queued'                  // assignment received but waiting on dependsOn upstreams
+  | 'task-released'                // queued task's dependsOn satisfied; now dispatched
   | 'task-superseded'
   | 'task-retried'
   | 'task-exhausted'
   | 'task-answered'
+  | 'task-cancelled'               // conductor emitted {type:'cancel'} for this task
+  | 'queued-task-auto-failed'      // queued task's upstream failed/cancelled before it could release
+  | 'queued-task-resume-dropped'   // queued task lost on resume (completedZones starts cold)
+  | 'cancel-rejected'              // {type:'cancel'} targeted unknown zone or no current task
   | 'all-done-detected'
   | 'conductor-decision'
   | 'assign-rejected'

@@ -40,6 +40,14 @@ export function recordHelperPath(projectDir: string, dispatchId: string): string
 //   "$ARCHITECT_RECORD" <kind> <content> --task <taskId>
 //   "$ARCHITECT_RECORD" <kind> <content> --task <taskId> --structured <json>
 //   "$ARCHITECT_RECORD" <kind> <content> --structured <json>
+//   "$ARCHITECT_RECORD" <kind> <content> --structured-file <path>
+//   "$ARCHITECT_RECORD" <kind> <content> --structured-file -    # JSON from stdin
+//
+// --structured vs --structured-file: the inline form takes the JSON as a
+// single argv string, which trips shell quoting once the JSON contains
+// nested quotes or spans multiple lines. Use --structured-file (with a
+// heredoc'd file or stdin) for any non-trivial decision payload — that's
+// the recommended path the conductor prompt teaches.
 //
 // CONTENT is capped at 8 KB (CONTENT_BYTE_CAP). Oversized content is
 // truncated with a `…[truncated]` marker so the line still parses; the
@@ -48,12 +56,12 @@ export function recordHelperPath(projectDir: string, dispatchId: string): string
 const SCRIPT_BODY = `#!/bin/sh
 # Architect activity-log record helper. Generated per dispatch.
 # Usage:
-#   record <kind> <content> [--task <taskId>] [--structured <json>]
+#   record <kind> <content> [--task <taskId>] [--structured <json> | --structured-file <path|->]
 # Required env: ARCHITECT_PARTICIPANT_ID, ARCHITECT_ACTIVITY_LOG
 set -e
 
 if [ $# -lt 2 ]; then
-  echo "record: usage: record <kind> <content> [--task <taskId>] [--structured <json>]" >&2
+  echo "record: usage: record <kind> <content> [--task <taskId>] [--structured <json> | --structured-file <path|->]" >&2
   exit 2
 fi
 
@@ -62,6 +70,7 @@ CONTENT="$2"
 shift 2
 TASK_ID=""
 STRUCTURED=""
+STRUCTURED_FILE=""
 while [ $# -gt 0 ]; do
   case "$1" in
     --task)
@@ -70,10 +79,32 @@ while [ $# -gt 0 ]; do
     --structured)
       [ $# -ge 2 ] || { echo "record: --structured needs an argument" >&2; exit 2; }
       STRUCTURED="$2"; shift 2 ;;
+    --structured-file)
+      [ $# -ge 2 ] || { echo "record: --structured-file needs a path (or - for stdin)" >&2; exit 2; }
+      STRUCTURED_FILE="$2"; shift 2 ;;
     *)
       echo "record: unknown arg: $1" >&2; exit 2 ;;
   esac
 done
+
+if [ -n "$STRUCTURED" ] && [ -n "$STRUCTURED_FILE" ]; then
+  echo "record: --structured and --structured-file are mutually exclusive" >&2
+  exit 2
+fi
+
+# Materialize --structured-file into the same in-memory STRUCTURED variable
+# the encoder consumes, so the python/jq branches below stay path-agnostic.
+if [ -n "$STRUCTURED_FILE" ]; then
+  if [ "$STRUCTURED_FILE" = "-" ]; then
+    STRUCTURED="$(cat)"
+  else
+    if [ ! -r "$STRUCTURED_FILE" ]; then
+      echo "record: --structured-file path not readable: $STRUCTURED_FILE" >&2
+      exit 2
+    fi
+    STRUCTURED="$(cat "$STRUCTURED_FILE")"
+  fi
+fi
 
 : "\${ARCHITECT_PARTICIPANT_ID:?ARCHITECT_PARTICIPANT_ID not set}"
 : "\${ARCHITECT_ACTIVITY_LOG:?ARCHITECT_ACTIVITY_LOG not set}"

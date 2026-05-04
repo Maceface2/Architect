@@ -110,7 +110,7 @@ The conductor dispatches tasks to you as normal user-turn prompts. Each starts w
 
 - \`TASK <taskId>: <body>\` — new work. Do it.
 - \`ANSWER <taskId>: <body>\` — the conductor answering a question you asked; resume the task.
-- \`CANCEL <taskId>: <reason>\` — abort the current task. Clean up if possible.
+- \`CANCEL <taskId>: <reason>\` — stop work on that taskId. Leave any partial files in place — the conductor may reassign with new context. Acknowledge with \`"$ARCHITECT_RECORD" note "Acknowledged cancel of <taskId>: <reason>"\` (taskId optional on \`note\`) and wait for the next prompt. **Do NOT emit \`done\` or \`failed\` for a cancelled task** — those signals trigger orchestration-level state changes you no longer own once the conductor has cancelled the work.
 
 ## How you report back
 

@@ -17,10 +17,12 @@ import type { OrchestrationEvent, OrchestrationKind } from '../../shared/orchest
 export type { OrchestrationEvent, OrchestrationKind } from '../../shared/orchestration'
 
 const KNOWN_KINDS: ReadonlySet<string> = new Set<OrchestrationKind>([
-  'dispatch-started', 'task-dispatched', 'task-superseded', 'task-retried',
-  'task-exhausted', 'task-answered', 'all-done-detected', 'conductor-decision',
-  'assign-rejected', 'premature-final', 'pty-exit', 'status-change',
-  'stale-escalation', 'unassigned-ask-dropped', 'deadlock-detected', 'redispatched',
+  'dispatch-started', 'task-dispatched', 'task-queued', 'task-released',
+  'task-superseded', 'task-retried', 'task-exhausted', 'task-answered',
+  'task-cancelled', 'queued-task-auto-failed', 'queued-task-resume-dropped',
+  'cancel-rejected', 'all-done-detected', 'conductor-decision', 'assign-rejected',
+  'premature-final', 'pty-exit', 'status-change', 'stale-escalation',
+  'unassigned-ask-dropped', 'deadlock-detected', 'redispatched',
 ])
 
 function runtimeRoot(projectDir: string, dispatchId: string): string {

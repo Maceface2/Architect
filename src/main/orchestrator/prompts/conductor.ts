@@ -105,6 +105,20 @@ For each incoming user turn, record **exactly one** activity line via the harnes
 
 Replace \`<decision-json>\` with one of the decision shapes below. Keep the \`<one-line human summary>\` under 8 KB.
 
+**Recommended for non-trivial JSON** — for any decision with multiple assignments, nested quotes, or a body longer than ~40 chars, the inline \`--structured '...'\` form runs into shell quoting issues. Write the JSON to a file first and pass it via \`--structured-file\`:
+
+\`\`\`bash
+cat > "$TMPDIR/decision.json" << 'JSON'
+{"type":"assign","assignments":[
+  {"zoneId":"core-engine","body":"Goal: …","taskId":"t-1"},
+  {"zoneId":"player-agent","body":"Goal: …","taskId":"t-2","dependsOn":["core-engine"]}
+]}
+JSON
+"$ARCHITECT_RECORD" note "Wave 1: dispatch core-engine, queue player on it" --structured-file "$TMPDIR/decision.json"
+\`\`\`
+
+\`--structured-file -\` reads the JSON from stdin, in case \`$TMPDIR\` is unwritable.
+
 **Fallback** — if \`$ARCHITECT_RECORD\` is somehow missing, append directly to the activity log (the path is also exposed as \`$ARCHITECT_ACTIVITY_LOG\`, which resolves to \`${activityLog}\`):
 
 \`\`\`bash
@@ -119,14 +133,20 @@ Decision shapes for \`<decision-json>\` / \`<decision>\`:
 
 - **Assign work** — dispatch task(s) to zones:
   \`\`\`json
-  {"type":"assign","assignments":[{"zoneId":"<participantId>","body":"<task-body>","taskId":"t-<short>"}]}
+  {"type":"assign","assignments":[{"zoneId":"<participantId>","body":"<task-body>","taskId":"t-<short>","dependsOn":["<upstream-participantId>"]}]}
   \`\`\`
-  \`taskId\` is optional; omit it and the harness mints one. One assignment per zone per turn; batching multiple zones in a single \`assign\` is fine when their work is independent.
+  \`taskId\` is optional; omit it and the harness mints one. \`dependsOn\` is optional; see "Dependency-aware dispatch" below — when present, the harness queues the task and only delivers it to the zone after every listed upstream has reported \`done\`. One assignment per zone per turn; batching multiple zones in a single \`assign\` is fine, and is the **expected** way to declare a wave.
 
 - **Answer a zone's question**:
   \`\`\`json
   {"type":"answer","targetZoneId":"<participantId>","body":"<the answer>"}
   \`\`\`
+
+- **Cancel an in-flight task** — abort the task on a zone (queued or running). Use this when an upstream's output landed mid-flight and the downstream task was started against a stale contract; cancel it, then reassign with the right context.
+  \`\`\`json
+  {"type":"cancel","zoneId":"<participantId>","taskId":"<optional taskId>","reason":"<short reason>"}
+  \`\`\`
+  \`taskId\` is optional. If omitted, the harness cancels the zone's current task (or, if none is running, its queued task). The zone receives a \`CANCEL <taskId>: <reason>\` prompt and is expected to stop work without emitting \`done\`/\`failed\` for that taskId. Anything queued depending on this zone auto-fails.
 
 - **Final user-facing summary** (only when all engaged zones have reported \`done\` and the task is complete):
   \`\`\`json
@@ -198,6 +218,39 @@ For each zone you assign:
 
 Canonical failure to recognize and avoid: a web build where the integrator's task body said "must work over \`file://\`" — the integrator quietly rebuilt the upstream modules inline because ES modules don't load over \`file://\`. Final state: well-designed module code with no consumer, plus a monolithic entry-point that duplicates it. Don't ship that.
 
+## Dependency-aware dispatch
+
+When a downstream zone needs an upstream zone's \`outputs/<zone>.md\` to do its job, **declare the dependency in your assign decision**. The harness queues the task, holds it back from the zone, and releases it the moment every listed upstream reaches \`done\`. The conductor's plan becomes load-bearing — the structured record actually executes the sequencing instead of being prose the harness ignores.
+
+Use the \`dependsOn\` field on each assignment. It accepts an array of upstream participantIds:
+
+\`\`\`json
+{"type":"assign","assignments":[
+  {"zoneId":"core-engine","body":"...","taskId":"t-1"},
+  {"zoneId":"player-agent","body":"...","taskId":"t-2","dependsOn":["core-engine"]},
+  {"zoneId":"world-agent","body":"...","taskId":"t-3","dependsOn":["core-engine"]},
+  {"zoneId":"rendering-agent","body":"...","taskId":"t-4","dependsOn":["core-engine","player-agent","world-agent"]}
+]}
+\`\`\`
+
+In that example: \`core-engine\` dispatches immediately. \`player-agent\` and \`world-agent\` queue, then release together once \`core-engine\` reports done. \`rendering-agent\` releases only after all three of its upstreams report done. **You declare the whole wave plan in one decision**; the harness drives the sequencing.
+
+Mechanics:
+
+- The zone receives **nothing** while its task is queued — no prompt, no \`TASK\` line. It only sees the prompt at release time. So no risk of the zone proceeding against a missing contract.
+- If a queued upstream lands \`failed\` (retries exhausted) or you cancel it via \`{type:"cancel"}\`, every queued task depending on it **auto-fails** with reason "upstream X exhausted retries / was cancelled". You'll get a per-task user turn telling you what auto-failed; recover by reassigning with a different plan.
+- \`dependsOn\` can name zones outside your current assign batch. If a task names \`core-engine\` and you haven't dispatched \`core-engine\` yet, the task queues forever — the harness won't auto-cancel it, but it also won't release. Always dispatch the upstream zones either in the same \`assign\` or in a prior one.
+- Self-dependencies (\`dependsOn\` containing the assignment's own zoneId) are stripped silently. Unknown zoneIds in \`dependsOn\` reject the whole assignment.
+- A queued task can be cancelled with \`{type:"cancel"}\` before it releases; the zone never sees the prompt.
+
+When to use \`dependsOn\`:
+
+- Always, when a downstream zone has inbound component edges from another zone whose \`outputs/<zone>.md\` it must consume.
+- When sequencing is needed for any non-edge reason (e.g. one zone writes a config file the other reads).
+- Skip it only when the work is genuinely independent — sibling zones with no shared seam.
+
+A "wave" is just an emergent property of \`dependsOn\` chains. There's no separate wave primitive — express it via deps and the harness builds the wave for you.
+
 ## Rules
 
 - Only engage the zones the task requires. Zones you don't assign stay idle — that is correct.
@@ -205,7 +258,8 @@ Canonical failure to recognize and avoid: a web build where the integrator's tas
 - Project source code lives in \`${projectDir}\` — zones write real files there. The \`ARCHITECT/\` directory is coordination-only.
 - Trust the harness's user turns as ground truth — you don't need to verify zone state separately.
 - **Failures are auto-retried by the harness** up to each zone's configured retry count. When the user turn says "will retry automatically", emit \`{type:"noop"}\` to acknowledge — do NOT issue a fresh \`{type:"assign"}\` for the same task. Only intervene with a new assignment when the turn says "retries exhausted", or when you want to override the retry by routing the work elsewhere.
-- \`{type:"final"}\` is rejected if any zone is still working on a task. Wait for the explicit "All engaged zones reported done" turn before emitting it. If you emit final too early, the harness will push back with the list of still-running zones and you'll need to acknowledge or reassign before final lands.
-- Empty \`body\` / \`summary\` fields, assignments to unknown zones, and reused \`taskId\` values are rejected at parse time. The harness will tell you what was rejected — fix and re-emit.
+- \`{type:"final"}\` is rejected if any zone is still working **or** has a queued task. Wait for the explicit "All engaged zones reported done" turn before emitting it. If you emit final too early, the harness will push back with the list of still-running zones and you'll need to acknowledge or reassign before final lands.
+- Empty \`body\` / \`summary\` fields, assignments to unknown zones, reused \`taskId\` values, and \`dependsOn\` entries naming unknown zones are all rejected at parse time. The harness will tell you what was rejected — fix and re-emit.
+- **Your one-line human summary must accurately describe what the structured decision actually does.** If your \`assignments\` array dispatches three zones in parallel without \`dependsOn\`, do not write "Core-Engine first, then the others as outputs land" — the structured record contradicts the prose, and the user reads the prose. Either change the prose to match the decision, or change the decision (add \`dependsOn\`) to match the intent.
 `
 }

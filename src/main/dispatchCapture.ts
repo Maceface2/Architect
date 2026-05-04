@@ -10,16 +10,24 @@ export interface DispatchZoneSession {
 }
 
 // A task that was in-flight at dispatch teardown. Re-delivered to the zone
-// on resume via pty.write. Completed tasks are not persisted here — they
-// live in the zone's activity log.
+// on resume via pty.write. Completed / cancelled tasks are not persisted
+// here — they live in the zone's activity log.
+//
+// `queued` tasks (waiting on dependsOn upstreams) are persisted so the
+// resume path can surface "your old plan was lost" to the conductor with
+// full context, but they are NOT auto-redispatched: completedZones starts
+// empty after a fresh scheduler comes up.
 export interface PendingTask {
   taskId: string
   zoneId: string
   participantId: string
   body: string
-  status: 'pending' | 'dispatched' | 'in-progress' | 'blocked'
+  status: 'pending' | 'queued' | 'dispatched' | 'in-progress' | 'blocked'
   attempts: number
   startedAt?: string
+  // Populated only when status === 'queued'. Lists the participantIds the
+  // task was waiting on at the moment of teardown.
+  dependsOn?: string[]
 }
 
 export interface DispatchRecord {
@@ -44,6 +52,11 @@ export interface DispatchRecord {
   // Append-only log of parsed conductor decision JSON strings. Useful for
   // resume (to re-seed scheduler state) and for post-hoc debugging.
   conductorDecisions?: string[]
+  // ParticipantIds that have produced at least one `done` event in this
+  // dispatch. Persisted so the queue/release dep gate (`dependsOn`) keeps
+  // working across a resume — otherwise a fresh Scheduler would start
+  // with an empty completedZones set and any queued task would stall.
+  completedZones?: string[]
 }
 
 export const DISPATCH_PROTOCOL_VERSION = 5
@@ -93,6 +106,9 @@ function readDispatch(path: string): DispatchRecord | null {
       protocolVersion: typeof parsed.protocolVersion === 'number' ? parsed.protocolVersion : undefined,
       pendingTasks: Array.isArray(parsed.pendingTasks) ? parsed.pendingTasks : undefined,
       conductorDecisions: Array.isArray(parsed.conductorDecisions) ? parsed.conductorDecisions : undefined,
+      completedZones: Array.isArray(parsed.completedZones)
+        ? parsed.completedZones.filter((s): s is string => typeof s === 'string')
+        : undefined,
     }
   } catch {
     return null
@@ -158,6 +174,20 @@ export function setDispatchPendingTasks(
   const rec = getDispatch(projectDir, id)
   if (!rec) return false
   saveDispatch(projectDir, { ...rec, pendingTasks })
+  return true
+}
+
+// Rewrites the completedZones array (full set, not append). Called by the
+// scheduler each time a zone reaches `done` for the first time so a
+// resume can rehydrate the dependsOn dep gate.
+export function setDispatchCompletedZones(
+  projectDir: string,
+  id: string,
+  completedZones: string[],
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  saveDispatch(projectDir, { ...rec, completedZones })
   return true
 }
 

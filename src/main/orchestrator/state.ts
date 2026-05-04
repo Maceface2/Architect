@@ -14,11 +14,13 @@ export type ParticipantRole = 'conductor' | 'zone'
 export type TaskStatus =
   | 'none'              // no task assigned yet
   | 'pending'           // scheduled, not yet dispatched
+  | 'queued'            // assignment received, waiting on dependsOn upstreams to reach 'done'
   | 'dispatched'        // written to PTY, awaiting receipt
   | 'in-progress'       // task-received or progress line observed
   | 'blocked'           // agent emitted 'ask', waiting on answer
   | 'done'              // agent emitted 'done'
   | 'failed'            // agent emitted 'failed' or retries exhausted
+  | 'cancelled'         // conductor emitted {type:'cancel'} for this task
 
 export interface ParticipantState {
   role: ParticipantRole
@@ -94,9 +96,9 @@ function serialize(state: ParticipantState): string {
 
 function isTaskStatus(value: string): value is TaskStatus {
   return (
-    value === 'none' || value === 'pending' || value === 'dispatched' ||
-    value === 'in-progress' || value === 'blocked' || value === 'done' ||
-    value === 'failed'
+    value === 'none' || value === 'pending' || value === 'queued' ||
+    value === 'dispatched' || value === 'in-progress' || value === 'blocked' ||
+    value === 'done' || value === 'failed' || value === 'cancelled'
   )
 }
 
