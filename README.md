@@ -93,11 +93,12 @@ When you dispatch a graph, Architect translates the canvas into a filesystem-bas
 
 If the canvas has two or more selected zones, Architect uses the **v5 Conductor protocol** — live PTYs coordinated by append-only activity logs and scheduler-delivered user turns.
 
-1. Architect writes a v5 workspace: `ARCHITECT/manifest.json`, `ARCHITECT/prompts/conductor.md`, one prompt per zone, and `ARCHITECT/runtime/<dispatchId>/` activity/state/task directories.
+1. Architect writes a v5 workspace: `ARCHITECT/manifest.json`, `ARCHITECT/prompts/conductor.md`, one prompt per zone, and `ARCHITECT/runtime/<dispatchId>/` activity and state directories.
 2. It spawns each zone PTY serially so runtime session capture cannot collide. Each zone receives its role prompt and a tiny bootstrap turn that makes the CLI materialize a resumable session.
 3. It spawns one `Conductor` PTY. The Conductor receives the user task and emits one structured decision line, usually `{type:"assign"}`.
 4. The Scheduler watches each participant's JSONL activity log with `fs.watch`. When the Conductor assigns work, the Scheduler writes `TASK <taskId>: <body>` directly into the target zone PTY. Zones report back by appending `done`, `failed`, or `ask` activity lines.
-5. The Conductor decides follow-up work from the user task, zone/component context, component-edge reference context, and reported results. Canvas edges do not order zones or schedule work.
+5. The Conductor is harness-driven, not self-driving — between turns the Scheduler writes one compact summary of what happened, and the Conductor responds with one decision line. Coordinated PTYs share writer access with the user via a per-PTY user-control lock that auto-acquires on keystroke and releases on Enter (with slash-command picker detection so menu navigation doesn't release prematurely).
+6. The Conductor decides follow-up work from the user task, zone/component context, component-edge reference context, and reported results. Canvas edges do not order zones or schedule work.
 
 This gives Architect a coordination model that works across Claude, Codex, Gemini, and OpenCode. See [docs/orchestration.md](docs/orchestration.md), [docs/agent-behavior.md](docs/agent-behavior.md), and `CLAUDE.md` for the full protocol spec.
 
@@ -140,7 +141,9 @@ Each dispatch uses a project-local coordination directory:
 - `ARCHITECT/prompts/<zone>.md`: per-zone prompt
 - `ARCHITECT/runtime/<dispatchId>/activity/<participant>.jsonl`: append-only activity logs
 - `ARCHITECT/runtime/<dispatchId>/state/<participant>.kv`: scheduler-maintained participant state
-- `ARCHITECT/runtime/<dispatchId>/tasks/<taskId>.json`: scheduler task snapshots
+- `ARCHITECT/runtime/<dispatchId>/orchestration.jsonl`: merged scheduler/conductor event stream for the renderer log + swimlanes
+
+In-flight task state is held in the durable `DispatchRecord` (under `ARCHITECT/dispatches/`) rather than per-task files, so a resume can re-deliver pending work with the original `taskId`.
 
 **Durable (survives dispatches)**:
 - `ARCHITECT/outputs/<zone>.md`: narrative progress scratchpad — zones append as they work
@@ -154,9 +157,10 @@ Project code is never meant to be written into `ARCHITECT/`. Agents are told to 
 Architect standardizes a few things across all runtimes:
 
 - binary discovery from `PATH`
+- automatic CLI detection on launch (which of Claude / Codex / Gemini / OpenCode are installed) plus a "Refresh models" probe in Settings that asks each installed CLI for its supported model IDs
 - per-zone runtime selection
 - per-runtime model text
-- PTY-backed terminals in the UI
+- PTY-backed terminals in the UI, including per-terminal popout windows
 - project-root working directory
 - environment variable injection per zone
 
@@ -200,6 +204,9 @@ Main groups:
 - assistant: `assistant.start`, `assistant.stop`, `assistant.stopMode`, `assistant.listSessions`, `assistant.deleteSession`, `assistant.updateSessionSummary`
 - terminal control: `terminal.spawnShell`, `terminal.input`, `terminal.setUserControl`, `terminal.resize`, `terminal.killAll`, `terminal.close`, `terminal.popout`, `terminal.dock`
 - history/session reads: `dispatches.list`, `dispatches.delete`, `dispatches.updateSummary`
+- coordination observability: `activity.onEvent`, `activity.onState`, `activity.onDispatchComplete`, `activity.onOrchestration` — one event per appended activity-log line, per scheduler status transition, on dispatch completion, and on orchestration-stream entries respectively
+- runtime detection: `runtime.getDetected`, `runtime.rescan`, `runtime.refreshModels`
+- updates: `update.check`, `update.install`, `update.getVersion` plus `onChecking` / `onAvailable` / `onNone` / `onProgress` listeners
 
 ## Development
 
@@ -217,12 +224,21 @@ Main groups:
 
 ```bash
 npm install
-npm run dev
-npm run build
-npm run preview
+npm run dev          # electron-vite dev with hot reload
+npm run dev:noauth   # dev mode with auth gate bypassed (RENDERER_VITE_AUTH_BYPASS=1)
+npm run build        # production build
+npm run preview      # preview production build
+npm run package      # build + electron-builder package (no publish)
+npm run dmg          # build + macOS DMG
+npm run release      # build + macOS DMG/zip and publish (notarized)
+npm run release:dryrun
 ```
 
-There are currently no configured lint or test scripts.
+There are currently no configured lint or test scripts. Coverage today is manual: dispatch flows, session resume, and the user-control lock have been exercised by hand across all four runtimes. Pure scheduler logic (`parseDecision`, `computeParticipantStatus`, status transitions) is the most plausible candidate for unit tests if/when that gets prioritized.
+
+### Distribution
+
+The macOS build is signed with hardened runtime, notarized through Apple, and ships with an auto-updater (electron-updater) that broadcasts events to all open windows and replays the latest state for newly created windows. The packaged app loads its `node-pty` prebuilds from `extraResources` so PTY spawning works out of the bundle without rebuilding native modules per-machine.
 
 ## Current Limitations
 
