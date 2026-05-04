@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Release helper for Architect. Bumps version, builds + signs + notarizes,
-# publishes to Maceface2/Architect-releases, then tags the source commit.
+# publishes to architect-ide/Architect-releases, then tags the source commit.
 #
 # Usage:
 #   scripts/release.sh <version> [release-note]
@@ -85,7 +85,7 @@ ${NOTE}"
   COMMIT_CREATED=1
 fi
 
-echo "==> building, signing, notarizing, publishing to Maceface2/Architect-releases"
+echo "==> building, signing, notarizing, publishing to architect-ide/Architect-releases"
 echo "    (this takes 8-15 minutes, mostly Apple notarization)"
 # electron-builder 25 reads notarytool credentials from env vars, not package.json.
 # APPLE_KEYCHAIN_PROFILE points at the entry created via `notarytool store-credentials`.
@@ -109,4 +109,4 @@ git push origin "$TAG"
 
 echo ""
 echo "==> released v${VERSION}"
-echo "    https://github.com/Maceface2/Architect-releases/releases/tag/${TAG}"
+echo "    https://github.com/architect-ide/Architect-releases/releases/tag/${TAG}"

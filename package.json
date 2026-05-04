@@ -61,7 +61,7 @@
     "publish": [
       {
         "provider": "github",
-        "owner": "Maceface2",
+        "owner": "architect-ide",
         "repo": "Architect-releases",
         "releaseType": "release"
       }

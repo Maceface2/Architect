@@ -1,7 +1,7 @@
 import { useState, type FormEvent } from 'react'
 import { Loader2 } from 'lucide-react'
 
-const REQUEST_ACCESS_URL = 'https://architect.dev/early-access'
+const REQUEST_ACCESS_URL = 'https://architect-dev.com/early-access'
 
 export default function LoginScreen() {
   const [email, setEmail] = useState('')
