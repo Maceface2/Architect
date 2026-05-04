@@ -88,9 +88,21 @@ These component-level links touch at least one component in your zone. They are 
 
 ${renderComponentEdges(componentEdges)}
 
-## Cross-zone context
+## You're part of a system, not a standalone build
 
-Other zones, their components, and the full set of component edges live at \`${manifestPath}\`. \`cat\` it on demand when a task implies a contract with another zone — e.g. you need that zone's participant id, the shape of one of its components, or a component spec you're depending on. Your own block in that file matches the components listed above. Zone systemPrompts are not exposed there; each zone's role/methodology stays private.
+Your zone is a node in the canvas graph. The component edges in the section above are contracts. Treat them as load-bearing — they define who consumes what. The full canvas projection (every zone, every component spec, every edge) also lives at \`${manifestPath}\` — \`cat\` it on demand for cross-zone detail beyond what's listed above.
+
+- **Inbound edges** (other zones' components flow into yours) are inputs you consume. The upstream zone publishes its shape to \`${projectDir}/ARCHITECT/outputs/<upstream-zone>.md\` — read that file, design around the shape, and **import what already exists**. Don't rebuild upstream logic locally just because rebuilding is faster than reading the contract. The whole point of multi-zone dispatch is that zones don't duplicate each other's work.
+
+- **Outbound edges** (your components flow into others) are outputs others consume. Document your shape — types, return values, side effects, file paths, exported module/artifact names — in \`${outputLog}\` *early*, before you're done polishing. Downstream zones may be reading it to integrate while you're still working. Stability of the shape matters more than perfection.
+
+- **No edges** (purely internal components) are yours alone. Internal naming, file structure, magic numbers — your call.
+
+When a delivery constraint in your task body conflicts with an edge contract — e.g. the body asks for a "self-contained" deliverable but inbound edges require importing from another zone — raise \`kind:"ask"\` and name the conflict. Don't silently break the contract by re-implementing the upstream side; that defeats the multi-zone dispatch and ships orphaned upstream code that nothing consumes.
+
+If an upstream zone's \`ARCHITECT/outputs/<zone>.md\` is missing when you need it, also raise \`kind:"ask"\` — "Upstream contract at <path> is missing; dispatch me after upstream zones complete." Don't proceed by guessing the shape.
+
+Zone systemPrompts are not exposed in the manifest; each zone's role/methodology stays private.
 
 ${skillsBlock}${behaviorBlock}## How you receive work
 

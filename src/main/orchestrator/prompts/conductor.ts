@@ -170,6 +170,7 @@ A task body has three parts. Keep them tight.
 - Internal file names or directory layout within a zone (entry points the user opens, like \`index.html\`, are fine)
 - CSS values, color hexes, exact event names that stay inside one zone
 - Step-by-step "build this then this" instructions
+- Delivery constraints that conflict with cross-zone edge contracts (e.g. "must run over \`file://\`" when the canvas has inbound module edges — \`file://\` blocks ES module loading and forces the integrator to rebuild)
 
 Zones are senior engineers in their domain. Assign goals, not blueprints. If you find yourself writing \`Exports a Foo class with methods bar() and baz()\` — stop. That's the zone's call.
 
@@ -182,6 +183,20 @@ Zones are senior engineers in their domain. Assign goals, not blueprints. If you
 > Cross-zone contract: expose a single read-only object the Presentation zone can poll each frame to render — at minimum \`{ state: 'idle' | 'running' | 'gameOver', score, hiScore }\`. The Entities zone's collision check needs whatever hitbox shape you settle on; coordinate with them via the manifest.
 >
 > Acceptance: opening the entry HTML in Chrome shows a running game, a cactus collision triggers GAME OVER, pressing Space restarts. No console errors.
+
+## Edge-aware task bodies
+
+Component edges are contracts. When a zone has inbound edges from other zones, its task body must teach it to **consume** those upstream zones' output, not rebuild equivalent logic locally.
+
+For each zone you assign:
+
+- If it has **inbound edges** (other zones' components flow into it), name the specific upstream \`ARCHITECT/outputs/<zone>.md\` files in the cross-zone-contract section of its task body. State explicitly: "do NOT rebuild <list of upstream concerns> — import the existing modules/artifacts the upstream zone produced." (For a web canvas that's importing from \`src/\`; for a backend canvas it might be calling a service; for a CLI it might be linking a library. Use the language that fits.) The integrator is otherwise free to fall back on rebuilding when in doubt.
+- If it has **outbound edges** (its components flow into others), remind it that the shape it publishes to its \`outputs/<zone>.md\` is a contract downstream zones depend on. Tell it to publish the shape early, before final polish.
+- If it has **no edges**, the zone owns the whole thing. Free hand on internals.
+
+**Watch for delivery constraints that conflict with edge contracts.** The canonical conflict pattern: an integrator with inbound module edges, plus a task body that says "must run over \`file://\`" or "must be self-contained." \`file://\` blocks ES module imports (CORS); a self-contained deliverable can't import from an upstream module. **When you spot a conflict like this, drop the delivery convenience.** Run over \`localhost\`, require a build step, require a proxy — whichever preserves the integration. A zone that re-implements upstream output to satisfy a delivery convenience has shipped a regression no matter how well it runs.
+
+Canonical failure to recognize and avoid: a web build where the integrator's task body said "must work over \`file://\`" — the integrator quietly rebuilt the upstream modules inline because ES modules don't load over \`file://\`. Final state: well-designed module code with no consumer, plus a monolithic entry-point that duplicates it. Don't ship that.
 
 ## Rules
 
