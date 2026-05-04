@@ -248,12 +248,13 @@ export class Scheduler {
   // body pinned in DispatchRecord.pendingTasks so task correlation keeps
   // working.
   //
-  // Queued tasks can't be safely revived: `completedZones` starts empty on
-  // resume and the original done events have already been consumed, so the
-  // dep gate would never release. We drop them with an orchestration line +
-  // a conductor turn so the conductor sees its old plan was lost and can
-  // re-emit. Dispatched / in-progress / blocked / pending tasks redispatch
-  // exactly as before.
+  // Queued tasks aren't auto-revived even though `completedZones` rehydrates
+  // from DispatchRecord (so the dep gate could in principle release): the
+  // conductor's plan may be stale across the resume gap, and silently
+  // dispatching a task it no longer wants is worse than asking it to
+  // re-emit. We drop with an orchestration line + a conductor turn so the
+  // conductor sees the old plan was lost. Dispatched / in-progress /
+  // blocked / pending tasks redispatch exactly as before.
   redispatchTask(task: PendingTask): void {
     const zone = this.participantById.get(task.participantId)
     if (!zone) {
@@ -265,7 +266,7 @@ export class Scheduler {
         kind: 'queued-task-resume-dropped',
         participantId: task.participantId,
         taskId: task.taskId,
-        summary: `Dropped queued task ${task.taskId} on resume — completedZones starts empty`,
+        summary: `Dropped queued task ${task.taskId} on resume — conductor plan may be stale; reissue if still needed`,
         structured: { dependsOn: task.dependsOn ?? [] },
       })
       this.writeToParticipant(
@@ -761,6 +762,18 @@ export class Scheduler {
       return false
     }
     if (task.status === 'done') return false
+    // Late-done after cancel: the conductor cancelled this task and the
+    // cascade already auto-failed any downstream queued tasks. If the
+    // zone's `done` event for the cancelled task arrives a few ms later,
+    // flipping status back to `done` would silently add the zone to
+    // `completedZones` and contradict the cancellation. Drop it — the
+    // zone prompt teaches agents not to emit `done` for cancelled tasks,
+    // so this branch only catches the race where the agent's emit beat
+    // the CANCEL pty.write.
+    if (task.status === 'cancelled') {
+      console.warn(`[scheduler] ${zone.participantId} late-done dropped: taskId=${taskId} was cancelled`)
+      return false
+    }
     // Assignment guard: the task must currently belong to this zone. Drops
     // orphan-done events that name a taskId assigned to someone else.
     if (task.participantId !== zone.participantId) {
@@ -1051,10 +1064,18 @@ export class Scheduler {
   }
 
   private writeTaskToZone(task: InFlightTask): void {
+    // Re-stamp startedAt at release time. createInFlightTask set it at
+    // queue creation, which can be far in the past for tasks that waited on
+    // a slow upstream — leaving it stale would make the UI / any future
+    // duration-aware logic claim the task has been running since it was
+    // queued, when in fact the zone hasn't seen the prompt yet.
+    const now = new Date().toISOString()
+    task.startedAt = now
     task.status = 'dispatched'
     this.updateStateAtomic(task.participantId, {
       lastTaskId: task.taskId,
       lastTaskStatus: 'dispatched',
+      lastTaskStartedAt: now,
       staleAt: undefined,
     })
     this.persistPendingTasks()
