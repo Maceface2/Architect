@@ -70,6 +70,8 @@ export function buildZonePrompt(input: ZonePromptInput): string {
     : ''
   const behaviorBlock = userSystemPrompt ? `## Behavior\n\n${userSystemPrompt}\n\n` : ''
 
+  const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
+
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
 ${toolsLine}
@@ -86,13 +88,29 @@ These component-level links touch at least one component in your zone. They are 
 
 ${renderComponentEdges(componentEdges)}
 
+## You're part of a system, not a standalone build
+
+Your zone is a node in the canvas graph. The component edges in the section above are contracts. Treat them as load-bearing — they define who consumes what. The full canvas projection (every zone, every component spec, every edge) also lives at \`${manifestPath}\` — \`cat\` it on demand for cross-zone detail beyond what's listed above.
+
+- **Inbound edges** (other zones' components flow into yours) are inputs you consume. The upstream zone publishes its shape to \`${projectDir}/ARCHITECT/outputs/<upstream-zone>.md\` — read that file, design around the shape, and **import what already exists**. Don't rebuild upstream logic locally just because rebuilding is faster than reading the contract. The whole point of multi-zone dispatch is that zones don't duplicate each other's work.
+
+- **Outbound edges** (your components flow into others) are outputs others consume. Document your shape — types, return values, side effects, file paths, exported module/artifact names — in \`${outputLog}\` *early*, before you're done polishing. Downstream zones may be reading it to integrate while you're still working. Stability of the shape matters more than perfection.
+
+- **No edges** (purely internal components) are yours alone. Internal naming, file structure, magic numbers — your call.
+
+When a delivery constraint in your task body conflicts with an edge contract — e.g. the body asks for a "self-contained" deliverable but inbound edges require importing from another zone — raise \`kind:"ask"\` and name the conflict. Don't silently break the contract by re-implementing the upstream side; that defeats the multi-zone dispatch and ships orphaned upstream code that nothing consumes.
+
+If an upstream zone's \`ARCHITECT/outputs/<zone>.md\` is missing when you need it, also raise \`kind:"ask"\` — "Upstream contract at <path> is missing; dispatch me after upstream zones complete." Don't proceed by guessing the shape.
+
+Zone systemPrompts are not exposed in the manifest; each zone's role/methodology stays private.
+
 ${skillsBlock}${behaviorBlock}## How you receive work
 
 The conductor dispatches tasks to you as normal user-turn prompts. Each starts with a marker:
 
 - \`TASK <taskId>: <body>\` — new work. Do it.
 - \`ANSWER <taskId>: <body>\` — the conductor answering a question you asked; resume the task.
-- \`CANCEL <taskId>: <reason>\` — abort the current task. Clean up if possible.
+- \`CANCEL <taskId>: <reason>\` — stop work on that taskId. Leave any partial files in place — the conductor may reassign with new context. Acknowledge with \`"$ARCHITECT_RECORD" note "Acknowledged cancel of <taskId>: <reason>"\` (taskId optional on \`note\`) and wait for the next prompt. **Do NOT emit \`done\` or \`failed\` for a cancelled task** — those signals trigger orchestration-level state changes you no longer own once the conductor has cancelled the work.
 
 ## How you report back
 

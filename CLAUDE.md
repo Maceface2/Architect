@@ -38,7 +38,7 @@ Main process (src/main/)
       ├── status.ts                 — multi-signal ParticipantStatus computation
       ├── conductor.ts              — parseDecision + compose*Turn helpers for the conductor PTY
       ├── scheduler.ts              — per-task state machine, activity watchers, status tick
-      ├── workspace.ts              — setupWorkspaceV5 (manifest, prompts, state + activity + tasks skeletons)
+      ├── workspace.ts              — setupWorkspaceV5 (slim canvas manifest, prompts, state + activity skeletons)
       ├── dispatch.ts               — startDispatchV5 / resumeDispatchV5 entry points
       └── prompts/
           ├── conductor.ts          — compact conductor.md builder
@@ -75,10 +75,10 @@ The canvas exposes two launch flows, both binary-choice (start new vs. resume pr
 2. "Resume previous" tab: scrollable history of prior `DispatchRecord` entries → `dispatches.resume({ dispatchId, nodes, edges, settings })`.
 3. `terminals.ts` forwards to `orchestrator/dispatch.ts` (dynamic import, to avoid a module-load cycle with `spawnAgentSession`). Single-zone dispatches fall through to `runZone` — no conductor needed.
 4. Multi-zone path: mint `dispatchId`, call `setupWorkspaceV5(projectDir, dispatchId, …)` to lay down:
-    - `ARCHITECT/manifest.json` — graph description (protocolVersion: 5, dispatchId, per-zone entries with runtime/model/components/paths)
-    - `ARCHITECT/prompts/conductor.md` — compact conductor prompt (~60 lines)
-    - `ARCHITECT/prompts/<safe>.md` — compact per-zone prompt (~40 lines)
-    - `ARCHITECT/runtime/<dispatchId>/` (ephemeral) — `activity/`, `state/`, `tasks/`, `index.json`
+    - `ARCHITECT/manifest.json` — slim canvas projection (zones with full components incl. specs, unassigned components, component edges). Read on demand by the conductor and zones for cross-zone context. No dispatch metadata, no runtime/model wiring, no file paths, no zone systemPrompts.
+    - `ARCHITECT/prompts/conductor.md` — conductor prompt (now embeds full component specs + edge labels, not just labels)
+    - `ARCHITECT/prompts/<safe>.md` — per-zone prompt
+    - `ARCHITECT/runtime/<dispatchId>/` (ephemeral) — `activity/`, `state/`, `bin/record`, `orchestration.jsonl`
     - `ARCHITECT/outputs/<safe>.md` — progress scratchpad dirs ensured (contents preserved across dispatches)
 5. Spawn each zone PTY serially (serialized capture avoids diff-races in the shared `~/.claude/projects/<cwd>/` etc.). Each zone spawn passes its full role prompt via `adapter.composeSystemAndUser` — Claude gets `--append-system-prompt`; codex/opencode/gemini fold it into the first user prompt via `<<SYSTEM>>…<<END>>`. Each zone also receives a short **bootstrap user prompt** as its first turn (`"Acknowledge with 'Ready'. Do NOT append an activity-log line yet…"`) so the CLI materializes a session file on disk — without it, capture polling times out.
 6. Spawn the Conductor PTY. Its system prompt is `conductor.md`; its **initial user turn is the dispatch kick-off** (`composeInitialTurn(userPrompt)` = `"New dispatch. User task: <prompt>. Emit one {type:'assign'} decision line"`). Delivered via argv, same spawn-time mechanism as the zone bootstrap — no post-spawn pty.write needed.
@@ -312,7 +312,7 @@ Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral:
 
 **Ephemeral (wiped on every `startDispatch` / `resumeDispatch`)**:
 
-- `ARCHITECT/runtime/<dispatchId>/` — entire subtree (`activity/`, `state/`, `tasks/`, `index.json`). Per-dispatch subdirectory means concurrent/historical dispatches never overwrite each other. Resume wipes only its own subtree.
+- `ARCHITECT/runtime/<dispatchId>/` — entire subtree (`activity/`, `state/`, `bin/`, `orchestration.jsonl`). Per-dispatch subdirectory means concurrent/historical dispatches never overwrite each other. Resume wipes only its own subtree.
 - `ARCHITECT/prompts/conductor.md` + `<safe>.md` — regenerated per dispatch.
 
 **Resume flow** (`resumeDispatchV5`):

@@ -1229,7 +1229,11 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   const safe = (zone.data.participantId && zone.data.participantId.trim())
     || sanitize(zone.data.label)
   const base = join(opts.projectDir, 'ARCHITECT')
-  for (const dir of ['outputs', 'prompts', 'sessions', 'dispatches'].map(n => join(base, n))) {
+  // Solo flow only needs prompts/ (zone prompt below), sessions/ (session
+  // capture), and outputs/ (the soft-handoff scratchpad referenced in the
+  // prompt). dispatches/ is multi-zone-only — created on demand by
+  // dispatchCapture.saveDispatch when a real dispatch runs.
+  for (const dir of ['outputs', 'prompts', 'sessions'].map(n => join(base, n))) {
     fs.mkdirSync(dir, { recursive: true })
   }
 

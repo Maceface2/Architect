@@ -724,6 +724,9 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       idleThresholdMs: settings.harnessTimeouts.idleThresholdMs,
       staleEscalationMs: settings.harnessTimeouts.staleEscalationMs,
       statusTickMs: STATUS_TICK_MS,
+      // Rehydrate the dependsOn dep gate from the prior run so a queued
+      // task whose upstream had already completed releases on resume.
+      initialCompletedZones: record.completedZones,
     },
     buildSchedulerDeps(projectDir, pinnedDispatchId, broadcast),
   )

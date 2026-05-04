@@ -2,6 +2,7 @@ import { randomBytes } from 'crypto'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
 import {
   appendDispatchConductorDecision,
+  setDispatchCompletedZones,
   setDispatchPendingTasks,
   type PendingTask,
 } from '../dispatchCapture'
@@ -15,9 +16,11 @@ import {
 import {
   composeAllDoneTurn,
   composeAssignRejectedTurn,
+  composeCancelRejectedTurn,
   composeDeadlockTurn,
   composePrematureFinalTurn,
   composePtyExitTurn,
+  composeQueuedTaskAutoFailedTurn,
   composeStaleTurn,
   composeUnassignedAskDroppedTurn,
   composeZoneAskTurn,
@@ -60,6 +63,11 @@ export interface SchedulerConfig {
   // to the conductor. Default 10 min per the Layer 4 plan.
   staleEscalationMs: number
   statusTickMs: number
+  // ParticipantIds known to have completed at least one task in this
+  // dispatch already (loaded from DispatchRecord.completedZones on resume).
+  // Seeds the in-memory `completedZones` set so dependsOn gates that
+  // released during the prior run stay open across the resume.
+  initialCompletedZones?: string[]
 }
 
 export interface SchedulerDeps {
@@ -101,6 +109,12 @@ interface InFlightTask {
   attempts: number
   startedAt: string
   lastError?: string
+  // Populated for tasks created via {assign, dependsOn:[...]}. Tasks remain
+  // in `status:'queued'` until every entry in `dependsOn` is observed in a
+  // zone's `done` event (tracked via `completedZones`). The list does not
+  // shrink as deps complete — `unmetUpstreams(task)` re-derives the live
+  // unmet set from the current `completedZones` snapshot.
+  dependsOn?: string[]
 }
 
 export class Scheduler {
@@ -115,6 +129,12 @@ export class Scheduler {
   // ask carries `structured.blockedOn` pointing at another known participant.
   // Cleared when the zone is unblocked (answered, done, or failed).
   private readonly blockedOnByParticipant = new Map<string, string>()
+  // Participants that have produced at least one `done` event in this
+  // dispatch. Used to evaluate `dependsOn` for queued tasks. We track the
+  // participant rather than per-task because `dependsOn` references zones,
+  // not specific taskIds — once a zone reaches `done`, anything waiting on
+  // that zone is unblocked regardless of which task did it.
+  private readonly completedZones = new Set<string>()
   // Last status broadcast per participant. Used to suppress duplicate
   // status-change orchestration entries — the 15s tick re-broadcasts the
   // current status unconditionally, so without this every tick would spam
@@ -132,6 +152,23 @@ export class Scheduler {
     for (const zone of config.zones) {
       this.ptyByParticipant.set(zone.participantId, zone.zoneId)
       this.participantById.set(zone.participantId, zone)
+    }
+    if (config.initialCompletedZones) {
+      for (const pid of config.initialCompletedZones) {
+        if (this.participantById.has(pid)) this.completedZones.add(pid)
+      }
+    }
+  }
+
+  private persistCompletedZones(): void {
+    try {
+      setDispatchCompletedZones(
+        this.config.projectDir,
+        this.config.architectSessionId,
+        Array.from(this.completedZones),
+      )
+    } catch (err) {
+      console.error('[scheduler] failed to persist completedZones', err)
     }
   }
 
@@ -210,10 +247,32 @@ export class Scheduler {
   // Re-deliver an in-flight task on resume. Callers pass the same taskId/
   // body pinned in DispatchRecord.pendingTasks so task correlation keeps
   // working.
+  //
+  // Queued tasks aren't auto-revived even though `completedZones` rehydrates
+  // from DispatchRecord (so the dep gate could in principle release): the
+  // conductor's plan may be stale across the resume gap, and silently
+  // dispatching a task it no longer wants is worse than asking it to
+  // re-emit. We drop with an orchestration line + a conductor turn so the
+  // conductor sees the old plan was lost. Dispatched / in-progress /
+  // blocked / pending tasks redispatch exactly as before.
   redispatchTask(task: PendingTask): void {
     const zone = this.participantById.get(task.participantId)
     if (!zone) {
       console.warn(`[scheduler] redispatch: unknown participant ${task.participantId}`)
+      return
+    }
+    if (task.status === 'queued') {
+      this.recordOrchestration({
+        kind: 'queued-task-resume-dropped',
+        participantId: task.participantId,
+        taskId: task.taskId,
+        summary: `Dropped queued task ${task.taskId} on resume — conductor plan may be stale; reissue if still needed`,
+        structured: { dependsOn: task.dependsOn ?? [] },
+      })
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        `Queued task ${task.taskId} for ${zone.label} (\`${task.participantId}\`, was waiting on ${task.dependsOn?.join(', ') ?? '—'}) was dropped on resume. Re-issue the assignment if you still want it dispatched.`,
+      )
       return
     }
     this.recordOrchestration({
@@ -223,13 +282,15 @@ export class Scheduler {
       summary: `Re-delivering pending task to ${zone.label} on resume`,
       structured: { attempts: task.attempts, status: task.status },
     })
-    this.dispatchTaskInternal({
+    const created = this.createInFlightTask({
       zoneId: task.zoneId,
       participantId: task.participantId,
       body: task.body,
       taskId: task.taskId,
       attempts: task.attempts,
+      initialStatus: 'pending',
     })
+    if (created) this.writeTaskToZone(created)
   }
 
   // Called by dispatch.ts when a zone's PTY exits. Surfaces to the conductor
@@ -261,6 +322,9 @@ export class Scheduler {
       CONDUCTOR_PARTICIPANT_ID,
       composePtyExitTurn(zone.label, participantId, exitCode),
     )
+    // PTY exit is terminal for this zone — anything queued waiting on it
+    // can never release. Treat like a retry-exhausted failure.
+    this.cascadeAutoFail(participantId, 'failed')
   }
 
   // ─── activity handling ───────────────────────────────────────────────────
@@ -360,17 +424,87 @@ export class Scheduler {
             )
             continue
           }
-          this.dispatchTaskInternal({
-            zoneId: zone.zoneId,
-            participantId: zone.participantId,
-            body: assignment.body,
-            taskId: assignment.taskId,
-            attempts: 0,
-          })
+          // Validate dependsOn against the known participant set. The
+          // conductor names zones by participantId in dependsOn; reject any
+          // unknown id rather than silently letting the task stay queued
+          // forever.
+          const declaredDeps = assignment.dependsOn ?? []
+          let depsValid = true
+          for (const dep of declaredDeps) {
+            const depZone = this.findZoneByLoose(dep)
+            if (!depZone) {
+              this.recordOrchestration({
+                kind: 'assign-rejected',
+                participantId: zone.participantId,
+                summary: `Rejected assign to ${zone.label}: unknown dependsOn "${dep}"`,
+                structured: { reason: 'unknown-dependency', zoneId: zone.participantId, unknownDependency: dep },
+              })
+              this.writeToParticipant(
+                CONDUCTOR_PARTICIPANT_ID,
+                composeAssignRejectedTurn('unknown-dependency', {
+                  zoneId: zone.participantId,
+                  unknownDependency: dep,
+                  knownZoneIds: this.config.zones.map(z => z.participantId),
+                }),
+              )
+              depsValid = false
+              break
+            }
+          }
+          if (!depsValid) continue
+
+          // Normalize deps to participantIds (declaredDeps may contain
+          // zoneIds via findZoneByLoose tolerance). Drop self-deps and
+          // dedupe so we don't gate a zone on itself.
+          const normalizedDeps = Array.from(
+            new Set(
+              declaredDeps
+                .map(d => this.findZoneByLoose(d)?.participantId)
+                .filter((pid): pid is string => !!pid && pid !== zone.participantId),
+            ),
+          )
+          const unmet = normalizedDeps.filter(pid => !this.completedZones.has(pid))
+
+          if (unmet.length === 0) {
+            const created = this.createInFlightTask({
+              zoneId: zone.zoneId,
+              participantId: zone.participantId,
+              body: assignment.body,
+              taskId: assignment.taskId,
+              attempts: 0,
+              dependsOn: normalizedDeps.length > 0 ? normalizedDeps : undefined,
+              initialStatus: 'pending',
+            })
+            if (created) this.writeTaskToZone(created)
+          } else {
+            // Queue the task. Don't pty.write; release happens in
+            // onZoneTaskDone when the last unmet dep completes.
+            const created = this.createInFlightTask({
+              zoneId: zone.zoneId,
+              participantId: zone.participantId,
+              body: assignment.body,
+              taskId: assignment.taskId,
+              attempts: 0,
+              dependsOn: normalizedDeps,
+              initialStatus: 'queued',
+            })
+            if (created) {
+              this.recordOrchestration({
+                kind: 'task-queued',
+                participantId: zone.participantId,
+                taskId: created.taskId,
+                summary: `Queued ${created.taskId} for ${zone.label} (waiting on: ${unmet.join(', ')})`,
+                structured: { dependsOn: normalizedDeps, unmet },
+              })
+            }
+          }
         }
         break
       case 'answer':
         this.deliverAnswer(decision)
+        break
+      case 'cancel':
+        this.executeCancel(decision)
         break
       case 'final': {
         if (this.finalEmitted) break
@@ -378,9 +512,11 @@ export class Scheduler {
         // exist, push a correction turn back to the conductor and DO NOT
         // fire onDispatchComplete. Mitigates the conductor short-circuiting
         // a dispatch by saying "final" while zones are still working.
+        // Queued tasks count as in-flight — they have a declared plan that
+        // hasn't released yet.
         const stillRunning: Array<{ label: string; participantId: string; taskId: string | null }> = []
         for (const task of this.tasksByTaskId.values()) {
-          if (task.status === 'done' || task.status === 'failed') continue
+          if (isTerminalStatus(task.status)) continue
           const zone = this.participantById.get(task.participantId)
           stillRunning.push({
             label: zone?.label ?? task.participantId,
@@ -408,6 +544,97 @@ export class Scheduler {
         // Intentional no-op. Logged via appendDispatchConductorDecision.
         break
     }
+  }
+
+  private executeCancel(decision: Extract<ConductorDecision, { type: 'cancel' }>): void {
+    const zone = this.findZoneByLoose(decision.zoneId)
+    if (!zone) {
+      this.recordOrchestration({
+        kind: 'cancel-rejected',
+        summary: `Cancel rejected: unknown zone "${decision.zoneId}"`,
+        structured: { reason: 'unknown-zone', zoneId: decision.zoneId },
+      })
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        composeCancelRejectedTurn('unknown-zone', {
+          zoneId: decision.zoneId,
+          knownZoneIds: this.config.zones.map(z => z.participantId),
+        }),
+      )
+      return
+    }
+    // Resolve which task to cancel: an explicit taskId if provided and
+    // assigned to this zone, otherwise the zone's current task, otherwise
+    // any queued task for this zone. We pick the most-recent in-flight
+    // entry — terminal tasks are not cancellable.
+    let task: InFlightTask | undefined
+    if (decision.taskId) {
+      const candidate = this.tasksByTaskId.get(decision.taskId)
+      if (candidate && candidate.participantId === zone.participantId && !isTerminalStatus(candidate.status)) {
+        task = candidate
+      }
+    } else {
+      const currentId = this.currentTaskByParticipant.get(zone.participantId)
+      if (currentId) {
+        const current = this.tasksByTaskId.get(currentId)
+        if (current && !isTerminalStatus(current.status)) task = current
+      }
+      if (!task) {
+        for (const t of this.tasksByTaskId.values()) {
+          if (t.participantId === zone.participantId && t.status === 'queued') {
+            task = t
+            break
+          }
+        }
+      }
+    }
+    if (!task) {
+      this.recordOrchestration({
+        kind: 'cancel-rejected',
+        participantId: zone.participantId,
+        taskId: decision.taskId,
+        summary: `Cancel rejected: ${zone.label} has no current/queued task${decision.taskId ? ` matching ${decision.taskId}` : ''}`,
+        structured: { reason: 'no-current-task', zoneId: zone.participantId },
+      })
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        composeCancelRejectedTurn('no-current-task', {
+          zoneId: zone.participantId,
+          taskId: decision.taskId,
+          knownZoneIds: this.config.zones.map(z => z.participantId),
+        }),
+      )
+      return
+    }
+
+    const wasQueued = task.status === 'queued'
+    const reason = decision.reason ?? 'cancelled by conductor'
+    task.status = 'cancelled'
+    task.lastError = reason
+    if (this.currentTaskByParticipant.get(zone.participantId) === task.taskId) {
+      this.currentTaskByParticipant.delete(zone.participantId)
+    }
+    this.blockedOnByParticipant.delete(zone.participantId)
+    this.updateStateAtomic(zone.participantId, {
+      lastTaskStatus: 'cancelled',
+      lastTaskId: task.taskId,
+    })
+    this.persistPendingTasks()
+    this.recordOrchestration({
+      kind: 'task-cancelled',
+      participantId: zone.participantId,
+      taskId: task.taskId,
+      summary: `${zone.label} task ${task.taskId} cancelled: ${reason}`,
+      structured: { reason, wasQueued },
+    })
+    if (!wasQueued) {
+      // The zone has the task in flight — tell it to abort. Queued tasks
+      // never reached the PTY, so there's nothing to abort there.
+      this.writeToParticipant(zone.participantId, `CANCEL ${task.taskId}: ${reason}`)
+    }
+    // Cascade: any queued task waiting on this zone can no longer release
+    // (the cancelled task isn't a `done`). Auto-fail them.
+    this.cascadeAutoFail(zone.participantId, 'cancelled')
   }
 
   private findZoneByLoose(identifier: string): SchedulerZone | null {
@@ -535,6 +762,18 @@ export class Scheduler {
       return false
     }
     if (task.status === 'done') return false
+    // Late-done after cancel: the conductor cancelled this task and the
+    // cascade already auto-failed any downstream queued tasks. If the
+    // zone's `done` event for the cancelled task arrives a few ms later,
+    // flipping status back to `done` would silently add the zone to
+    // `completedZones` and contradict the cancellation. Drop it — the
+    // zone prompt teaches agents not to emit `done` for cancelled tasks,
+    // so this branch only catches the race where the agent's emit beat
+    // the CANCEL pty.write.
+    if (task.status === 'cancelled') {
+      console.warn(`[scheduler] ${zone.participantId} late-done dropped: taskId=${taskId} was cancelled`)
+      return false
+    }
     // Assignment guard: the task must currently belong to this zone. Drops
     // orphan-done events that name a taskId assigned to someone else.
     if (task.participantId !== zone.participantId) {
@@ -544,11 +783,21 @@ export class Scheduler {
     task.status = 'done'
     this.currentTaskByParticipant.delete(zone.participantId)
     this.blockedOnByParticipant.delete(zone.participantId)
+    // Mark the zone as having completed at least one task. Queued tasks
+    // gate on this set, not on per-task ids — once a zone reaches `done`,
+    // anything `dependsOn` it is unblocked.
+    const isFirstCompletion = !this.completedZones.has(zone.participantId)
+    this.completedZones.add(zone.participantId)
+    if (isFirstCompletion) this.persistCompletedZones()
     this.updateStateAtomic(zone.participantId, {
       lastTaskStatus: 'done',
       lastTaskId: taskId,
     })
     this.persistPendingTasks()
+    // Release any queued tasks whose deps are now all green. This may also
+    // fire writeTaskToZone, which will persistPendingTasks again — fine,
+    // it's idempotent.
+    this.tryReleaseQueuedTasks()
 
     // If this completion drains the in-flight set, fold the all-done signal
     // into the same conductor turn. Two back-to-back writeToParticipant
@@ -652,6 +901,9 @@ export class Scheduler {
         true,
       ),
     )
+    // Cascade auto-fail to anything queued waiting on this zone — it
+    // didn't reach `done`, so the dep gate can never close.
+    this.cascadeAutoFail(zone.participantId, 'failed')
     return true
   }
 
@@ -744,28 +996,36 @@ export class Scheduler {
 
   // ─── task dispatch ───────────────────────────────────────────────────────
 
-  private dispatchTaskInternal(opts: {
+  // Splits the prior `dispatchTaskInternal` into a "create" step and a
+  // "write to PTY" step. Queued tasks get only the create step; release
+  // happens later in `tryReleaseQueuedTasks` once their dependsOn is met,
+  // at which point we call writeTaskToZone on the existing record.
+  private createInFlightTask(opts: {
     zoneId: string
     participantId: string
     body: string
     taskId?: string
     attempts: number
-  }): string {
+    dependsOn?: string[]
+    initialStatus: 'pending' | 'queued'
+  }): InFlightTask | null {
     // Defense in depth — parseDecision rejects empty bodies, but a future
     // caller (resume path, retry path) might bypass that. Don't pty.write a
     // bare `TASK <id>:` prompt; it'd loop the zone into an empty ask.
     if (!opts.body || opts.body.trim().length === 0) {
-      console.warn(`[scheduler] dispatchTaskInternal called with empty body for ${opts.participantId}; skipping`)
-      return ''
+      console.warn(`[scheduler] createInFlightTask called with empty body for ${opts.participantId}; skipping`)
+      return null
     }
     // If the conductor reassigns a zone before its previous task reached a
     // terminal state, mark the prior task superseded so it stops counting
     // against maybeIsAllDone(). Without this, the dispatch can never reach
     // {type:'final'} — the orphaned task pins anyInFlight=true forever.
+    // A previously-queued task gets the same treatment — the conductor's
+    // new assignment overrides the old plan.
     const prevTaskId = this.currentTaskByParticipant.get(opts.participantId)
     if (prevTaskId && prevTaskId !== opts.taskId) {
       const prevTask = this.tasksByTaskId.get(prevTaskId)
-      if (prevTask && prevTask.status !== 'done' && prevTask.status !== 'failed') {
+      if (prevTask && !isTerminalStatus(prevTask.status)) {
         prevTask.status = 'failed'
         prevTask.lastError = 'superseded by conductor reassignment'
         this.recordOrchestration({
@@ -786,14 +1046,34 @@ export class Scheduler {
       zoneId: opts.zoneId,
       participantId: opts.participantId,
       body: opts.body,
-      status: 'dispatched',
+      status: opts.initialStatus,
       attempts: opts.attempts,
       startedAt: now,
     }
+    if (opts.dependsOn && opts.dependsOn.length > 0) task.dependsOn = opts.dependsOn
     this.tasksByTaskId.set(taskId, task)
     this.currentTaskByParticipant.set(opts.participantId, taskId)
     this.updateStateAtomic(opts.participantId, {
       lastTaskId: taskId,
+      lastTaskStatus: opts.initialStatus,
+      lastTaskStartedAt: now,
+      staleAt: undefined,
+    })
+    this.persistPendingTasks()
+    return task
+  }
+
+  private writeTaskToZone(task: InFlightTask): void {
+    // Re-stamp startedAt at release time. createInFlightTask set it at
+    // queue creation, which can be far in the past for tasks that waited on
+    // a slow upstream — leaving it stale would make the UI / any future
+    // duration-aware logic claim the task has been running since it was
+    // queued, when in fact the zone hasn't seen the prompt yet.
+    const now = new Date().toISOString()
+    task.startedAt = now
+    task.status = 'dispatched'
+    this.updateStateAtomic(task.participantId, {
+      lastTaskId: task.taskId,
       lastTaskStatus: 'dispatched',
       lastTaskStartedAt: now,
       staleAt: undefined,
@@ -801,28 +1081,92 @@ export class Scheduler {
     this.persistPendingTasks()
     this.recordOrchestration({
       kind: 'task-dispatched',
-      participantId: opts.participantId,
-      taskId,
-      summary: `Dispatched ${taskId} to ${this.participantLabel(opts.participantId)}`,
-      structured: opts.attempts > 0 ? { attempts: opts.attempts } : undefined,
+      participantId: task.participantId,
+      taskId: task.taskId,
+      summary: `Dispatched ${task.taskId} to ${this.participantLabel(task.participantId)}`,
+      structured: task.attempts > 0 ? { attempts: task.attempts } : undefined,
     })
-    this.writeToParticipant(opts.participantId, `TASK ${taskId}: ${opts.body}`)
-    return taskId
+    this.writeToParticipant(task.participantId, `TASK ${task.taskId}: ${task.body}`)
+  }
+
+  // Walks queued tasks and releases any whose dependsOn is now fully
+  // satisfied by `completedZones`. Called from onZoneTaskDone after a
+  // zone reaches `done`. Releases happen in insertion order so the
+  // conductor sees a stable dispatch sequence in the orchestration log.
+  private tryReleaseQueuedTasks(): void {
+    for (const task of this.tasksByTaskId.values()) {
+      if (task.status !== 'queued') continue
+      const deps = task.dependsOn ?? []
+      const stillUnmet = deps.filter(pid => !this.completedZones.has(pid))
+      if (stillUnmet.length === 0) {
+        this.recordOrchestration({
+          kind: 'task-released',
+          participantId: task.participantId,
+          taskId: task.taskId,
+          summary: `Released ${task.taskId} for ${this.participantLabel(task.participantId)} — dependsOn satisfied`,
+          structured: { dependsOn: deps },
+        })
+        this.writeTaskToZone(task)
+      }
+    }
+  }
+
+  // Auto-fail any queued task that named `deadParticipantId` in its
+  // dependsOn. Called when an upstream zone exhausts retries or has its
+  // task cancelled — those are terminal, non-`done` states, so anything
+  // waiting on them can never release.
+  private cascadeAutoFail(deadParticipantId: string, fate: 'failed' | 'cancelled'): void {
+    const deadZone = this.participantById.get(deadParticipantId)
+    const deadLabel = deadZone?.label ?? deadParticipantId
+    for (const task of this.tasksByTaskId.values()) {
+      if (task.status !== 'queued') continue
+      if (!task.dependsOn?.includes(deadParticipantId)) continue
+      task.status = 'failed'
+      task.lastError = `upstream ${deadParticipantId} ${fate === 'failed' ? 'exhausted retries' : 'was cancelled'}`
+      if (this.currentTaskByParticipant.get(task.participantId) === task.taskId) {
+        this.currentTaskByParticipant.delete(task.participantId)
+      }
+      this.updateStateAtomic(task.participantId, {
+        lastTaskStatus: 'failed',
+        lastTaskId: task.taskId,
+      })
+      this.recordOrchestration({
+        kind: 'queued-task-auto-failed',
+        participantId: task.participantId,
+        taskId: task.taskId,
+        summary: `Queued ${task.taskId} auto-failed: upstream ${deadLabel} ${fate}`,
+        structured: { deadUpstream: deadParticipantId, fate },
+      })
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        composeQueuedTaskAutoFailedTurn(
+          this.participantLabel(task.participantId),
+          task.participantId,
+          task.taskId,
+          deadLabel,
+          deadParticipantId,
+          fate,
+        ),
+      )
+    }
+    this.persistPendingTasks()
   }
 
   private persistPendingTasks(): void {
     const pending: PendingTask[] = []
     for (const task of this.tasksByTaskId.values()) {
-      if (task.status === 'done' || task.status === 'failed') continue
-      pending.push({
+      if (isTerminalStatus(task.status)) continue
+      const entry: PendingTask = {
         taskId: task.taskId,
         zoneId: task.zoneId,
         participantId: task.participantId,
         body: task.body,
-        status: task.status as 'pending' | 'dispatched' | 'in-progress' | 'blocked',
+        status: task.status as 'pending' | 'queued' | 'dispatched' | 'in-progress' | 'blocked',
         attempts: task.attempts,
         startedAt: task.startedAt,
-      })
+      }
+      if (task.dependsOn && task.dependsOn.length > 0) entry.dependsOn = task.dependsOn
+      pending.push(entry)
     }
     this.deps.onPendingTasksChanged(pending)
     try {
@@ -837,9 +1181,11 @@ export class Scheduler {
   }
 
   // "All done" = no in-flight tasks AND at least one completed task exists.
+  // Queued tasks count as in-flight (their plan hasn't released yet).
+  // Cancelled / failed tasks count as terminal.
   private isAllDone(): boolean {
     const anyInFlight = Array.from(this.tasksByTaskId.values()).some(t =>
-      t.status !== 'done' && t.status !== 'failed',
+      !isTerminalStatus(t.status),
     )
     if (anyInFlight) return false
     return Array.from(this.tasksByTaskId.values()).some(t => t.status === 'done')
@@ -981,6 +1327,14 @@ function mintTaskId(): string {
   return `t-${randomBytes(4).toString('hex')}`
 }
 
+// Tasks in any of these states are terminal — no further state transitions
+// happen, and they don't count toward "still in flight" gates (premature
+// final, all-done detection, etc.). Centralised so additions to the
+// TaskStatus union (e.g. 'cancelled' in v5) only need updating in one place.
+function isTerminalStatus(status: TaskStatus): boolean {
+  return status === 'done' || status === 'failed' || status === 'cancelled'
+}
+
 function orchestrationSummaryForDecision(decision: ConductorDecision): string {
   switch (decision.type) {
     case 'assign':
@@ -989,6 +1343,8 @@ function orchestrationSummaryForDecision(decision: ConductorDecision): string {
         : `Conductor assign × ${decision.assignments.length}`
     case 'answer':
       return `Conductor answer → ${decision.targetZoneId}`
+    case 'cancel':
+      return `Conductor cancel → ${decision.zoneId}${decision.taskId ? ` (${decision.taskId})` : ''}`
     case 'final':
       return `Conductor final: ${decision.summary}`
     case 'noop':

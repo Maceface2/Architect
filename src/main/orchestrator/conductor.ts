@@ -13,8 +13,20 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 // all-done) maps to one of the `compose*Turn` helpers below.
 
 export type ConductorDecision =
-  | { type: 'assign'; assignments: Array<{ zoneId: string; body: string; taskId?: string }> }
+  | {
+      type: 'assign'
+      assignments: Array<{
+        zoneId: string
+        body: string
+        taskId?: string
+        // participantIds the harness must observe in `done` before this task
+        // releases. Empty / absent → dispatch immediately. The conductor
+        // declares the wave plan; the scheduler queues + releases.
+        dependsOn?: string[]
+      }>
+    }
   | { type: 'answer'; targetZoneId: string; body: string }
+  | { type: 'cancel'; zoneId: string; taskId?: string; reason?: string }
   | { type: 'final'; summary: string }
   | { type: 'noop'; reason?: string }
 
@@ -36,18 +48,33 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
   let decision: ConductorDecision | null = null
   if (s.type === 'assign') {
     if (!Array.isArray(s.assignments)) return null
-    const assignments: Array<{ zoneId: string; body: string; taskId?: string }> = []
+    const assignments: Array<{ zoneId: string; body: string; taskId?: string; dependsOn?: string[] }> = []
     for (const row of s.assignments) {
       if (!row || typeof row !== 'object') return null
       const a = row as Record<string, unknown>
       if (typeof a.zoneId !== 'string' || typeof a.body !== 'string') return null
       if (a.zoneId.trim().length === 0) return null
       if (a.body.trim().length === 0) return null
-      const entry: { zoneId: string; body: string; taskId?: string } = {
+      const entry: { zoneId: string; body: string; taskId?: string; dependsOn?: string[] } = {
         zoneId: a.zoneId,
         body: a.body,
       }
       if (typeof a.taskId === 'string') entry.taskId = a.taskId
+      // dependsOn is optional. If present it must be string[] of non-empty
+      // trimmed participantIds. We accept the empty array as a no-op (same as
+      // omitting the field) so the conductor can emit `dependsOn: []` without
+      // it being treated as malformed.
+      if (a.dependsOn !== undefined) {
+        if (!Array.isArray(a.dependsOn)) return null
+        const deps: string[] = []
+        for (const dep of a.dependsOn) {
+          if (typeof dep !== 'string') return null
+          const trimmed = dep.trim()
+          if (trimmed.length === 0) return null
+          deps.push(trimmed)
+        }
+        if (deps.length > 0) entry.dependsOn = deps
+      }
       assignments.push(entry)
     }
     if (!assignments.length) return null
@@ -57,6 +84,16 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
     if (s.targetZoneId.trim().length === 0) return null
     if (s.body.trim().length === 0) return null
     decision = { type: 'answer', targetZoneId: s.targetZoneId, body: s.body }
+  } else if (s.type === 'cancel') {
+    if (typeof s.zoneId !== 'string') return null
+    if (s.zoneId.trim().length === 0) return null
+    const taskId = typeof s.taskId === 'string' && s.taskId.trim().length > 0
+      ? s.taskId
+      : undefined
+    const reason = typeof s.reason === 'string' && s.reason.trim().length > 0
+      ? s.reason
+      : undefined
+    decision = { type: 'cancel', zoneId: s.zoneId, taskId, reason }
   } else if (s.type === 'final') {
     if (typeof s.summary !== 'string') return null
     if (s.summary.trim().length === 0) return null
@@ -196,11 +233,12 @@ export function composeUnassignedAskDroppedTurn(
   return `Zone ${zoneLabel} (\`${participantId}\`) emitted an ask for task \`${claimedTaskId}\` that it was never assigned. Dropped. Question content (for context): ${question}. Reassign if needed.`
 }
 
-// An assignment was rejected. Used for unknown-zone, duplicate-task, and
-// empty-body reasons (parametric so we don't proliferate composers).
+// An assignment was rejected. Used for unknown-zone, duplicate-task,
+// empty-body, and unknown-dependency reasons (parametric so we don't
+// proliferate composers).
 export function composeAssignRejectedTurn(
-  reason: 'unknown-zone' | 'duplicate-task' | 'empty-body',
-  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[] },
+  reason: 'unknown-zone' | 'duplicate-task' | 'empty-body' | 'unknown-dependency',
+  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[]; unknownDependency?: string },
 ): string {
   switch (reason) {
     case 'unknown-zone': {
@@ -211,7 +249,43 @@ export function composeAssignRejectedTurn(
       return `Assignment with duplicate taskId \`${details.taskId ?? '?'}\` rejected — that id is already tracked. Use a new taskId or omit it.`
     case 'empty-body':
       return `Assignment to \`${details.zoneId ?? '?'}\` rejected: body was empty. Provide a concrete task description.`
+    case 'unknown-dependency': {
+      const known = details.knownZoneIds?.length ? details.knownZoneIds.join(', ') : '(none)'
+      return `Assignment to \`${details.zoneId ?? '?'}\` rejected: \`dependsOn\` references unknown zone \`${details.unknownDependency ?? '?'}\`. Known zones: ${known}. Fix the dependency list and re-emit.`
+    }
   }
+}
+
+// A cancel decision was rejected. Either the named zone doesn't exist or it
+// has no current/queued task to cancel.
+export function composeCancelRejectedTurn(
+  reason: 'unknown-zone' | 'no-current-task',
+  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[] },
+): string {
+  switch (reason) {
+    case 'unknown-zone': {
+      const known = details.knownZoneIds?.length ? details.knownZoneIds.join(', ') : '(none)'
+      return `Cancel for unknown zone \`${details.zoneId ?? '?'}\` rejected. Known zones: ${known}.`
+    }
+    case 'no-current-task':
+      return `Cancel for \`${details.zoneId ?? '?'}\` rejected: that zone has no current or queued task${details.taskId ? ` matching taskId \`${details.taskId}\`` : ''}. Nothing to cancel.`
+  }
+}
+
+// A queued task can no longer release because one of its declared upstreams
+// landed in a terminal failure state (retries exhausted, or cancelled). The
+// queued task is auto-failed; tell the conductor so it can recover or
+// reassign with a different upstream context.
+export function composeQueuedTaskAutoFailedTurn(
+  zoneLabel: string,
+  participantId: string,
+  taskId: string,
+  deadUpstreamLabel: string,
+  deadUpstreamId: string,
+  upstreamFate: 'failed' | 'cancelled',
+): string {
+  const verb = upstreamFate === 'failed' ? 'exhausted retries' : 'was cancelled'
+  return `Queued task ${taskId} for ${zoneLabel} (\`${participantId}\`) auto-failed: upstream ${deadUpstreamLabel} (\`${deadUpstreamId}\`) ${verb}, so the dependency can never be satisfied. Reassign with a different plan or emit {type:"final"} if the dispatch is dead.`
 }
 
 // Two or more zones are blocked on each other. Surface the cycle to the
