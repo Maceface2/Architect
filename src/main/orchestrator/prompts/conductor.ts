@@ -16,9 +16,22 @@ import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 //     payload. The harness tails the conductor's activity log and acts on
 //     that payload.
 
-// Minimal per-zone context the conductor needs to schedule. The harness
-// resolves runtime/model for each zone before passing them in so the
-// conductor prompt has no dependency on settings resolution.
+// Per-zone context the conductor needs to plan. The harness resolves
+// runtime/model for each zone before passing them in. Full component specs
+// are included so the conductor can write concrete task bodies referencing
+// real file paths, function names, and contracts.
+//
+// NOTE: zone systemPrompt is deliberately NOT exposed here. Conductor sees
+// the *what* (components, specs, edge labels) and zones own the *how*
+// (systemPrompt, methodology). Cross-zone reads of `manifest.json` follow
+// the same rule.
+export interface ConductorComponentContext {
+  label: string
+  tag?: string
+  description?: string
+  specs?: string
+}
+
 export interface ConductorZoneContext {
   zoneId: string
   participantId: string
@@ -26,7 +39,7 @@ export interface ConductorZoneContext {
   description?: string
   runtime: AgentRuntime
   model: string
-  componentLabels: string[]
+  components: ConductorComponentContext[]
 }
 
 export interface ConductorPromptInput {
@@ -35,7 +48,7 @@ export interface ConductorPromptInput {
   userPrompt?: string
   zones: ConductorZoneContext[]
   componentEdges: ComponentEdgeSpec[]
-  unassignedComponents: Array<{ label: string; tag?: string; description?: string }>
+  unassignedComponents: ConductorComponentContext[]
 }
 
 // Structured decision schema the harness parses from the conductor's
@@ -48,18 +61,27 @@ export interface ConductorPromptInput {
 //   { "type": "noop",     "reason"?: "..." }
 export type ConductorDecisionType = 'assign' | 'answer' | 'final' | 'noop'
 
+function renderConductorComponent(c: ConductorComponentContext): string {
+  const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`
+  const specs = (c.specs ?? '').trim()
+  return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
+}
+
 export function buildConductorPrompt(input: ConductorPromptInput): string {
   const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
 
-  const zoneLines = zones.map(zone => {
-    const components = zone.componentLabels.length ? ` · components: ${zone.componentLabels.join(', ')}` : ''
-    const desc = zone.description ? ` — ${zone.description}` : ''
-    return `- **${zone.label}** (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})${desc}${components}`
-  }).join('\n')
+  const zoneBlocks = zones.map(zone => {
+    const head = `### ${zone.label} (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})`
+    const desc = zone.description ? `\n${zone.description}` : ''
+    const components = zone.components.length
+      ? `\n\n**Components:**\n${zone.components.map(renderConductorComponent).join('\n')}`
+      : '\n\n_(no components drawn in this zone)_'
+    return `${head}${desc}${components}`
+  }).join('\n\n')
 
   const unassigned = unassignedComponents.length
-    ? `\n\n## Unassigned components (reference only, no zone owns them)\n${unassignedComponents.map(c => `- ${c.label}${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`).join('\n')}`
+    ? `\n\n## Unassigned components (reference only, no zone owns them)\n\n${unassignedComponents.map(renderConductorComponent).join('\n')}`
     : ''
 
   const task = userPrompt?.trim()
@@ -120,11 +142,15 @@ After writing the activity line, stop and wait for the next user turn. Do not ru
 
 ${task}
 
-## Zones
+## Canvas
 
-${zoneLines}${unassigned}
+The full canvas projection (zones, components with full specs, unassigned components, component edges) is also written to \`${projectDir}/ARCHITECT/manifest.json\`. The blocks below are the same content — \`cat\` the file directly only if it's been truncated from your context.
 
-## Component edges (reference only)
+### Zones
+
+${zoneBlocks}${unassigned}
+
+### Component edges (reference only)
 
 ${edgeLines}
 

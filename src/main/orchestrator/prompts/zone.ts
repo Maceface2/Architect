@@ -70,6 +70,8 @@ export function buildZonePrompt(input: ZonePromptInput): string {
     : ''
   const behaviorBlock = userSystemPrompt ? `## Behavior\n\n${userSystemPrompt}\n\n` : ''
 
+  const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
+
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
 ${toolsLine}
@@ -85,6 +87,10 @@ ${renderComponents(components)}
 These component-level links touch at least one component in your zone. They are context only; the conductor decides task ordering.
 
 ${renderComponentEdges(componentEdges)}
+
+## Cross-zone context
+
+Other zones, their components, and the full set of component edges live at \`${manifestPath}\`. \`cat\` it on demand when a task implies a contract with another zone — e.g. you need that zone's participant id, the shape of one of its components, or a component spec you're depending on. Your own block in that file matches the components listed above. Zone systemPrompts are not exposed there; each zone's role/methodology stays private.
 
 ${skillsBlock}${behaviorBlock}## How you receive work
 

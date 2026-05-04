@@ -1,8 +1,6 @@
 import fs from 'fs'
-import { join, relative } from 'path'
+import { join } from 'path'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
-import { getAgentRuntime } from '../../shared/agentRuntimes'
-import { DISPATCH_PROTOCOL_VERSION } from '../dispatchCapture'
 import { activityDir, activityLogPath, ensureActivityLog } from './activity'
 import { ensureOrchestrationLog, orchestrationLogPath } from './orchestrationLog'
 import { ensureRecordHelper } from './recordHelper'
@@ -12,8 +10,15 @@ import { buildZonePrompt, type ZoneComponentSpec } from './prompts/zone'
 import type { ComponentEdgeSpec } from './prompts/componentEdges'
 
 // v5 workspace setup. Writes everything the dispatch needs on disk before
-// any PTY is spawned: manifest, conductor + zone prompts, per-participant
-// state skeletons, and empty activity-log files so watchers can attach.
+// any PTY is spawned:
+//   - ARCHITECT/manifest.json — slim canvas projection (zones, components
+//     with full specs, unassigned components, edges). Read on demand by
+//     the conductor and zones for cross-zone context. No dispatch metadata,
+//     no runtime/model wiring, no file paths, no zone systemPrompts.
+//   - ARCHITECT/prompts/conductor.md + <participantId>.md — system prompts
+//     consumed at PTY spawn.
+//   - per-participant state skeletons + empty activity-log files so the
+//     scheduler's watchers can attach safely.
 //
 // Also cleans up v4 artifacts (ARCHITECT/mailbox/ and ARCHITECT/scripts/)
 // on first entry so a project that was previously dispatched under v4
@@ -81,7 +86,6 @@ function ensureDispatchDirs(projectDir: string, dispatchId: string): void {
   }
   fs.mkdirSync(activityDir(projectDir, dispatchId), { recursive: true })
   fs.mkdirSync(stateDir(projectDir, dispatchId), { recursive: true })
-  fs.mkdirSync(join(base, 'runtime', dispatchId, 'tasks'), { recursive: true })
   ensureOrchestrationLog(orchestrationLogPath(projectDir, dispatchId))
   // Per-dispatch helper script that handles activity-log JSON encoding via
   // python3/jq, so agents in command-rewriter environments (rtk, ssh, etc.)
@@ -89,48 +93,35 @@ function ensureDispatchDirs(projectDir: string, dispatchId: string): void {
   ensureRecordHelper(projectDir, dispatchId)
 }
 
+// Slim canvas projection. Read on demand by the conductor + zones for
+// cross-zone context. Strips dispatch metadata, runtime/model wiring,
+// file paths, agent-private fields (systemPrompt, enabledTools), and
+// canvas-only visuals (positions, colors, ids). Same shape the conductor
+// renders inline — having it on disk gives agents a redundancy path if
+// the inline embed gets truncated and gives zones cross-zone awareness
+// without bloating each zone prompt with the full canvas.
 function writeManifest(input: WorkspaceInput): void {
-  const { projectDir, dispatchId, dispatchRuntime, zones } = input
+  const { projectDir, zones } = input
   const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
   const manifest = {
-    generated: new Date().toISOString(),
-    protocolVersion: DISPATCH_PROTOCOL_VERSION,
-    dispatchId,
-    dispatchRuntime,
-    activityDir: relative(projectDir, activityDir(projectDir, dispatchId)),
-    stateDir: relative(projectDir, stateDir(projectDir, dispatchId)),
-    unassignedComponents: input.unassignedComponents.map(c => ({
-      id: c.id,
-      label: c.label,
-      category: c.category ?? null,
-      tag: c.tag ?? null,
-      description: c.description ?? '',
-      specs: c.specs ?? '',
-    })),
-    componentEdges: input.componentEdges,
     zones: zones.map(zone => ({
-      id: zone.zoneId,
-      label: zone.label,
       participantId: zone.participantId,
+      label: zone.label,
       description: zone.description ?? '',
-      runtime: zone.runtime,
-      runtimeLabel: getAgentRuntime(zone.runtime).label,
-      model: zone.model,
-      systemPrompt: zone.systemPromptOverride || null,
-      activityLog: relative(projectDir, activityLogPath(projectDir, dispatchId, zone.participantId)),
-      stateFile: relative(projectDir, stateFilePath(projectDir, dispatchId, zone.participantId)),
-      outputFile: `ARCHITECT/outputs/${zone.participantId}.md`,
-      enabledTools: zone.enabledTools,
-      componentEdges: zone.componentEdges,
       components: zone.components.map(c => ({
-        id: c.id,
         label: c.label,
-        category: c.category ?? null,
-        tag: c.tag ?? null,
+        tag: c.tag ?? '',
         description: c.description ?? '',
         specs: c.specs ?? '',
       })),
     })),
+    unassignedComponents: input.unassignedComponents.map(c => ({
+      label: c.label,
+      tag: c.tag ?? '',
+      description: c.description ?? '',
+      specs: c.specs ?? '',
+    })),
+    componentEdges: input.componentEdges,
   }
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
 }
@@ -146,7 +137,12 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
     description: zone.description,
     runtime: zone.runtime,
     model: zone.model,
-    componentLabels: zone.components.map(c => c.label),
+    components: zone.components.map(c => ({
+      label: c.label,
+      tag: c.tag,
+      description: c.description,
+      specs: c.specs,
+    })),
   }))
 
   const conductorPrompt = buildConductorPrompt({
@@ -159,6 +155,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
       label: c.label,
       tag: c.tag,
       description: c.description,
+      specs: c.specs,
     })),
   })
   fs.writeFileSync(join(promptsDir, 'conductor.md'), conductorPrompt)
