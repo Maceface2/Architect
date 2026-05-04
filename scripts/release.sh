@@ -60,11 +60,10 @@ if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
   exit 1
 fi
 
-# Sanity-check the keychain notarization profile is reachable.
-if ! security find-generic-password -s "architect-notary" >/dev/null 2>&1; then
-  echo "error: keychain profile 'architect-notary' not found. run xcrun notarytool store-credentials first." >&2
-  exit 1
-fi
+# The keychain notarization profile ('architect-notary' per package.json) can't
+# be reliably probed via `security` — notarytool stores it in a non-standard slot.
+# If the profile is missing or invalid, electron-builder will surface that during
+# the notarize step rather than as a preflight error.
 
 CURRENT_VERSION="$(node -p "require('./package.json').version")"
 
