@@ -87,6 +87,9 @@ fi
 
 echo "==> building, signing, notarizing, publishing to Maceface2/Architect-releases"
 echo "    (this takes 8-15 minutes, mostly Apple notarization)"
+# electron-builder 25 reads notarytool credentials from env vars, not package.json.
+# APPLE_KEYCHAIN_PROFILE points at the entry created via `notarytool store-credentials`.
+export APPLE_KEYCHAIN_PROFILE="architect-notary"
 if ! npm run release; then
   echo ""
   echo "error: npm run release failed." >&2
