@@ -55,11 +55,12 @@ export interface ConductorPromptInput {
 // activity log. Kept simple and schema-stable — prompts reference these
 // exact field names.
 //
+//   { "type": "plan",     "markdown": "...", "summary"?: "..." }
 //   { "type": "assign",   "assignments": [{ "zoneId": "...", "body": "...", "taskId"?: "..." }] }
 //   { "type": "answer",   "targetZoneId": "...", "body": "..." }
 //   { "type": "final",    "summary": "..." }
 //   { "type": "noop",     "reason"?: "..." }
-export type ConductorDecisionType = 'assign' | 'answer' | 'final' | 'noop'
+export type ConductorDecisionType = 'plan' | 'assign' | 'answer' | 'final' | 'noop'
 
 function renderConductorComponent(c: ConductorComponentContext): string {
   const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`
@@ -131,6 +132,12 @@ The \`from\` field must be \`"conductor"\` — the harness rejects events whose 
 
 Decision shapes for \`<decision-json>\` / \`<decision>\`:
 
+- **Record or revise the shared plan** — required before assigning work:
+  \`\`\`json
+  {"type":"plan","summary":"<short plan summary>","markdown":"<full markdown plan>"}
+  \`\`\`
+  The harness writes this to \`${projectDir}/ARCHITECT/dispatches/${dispatchId}/plan.md\` and updates \`${projectDir}/ARCHITECT/dispatches/${dispatchId}/workboard.md\`. You may emit this multiple times in the same dispatch session as the user iterates with you. Each one replaces the shared plan with a new revision.
+
 - **Assign work** — dispatch task(s) to zones:
   \`\`\`json
   {"type":"assign","assignments":[{"zoneId":"<participantId>","body":"<task-body>","taskId":"t-<short>","dependsOn":["<upstream-participantId>"]}]}
@@ -159,6 +166,19 @@ Decision shapes for \`<decision-json>\` / \`<decision>\`:
   \`\`\`
 
 After writing the activity line, stop and wait for the next user turn. Do not run additional tool calls. Do not prose at the user outside the activity line — the harness ignores everything except the appended JSON.
+
+## Shared plan requirement
+
+Before the first assignment in every multi-zone dispatch, emit a \`{type:"plan"}\` decision. This does not end planning. The user may keep prompting you in this same conductor session; when they do, revise the plan with another \`{type:"plan"}\` decision. Only emit \`{type:"assign"}\` when the current recorded plan is ready to execute.
+
+The shared plan is read by every zone before its task prompt, so include the big picture zones otherwise lack:
+
+- user goal and overall success criteria
+- which zones are engaged and why
+- each engaged zone's responsibility
+- task ordering and dependency rationale
+- cross-zone contracts and the \`ARCHITECT/outputs/<zone>.md\` files zones should read/write
+- explicit non-goals or constraints that prevent duplicate/rebuilt work
 
 ${task}
 

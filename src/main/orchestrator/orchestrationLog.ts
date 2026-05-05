@@ -20,7 +20,7 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<OrchestrationKind>([
   'dispatch-started', 'task-dispatched', 'task-queued', 'task-released',
   'task-superseded', 'task-retried', 'task-exhausted', 'task-answered',
   'task-cancelled', 'queued-task-auto-failed', 'queued-task-resume-dropped',
-  'cancel-rejected', 'all-done-detected', 'conductor-decision', 'assign-rejected',
+  'cancel-rejected', 'all-done-detected', 'conductor-decision', 'plan-recorded', 'assign-rejected',
   'premature-final', 'pty-exit', 'status-change', 'stale-escalation',
   'unassigned-ask-dropped', 'deadlock-detected', 'redispatched',
 ])

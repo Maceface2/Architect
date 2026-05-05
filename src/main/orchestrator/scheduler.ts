@@ -4,6 +4,7 @@ import {
   appendDispatchConductorDecision,
   setDispatchCompletedZones,
   setDispatchPendingTasks,
+  setDispatchPlanMetadata,
   type PendingTask,
 } from '../dispatchCapture'
 import {
@@ -18,6 +19,7 @@ import {
   composeAssignRejectedTurn,
   composeCancelRejectedTurn,
   composeDeadlockTurn,
+  composePlanRecordedTurn,
   composePrematureFinalTurn,
   composePtyExitTurn,
   composeQueuedTaskAutoFailedTurn,
@@ -31,6 +33,15 @@ import {
   type ParsedDecision,
 } from './conductor'
 import type { OrchestrationEvent } from './orchestrationLog'
+import {
+  hasSharedPlan,
+  sharedPlanPath,
+  sharedWorkboardPath,
+  writeMinimalSharedPlan,
+  writeSharedPlan,
+  writeWorkboard,
+  type WorkboardTask,
+} from './sharedPlan'
 import { readState, stateFilePath, updateState, type ParticipantState, type TaskStatus } from './state'
 import { computeParticipantStatus, shouldEscalateStale, type ParticipantStatus } from './status'
 
@@ -68,6 +79,11 @@ export interface SchedulerConfig {
   // Seeds the in-memory `completedZones` set so dependsOn gates that
   // released during the prior run stay open across the resume.
   initialCompletedZones?: string[]
+  // Shared plan metadata restored from DispatchRecord on resume. Older v5
+  // records may not have it; the scheduler can create a minimal resume plan.
+  initialPlanRevision?: number
+  userPrompt?: string
+  initialPendingTasks?: PendingTask[]
 }
 
 export interface SchedulerDeps {
@@ -143,6 +159,8 @@ export class Scheduler {
   private statusTimer: NodeJS.Timeout | null = null
   private stopped = false
   private finalEmitted = false
+  private planReady = false
+  private planRevision = 0
 
   constructor(config: SchedulerConfig, deps: SchedulerDeps) {
     this.config = config
@@ -157,6 +175,11 @@ export class Scheduler {
       for (const pid of config.initialCompletedZones) {
         if (this.participantById.has(pid)) this.completedZones.add(pid)
       }
+    }
+    const restoredRevision = config.initialPlanRevision ?? 0
+    if (restoredRevision > 0 && hasSharedPlan(config.projectDir, config.dispatchId)) {
+      this.planReady = true
+      this.planRevision = restoredRevision
     }
   }
 
@@ -207,6 +230,8 @@ export class Scheduler {
 
   start(): void {
     this.stopped = false
+    this.ensurePlanForResume()
+    this.writeWorkboardSnapshot()
     // Attach a watcher per participant. Each log already exists (workspace
     // setup touched it), so watchActivity can attach synchronously.
     const attach = (participantId: string): void => {
@@ -377,7 +402,22 @@ export class Scheduler {
   private executeDecision(parsed: ParsedDecision): void {
     const decision = parsed.decision
     switch (decision.type) {
+      case 'plan':
+        this.recordSharedPlan(decision)
+        break
       case 'assign':
+        if (!this.planReady) {
+          this.recordOrchestration({
+            kind: 'assign-rejected',
+            summary: 'Rejected assign before shared plan was recorded',
+            structured: { reason: 'plan-required' },
+          })
+          this.writeToParticipant(
+            CONDUCTOR_PARTICIPANT_ID,
+            composeAssignRejectedTurn('plan-required', {}),
+          )
+          break
+        }
         for (const assignment of decision.assignments) {
           const zone = this.findZoneByLoose(assignment.zoneId)
           if (!zone) {
@@ -648,6 +688,37 @@ export class Scheduler {
     return null
   }
 
+  private recordSharedPlan(decision: Extract<ConductorDecision, { type: 'plan' }>): void {
+    this.planRevision += 1
+    this.planReady = true
+    const planPath = writeSharedPlan(
+      this.config.projectDir,
+      this.config.dispatchId,
+      decision.markdown,
+      this.planRevision,
+    )
+    const workboardPath = this.writeWorkboardSnapshot()
+    try {
+      setDispatchPlanMetadata(this.config.projectDir, this.config.architectSessionId, {
+        planRevision: this.planRevision,
+        planPath,
+        workboardPath,
+      })
+    } catch (err) {
+      console.error('[scheduler] failed to persist plan metadata', err)
+    }
+    this.recordOrchestration({
+      kind: 'plan-recorded',
+      participantId: CONDUCTOR_PARTICIPANT_ID,
+      summary: decision.summary ?? `Shared plan revision ${this.planRevision} recorded`,
+      structured: { planRevision: this.planRevision, planPath, workboardPath },
+    })
+    this.writeToParticipant(
+      CONDUCTOR_PARTICIPANT_ID,
+      composePlanRecordedTurn(this.planRevision, planPath, workboardPath),
+    )
+  }
+
   private deliverAnswer(decision: Extract<ConductorDecision, { type: 'answer' }>): void {
     const zone = this.findZoneByLoose(decision.targetZoneId)
     if (!zone) {
@@ -855,7 +926,11 @@ export class Scheduler {
       // the zone knows to try a different approach.
       this.writeToParticipant(
         zone.participantId,
-        `TASK ${taskId} (retry ${task.attempts}/${zone.retriesAllowed}): ${task.body}\n\nPrevious attempt failed: ${event.content}\nTry a different approach.`,
+        this.composeTaskPrompt(
+          task,
+          `TASK ${taskId} (retry ${task.attempts}/${zone.retriesAllowed})`,
+          `Previous attempt failed: ${event.content}\nTry a different approach.`,
+        ),
       )
       this.writeToParticipant(
         CONDUCTOR_PARTICIPANT_ID,
@@ -1086,7 +1161,20 @@ export class Scheduler {
       summary: `Dispatched ${task.taskId} to ${this.participantLabel(task.participantId)}`,
       structured: task.attempts > 0 ? { attempts: task.attempts } : undefined,
     })
-    this.writeToParticipant(task.participantId, `TASK ${task.taskId}: ${task.body}`)
+    this.writeToParticipant(task.participantId, this.composeTaskPrompt(task, `TASK ${task.taskId}`))
+  }
+
+  private composeTaskPrompt(task: InFlightTask, heading: string, suffix?: string): string {
+    const planPath = sharedPlanPath(this.config.projectDir, this.config.dispatchId)
+    const workboardPath = sharedWorkboardPath(this.config.projectDir, this.config.dispatchId)
+    const context = [
+      'Shared dispatch context:',
+      `- Main plan: ${planPath}`,
+      `- Workboard: ${workboardPath}`,
+      `- Plan revision: ${this.planRevision}`,
+      'Read both files before editing. Use the plan for the big picture and the workboard to see what every other zone is doing.',
+    ].join('\n')
+    return `${heading}:\n${context}\n\n${task.body}${suffix ? `\n\n${suffix}` : ''}`
   }
 
   // Walks queued tasks and releases any whose dependsOn is now fully
@@ -1168,6 +1256,7 @@ export class Scheduler {
       if (task.dependsOn && task.dependsOn.length > 0) entry.dependsOn = task.dependsOn
       pending.push(entry)
     }
+    this.writeWorkboardSnapshot()
     this.deps.onPendingTasksChanged(pending)
     try {
       setDispatchPendingTasks(
@@ -1305,6 +1394,62 @@ export class Scheduler {
 
   // ─── utilities ───────────────────────────────────────────────────────────
 
+  private ensurePlanForResume(): void {
+    if (this.planReady) return
+    const pending = this.config.initialPendingTasks ?? []
+    if (pending.length === 0) return
+
+    const planPath = writeMinimalSharedPlan(
+      this.config.projectDir,
+      this.config.dispatchId,
+      this.config.userPrompt ?? '',
+      pending,
+    )
+    this.planReady = true
+    this.planRevision = 1
+    const workboardPath = this.writeWorkboardSnapshot()
+    try {
+      setDispatchPlanMetadata(this.config.projectDir, this.config.architectSessionId, {
+        planRevision: this.planRevision,
+        planPath,
+        workboardPath,
+      })
+    } catch (err) {
+      console.error('[scheduler] failed to persist generated resume plan metadata', err)
+    }
+    this.recordOrchestration({
+      kind: 'plan-recorded',
+      participantId: CONDUCTOR_PARTICIPANT_ID,
+      summary: 'Generated minimal shared plan for resumed dispatch',
+      structured: { planRevision: this.planRevision, planPath, workboardPath, generated: true },
+    })
+  }
+
+  private writeWorkboardSnapshot(): string {
+    const tasks: WorkboardTask[] = Array.from(this.tasksByTaskId.values()).map(task => ({
+      taskId: task.taskId,
+      participantId: task.participantId,
+      body: task.body,
+      status: task.status,
+      attempts: task.attempts,
+      startedAt: task.startedAt,
+      dependsOn: task.dependsOn,
+      lastError: task.lastError,
+    }))
+    return writeWorkboard({
+      projectDir: this.config.projectDir,
+      dispatchId: this.config.dispatchId,
+      planRevision: this.planRevision,
+      zones: this.config.zones.map(zone => ({
+        participantId: zone.participantId,
+        label: zone.label,
+        outputPath: `${this.config.projectDir}/ARCHITECT/outputs/${zone.participantId}.md`,
+      })),
+      tasks,
+      completedZones: Array.from(this.completedZones),
+    })
+  }
+
   private updateStateAtomic(participantId: string, patch: Partial<ParticipantState>): void {
     const path = stateFilePath(this.config.projectDir, this.config.dispatchId, participantId)
     updateState(path, patch)
@@ -1337,6 +1482,8 @@ function isTerminalStatus(status: TaskStatus): boolean {
 
 function orchestrationSummaryForDecision(decision: ConductorDecision): string {
   switch (decision.type) {
+    case 'plan':
+      return `Conductor plan${decision.summary ? `: ${decision.summary}` : ''}`
     case 'assign':
       return decision.assignments.length === 1
         ? `Conductor assign → ${decision.assignments[0].zoneId}`

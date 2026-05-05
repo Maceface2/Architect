@@ -62,6 +62,8 @@ export function buildZonePrompt(input: ZonePromptInput): string {
   const activityLog = activityLogPath(projectDir, dispatchId, participantId)
   const outputLog = join(projectDir, 'ARCHITECT', 'outputs', `${participantId}.md`)
   const architectDir = join(projectDir, 'ARCHITECT')
+  const sharedPlan = join(projectDir, 'ARCHITECT', 'dispatches', dispatchId, 'plan.md')
+  const sharedWorkboard = join(projectDir, 'ARCHITECT', 'dispatches', dispatchId, 'workboard.md')
 
   const toolsLine = toolNames.length ? `**Enabled tools:** ${toolNames.join(', ')}` : ''
 
@@ -90,7 +92,16 @@ ${renderComponentEdges(componentEdges)}
 
 ## You're part of a system, not a standalone build
 
-Your zone is a node in the canvas graph. The component edges in the section above are contracts. Treat them as load-bearing — they define who consumes what. The full canvas projection (every zone, every component spec, every edge) also lives at \`${manifestPath}\` — \`cat\` it on demand for cross-zone detail beyond what's listed above.
+Your zone is a node in the canvas graph. The conductor and harness maintain shared coordination docs for the whole dispatch:
+
+- \`${sharedPlan}\` — the big-picture plan: user goal, engaged zones, responsibilities, dependencies/order, cross-zone contracts, acceptance criteria, and non-goals/constraints.
+- \`${sharedWorkboard}\` — the live workboard: what each zone is currently doing, task status, dependencies, and output paths.
+- \`${manifestPath}\` — the architecture canvas projection: every zone, component spec, and component edge.
+- \`${outputLog}\` — your zone's cross-zone contract/progress scratchpad.
+
+Before starting any \`TASK\`, read the shared plan and workboard. Use the plan for the big picture, the workboard to understand what other zones are doing right now, the manifest for architecture detail, and \`ARCHITECT/outputs/<zone>.md\` files for concrete upstream contracts.
+
+The component edges in the section above are contracts. Treat them as load-bearing — they define who consumes what. The full canvas projection also lives at \`${manifestPath}\` — \`cat\` it on demand for cross-zone detail beyond what's listed above.
 
 - **Inbound edges** (other zones' components flow into yours) are inputs you consume. The upstream zone publishes its shape to \`${projectDir}/ARCHITECT/outputs/<upstream-zone>.md\` — read that file, design around the shape, and **import what already exists**. Don't rebuild upstream logic locally just because rebuilding is faster than reading the contract. The whole point of multi-zone dispatch is that zones don't duplicate each other's work.
 
