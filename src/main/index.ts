@@ -52,6 +52,12 @@ process.on('uncaughtException', (err) => {
 process.on('unhandledRejection', (reason) => {
   logMain('error', 'unhandledRejection', reason)
 })
+app.on('render-process-gone', (_event, _wc, details) => {
+  logMain('error', `render-process-gone reason=${details.reason} exitCode=${details.exitCode}`)
+})
+app.on('child-process-gone', (_event, details) => {
+  logMain('error', `child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
+})
 
 const iconPath = join(__dirname, '../../resources/icon.png')
 const CANVAS_FILENAME = 'architect-canvas.json'
@@ -640,12 +646,6 @@ app.whenReady().then(async () => {
   await detectRuntimes()
   initAutoUpdater()
   createWindow()
-  app.on('render-process-gone', (_event, _wc, details) => {
-    logMain('error', `render-process-gone reason=${details.reason} exitCode=${details.exitCode}`)
-  })
-  app.on('child-process-gone', (_event, details) => {
-    logMain('error', `child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
-  })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

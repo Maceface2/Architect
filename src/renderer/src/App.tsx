@@ -1787,13 +1787,6 @@ Only discuss and advise without editing the file when the user is asking for cri
               />
             )}
 
-            {bugReportOpen && (
-              <BugReportModal
-                projectDir={projectDir}
-                activeDispatchId={activeDispatchId}
-                onClose={() => setBugReportOpen(false)}
-              />
-            )}
           </div>
 
           {isFiles && (
@@ -1883,6 +1876,13 @@ Only discuss and advise without editing the file when the user is asking for cri
           </div>
         </div>
         <UserMenu />
+        {bugReportOpen && (
+          <BugReportModal
+            projectDir={projectDir}
+            activeDispatchId={activeDispatchId}
+            onClose={() => setBugReportOpen(false)}
+          />
+        )}
       </div>
       </ProjectDirProvider>
       </InterfaceSettingsProvider>
