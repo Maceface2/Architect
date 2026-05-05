@@ -57,6 +57,12 @@ export interface DispatchRecord {
   // working across a resume — otherwise a fresh Scheduler would start
   // with an empty completedZones set and any queued task would stall.
   completedZones?: string[]
+  // Shared plan/workboard metadata for multi-zone dispatches. The docs
+  // themselves live under ARCHITECT/dispatches/<dispatchId>/.
+  planRevision?: number
+  planPath?: string
+  workboardPath?: string
+  planUpdatedAt?: string
 }
 
 export const DISPATCH_PROTOCOL_VERSION = 5
@@ -109,6 +115,10 @@ function readDispatch(path: string): DispatchRecord | null {
       completedZones: Array.isArray(parsed.completedZones)
         ? parsed.completedZones.filter((s): s is string => typeof s === 'string')
         : undefined,
+      planRevision: typeof parsed.planRevision === 'number' ? parsed.planRevision : undefined,
+      planPath: typeof parsed.planPath === 'string' ? parsed.planPath : undefined,
+      workboardPath: typeof parsed.workboardPath === 'string' ? parsed.workboardPath : undefined,
+      planUpdatedAt: typeof parsed.planUpdatedAt === 'string' ? parsed.planUpdatedAt : undefined,
     }
   } catch {
     return null
@@ -202,5 +212,27 @@ export function appendDispatchConductorDecision(
   if (!rec) return false
   const existing = rec.conductorDecisions ?? []
   saveDispatch(projectDir, { ...rec, conductorDecisions: [...existing, decisionJson] })
+  return true
+}
+
+export function setDispatchPlanMetadata(
+  projectDir: string,
+  id: string,
+  metadata: {
+    planRevision: number
+    planPath: string
+    workboardPath: string
+    planUpdatedAt?: string
+  },
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  saveDispatch(projectDir, {
+    ...rec,
+    planRevision: metadata.planRevision,
+    planPath: metadata.planPath,
+    workboardPath: metadata.workboardPath,
+    planUpdatedAt: metadata.planUpdatedAt ?? new Date().toISOString(),
+  })
   return true
 }

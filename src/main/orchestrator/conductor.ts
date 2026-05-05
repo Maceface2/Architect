@@ -13,6 +13,7 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 // all-done) maps to one of the `compose*Turn` helpers below.
 
 export type ConductorDecision =
+  | { type: 'plan'; markdown: string; summary?: string }
   | {
       type: 'assign'
       assignments: Array<{
@@ -46,7 +47,15 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
   if (typeof s.type !== 'string') return null
 
   let decision: ConductorDecision | null = null
-  if (s.type === 'assign') {
+  if (s.type === 'plan') {
+    if (typeof s.markdown !== 'string') return null
+    if (s.markdown.trim().length === 0) return null
+    decision = {
+      type: 'plan',
+      markdown: s.markdown,
+      summary: typeof s.summary === 'string' && s.summary.trim().length > 0 ? s.summary : undefined,
+    }
+  } else if (s.type === 'assign') {
     if (!Array.isArray(s.assignments)) return null
     const assignments: Array<{ zoneId: string; body: string; taskId?: string; dependsOn?: string[] }> = []
     for (const row of s.assignments) {
@@ -113,7 +122,7 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
 
 export function composeInitialTurn(userPrompt: string): string {
   const trimmed = userPrompt.trim()
-  return `New dispatch. User task:\n${trimmed || '(empty — ask the user for one before assigning work)'}\n\nEmit one {type:"assign"} decision line with the initial round of assignments.`
+  return `New dispatch. User task:\n${trimmed || '(empty — ask the user for one before assigning work)'}\n\nFirst emit one {type:"plan"} decision line with a markdown plan: overall goal, engaged zones, per-zone responsibilities, dependencies/order, cross-zone contracts, acceptance criteria, and non-goals/constraints. After the harness confirms the plan was recorded, you may emit revised {type:"plan"} decisions if the user prompts changes in this same session. Only emit {type:"assign"} when the current recorded plan is ready to execute.`
 }
 
 // Plan-mode kick-off. The user wants to think through the plan with the
@@ -149,11 +158,15 @@ When you have alternatives the user should choose between (test framework, file 
 
 **Architecture canvas changes during planning.** The zones, components, and edges shown to you above are a snapshot taken when this dispatch started — and zones were spawned from that snapshot. If the discussion uncovers a structural change (a zone needs to be added/removed/renamed, a component should move to a different zone), call it out plainly and ask the user to update the canvas in the UI before giving GO. Structural changes only take effect on a fresh dispatch — the zones you have right now are fixed for this run.
 
-Iterate until the plan is solid. **Do NOT emit any \`{type:"assign"}\` or other structured activity decision yet.** Activity-log lines are reserved for after the user gives GO.
+Iterate until the plan is solid. During this conversation, respond to the user in normal prose. Do NOT emit \`{type:"assign"}\` yet.
 
 ${goSignal}
 
-When the user gives GO, emit your first \`{type:"assign"}\` activity line based on the agreed plan and proceed exactly as you would in a normal dispatch.`
+When the user gives GO, emit one \`{type:"plan"}\` activity line containing the agreed markdown plan. Wait for the harness confirmation. If the user prompts more changes in this same session, emit another \`{type:"plan"}\` revision. Only emit \`{type:"assign"}\` when the current recorded plan is ready to execute.`
+}
+
+export function composePlanRecordedTurn(planRevision: number, planPath: string, workboardPath: string): string {
+  return `Shared plan revision ${planRevision} recorded at ${planPath}. Workboard is at ${workboardPath}. You can keep planning with the user in this same dispatch and emit another {type:"plan"} revision if they request changes. When the recorded plan is ready to execute, emit one {type:"assign"} decision line for the next wave of work.`
 }
 
 export function composeZoneDoneTurn(
@@ -237,10 +250,12 @@ export function composeUnassignedAskDroppedTurn(
 // empty-body, and unknown-dependency reasons (parametric so we don't
 // proliferate composers).
 export function composeAssignRejectedTurn(
-  reason: 'unknown-zone' | 'duplicate-task' | 'empty-body' | 'unknown-dependency',
+  reason: 'plan-required' | 'unknown-zone' | 'duplicate-task' | 'empty-body' | 'unknown-dependency',
   details: { zoneId?: string; taskId?: string; knownZoneIds?: string[]; unknownDependency?: string },
 ): string {
   switch (reason) {
+    case 'plan-required':
+      return `Assignment rejected: no shared plan has been recorded yet. First emit {type:"plan", markdown:"..."} with the big-picture plan. You may revise that plan through more {type:"plan"} decisions in this same dispatch before assigning work.`
     case 'unknown-zone': {
       const known = details.knownZoneIds?.length ? details.knownZoneIds.join(', ') : '(none)'
       return `Assignment to unknown zone \`${details.zoneId ?? '?'}\` rejected. Known zones: ${known}. Reassign or emit {type:"final"}.`

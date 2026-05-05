@@ -188,6 +188,7 @@ export interface DispatchZoneSession {
 export interface DispatchRecord {
   architectSessionId: string
   architectRuntime: AgentRuntime
+  dispatchId?: string
   zoneIds: string[]
   zoneLabels: string[]
   zoneSessions: DispatchZoneSession[]
@@ -196,6 +197,11 @@ export interface DispatchRecord {
   model: string
   planMode: boolean
   timestamp: string
+  protocolVersion?: number
+  planRevision?: number
+  planPath?: string
+  workboardPath?: string
+  planUpdatedAt?: string
 }
 
 export type DispatchRequest =
