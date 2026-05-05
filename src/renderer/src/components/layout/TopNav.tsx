@@ -1,5 +1,5 @@
 import type { CSSProperties } from 'react'
-import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, RefreshCw } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, RefreshCw, Bug } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
@@ -22,6 +22,7 @@ interface TopNavProps {
   canRedo: boolean
   updateReady: boolean
   onUpdateInstall: () => void
+  onOpenBugReport: () => void
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Logs', 'Settings']
@@ -33,6 +34,7 @@ export default function TopNav({
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
   onUndo, onRedo, canUndo, canRedo,
   updateReady, onUpdateInstall,
+  onOpenBugReport,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -118,6 +120,14 @@ export default function TopNav({
           </button>
           <button onClick={onClear} className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors">
             Clear
+          </button>
+          <button
+            onClick={onOpenBugReport}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
+            title="Report a bug"
+          >
+            <Bug size={12} />
+            Report a bug
           </button>
           {updateReady && (
             <button

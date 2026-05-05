@@ -253,6 +253,17 @@ interface ElectronAPI {
       }) => void,
     ) => () => void
   }
+  bugReport: {
+    bundle: (args: {
+      userMessage: string
+      rendererLogs: string
+      projectDir: string | null
+      activeDispatchId: string | null
+      includeLogs: boolean
+    }) => Promise<string>
+    saveToFile: (args: { text: string }) => Promise<string>
+    getLogPath: () => Promise<string>
+  }
   update: {
     check: () => Promise<{ ok: boolean; error?: string }>
     install: () => Promise<void>
