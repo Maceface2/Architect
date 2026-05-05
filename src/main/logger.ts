@@ -1,21 +1,33 @@
 import fs from 'fs'
+import os from 'os'
 import path from 'path'
 import { app } from 'electron'
+import { readFileTail } from './fileTail'
 
 type LogLevel = 'info' | 'warn' | 'error'
 
 const MAX_BYTES = 1_000_000
 
-let logsDir: string | null = null
 let logPath: string | null = null
 
-function resolvePaths(): { dir: string; file: string } {
-  if (logsDir && logPath) return { dir: logsDir, file: logPath }
-  const dir = path.join(app.getPath('userData'), 'logs')
-  fs.mkdirSync(dir, { recursive: true })
-  logsDir = dir
+function resolveLogPath(): string {
+  if (logPath) return logPath
+  // app.getPath('userData') throws before app is ready; fall back to tmpdir
+  // so an exception during early imports still gets logged somewhere.
+  let dir: string
+  try {
+    dir = path.join(app.getPath('userData'), 'logs')
+  } catch {
+    dir = path.join(os.tmpdir(), 'Architect', 'logs')
+  }
+  try {
+    fs.mkdirSync(dir, { recursive: true })
+  } catch {
+    // best effort — appendFileSync will surface the failure if the dir is
+    // genuinely unwritable, and logMain swallows that.
+  }
   logPath = path.join(dir, 'main.log')
-  return { dir, file: logPath }
+  return logPath
 }
 
 function rotateIfNeeded(file: string): void {
@@ -36,7 +48,7 @@ function rotateIfNeeded(file: string): void {
 }
 
 export function logMain(level: LogLevel, msg: string, err?: unknown): void {
-  const { file } = resolvePaths()
+  const file = resolveLogPath()
   const ts = new Date().toISOString()
   let line = `[${ts}] [${level}] ${msg}`
   if (err instanceof Error) {
@@ -57,31 +69,9 @@ export function logMain(level: LogLevel, msg: string, err?: unknown): void {
 }
 
 export function getMainLogPath(): string {
-  return resolvePaths().file
+  return resolveLogPath()
 }
 
 export function readMainLogTail(maxBytes: number): string {
-  const { file } = resolvePaths()
-  let size = 0
-  try {
-    size = fs.statSync(file).size
-  } catch {
-    return ''
-  }
-  if (size === 0) return ''
-  const start = Math.max(0, size - maxBytes)
-  const fd = fs.openSync(file, 'r')
-  try {
-    const len = size - start
-    const buf = Buffer.alloc(len)
-    fs.readSync(fd, buf, 0, len, start)
-    let text = buf.toString('utf-8')
-    if (start > 0) {
-      const nl = text.indexOf('\n')
-      if (nl >= 0) text = text.slice(nl + 1)
-    }
-    return text
-  } finally {
-    fs.closeSync(fd)
-  }
+  return readFileTail(resolveLogPath(), maxBytes)
 }

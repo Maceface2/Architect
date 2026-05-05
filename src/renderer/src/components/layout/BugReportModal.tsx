@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react'
 import { Loader2, ExternalLink } from 'lucide-react'
 import { getConsoleRingBuffer } from '../../lib/consoleRingBuffer'
 
+// Opens via window.open so Electron's setWindowOpenHandler routes it to
+// shell.openExternal — no extra IPC needed for the form-launch step.
 const BUG_REPORT_FORM_URL =
   'https://docs.google.com/forms/d/e/1FAIpQLSfzN2kEodzig3m6KcYRj_JtW-mFBx7JCyDlWmrOjHm9JbWQMQ/viewform'
 
@@ -26,9 +28,10 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
 
   useEffect(() => {
     let cancelled = false
-    window.electron.bugReport.getLogPath().then((p) => {
-      if (!cancelled) setLogPath(p)
-    })
+    window.electron.bugReport
+      .getLogPath()
+      .then((p) => { if (!cancelled) setLogPath(p) })
+      .catch(() => { if (!cancelled) setLogPath(null) })
     return () => { cancelled = true }
   }, [])
 

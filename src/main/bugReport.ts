@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { readMainLogTail } from './logger'
+import { readFileTail } from './fileTail'
 
 export interface BundleArgs {
   userMessage: string
@@ -14,37 +15,17 @@ export interface BundleArgs {
 const MAIN_LOG_TAIL_BYTES = 200_000
 const PER_FILE_TAIL_BYTES = 100_000
 
-function readTail(file: string, maxBytes: number): string {
-  let size = 0
-  try {
-    size = fs.statSync(file).size
-  } catch {
-    return ''
-  }
-  if (size === 0) return ''
-  const start = Math.max(0, size - maxBytes)
-  const fd = fs.openSync(file, 'r')
-  try {
-    const len = size - start
-    const buf = Buffer.alloc(len)
-    fs.readSync(fd, buf, 0, len, start)
-    let text = buf.toString('utf-8')
-    if (start > 0) {
-      const nl = text.indexOf('\n')
-      if (nl >= 0) text = text.slice(nl + 1)
-    }
-    return text
-  } finally {
-    fs.closeSync(fd)
-  }
-}
-
 function readDispatchActivity(projectDir: string, dispatchId: string): string {
+  const runtimeRoot = path.resolve(projectDir, 'ARCHITECT', 'runtime')
+  const runtimeDir = path.resolve(runtimeRoot, dispatchId)
+  // Reject ids that escape the runtime root (e.g. "..", absolute paths).
+  const rel = path.relative(runtimeRoot, runtimeDir)
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return ''
+
   const sections: string[] = []
-  const runtimeDir = path.join(projectDir, 'ARCHITECT', 'runtime', dispatchId)
   const orchestrationFile = path.join(runtimeDir, 'orchestration.jsonl')
   if (fs.existsSync(orchestrationFile)) {
-    sections.push(`--- orchestration.jsonl (tail) ---\n${readTail(orchestrationFile, PER_FILE_TAIL_BYTES)}`)
+    sections.push(`--- orchestration.jsonl (tail) ---\n${readFileTail(orchestrationFile, PER_FILE_TAIL_BYTES)}`)
   }
   const activityDir = path.join(runtimeDir, 'activity')
   let activityFiles: string[] = []
@@ -58,7 +39,7 @@ function readDispatchActivity(projectDir: string, dispatchId: string): string {
   }
   for (const name of activityFiles) {
     const file = path.join(activityDir, name)
-    sections.push(`--- activity/${name} (tail) ---\n${readTail(file, PER_FILE_TAIL_BYTES)}`)
+    sections.push(`--- activity/${name} (tail) ---\n${readFileTail(file, PER_FILE_TAIL_BYTES)}`)
   }
   return sections.join('\n\n')
 }

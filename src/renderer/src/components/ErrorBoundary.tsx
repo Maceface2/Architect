@@ -28,7 +28,7 @@ export class ErrorBoundary extends Component<Props, State> {
     const parts = [
       `Error: ${error?.message ?? '(unknown)'}`,
       error?.stack ? `\nStack:\n${error.stack}` : '',
-      componentStack ? `\nComponent stack:${componentStack}` : '',
+      componentStack ? `\nComponent stack:\n${componentStack.replace(/^\n/, '')}` : '',
       `\nRecent console:\n${getConsoleRingBuffer()}`,
     ]
     try {

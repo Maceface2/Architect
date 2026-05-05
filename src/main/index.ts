@@ -630,7 +630,12 @@ ipcMain.handle('bugreport:bundle', (_event, args: {
 ipcMain.handle('bugreport:save-to-file', (_event, args: { text: string }) => {
   const stamp = new Date().toISOString().replace(/[:.]/g, '-')
   const file = path.join(app.getPath('downloads'), `architect-bug-report-${stamp}.txt`)
-  fs.writeFileSync(file, args.text, 'utf-8')
+  try {
+    fs.writeFileSync(file, args.text, 'utf-8')
+  } catch (err) {
+    const msg = err instanceof Error ? err.message : String(err)
+    throw new Error(`Couldn't save bug report to ${file}: ${msg}`)
+  }
   shell.showItemInFolder(file)
   return file
 })

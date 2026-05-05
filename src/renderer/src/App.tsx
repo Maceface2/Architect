@@ -1786,7 +1786,6 @@ Only discuss and advise without editing the file when the user is asking for cri
                 onSubmit={handleDispatchSubmit}
               />
             )}
-
           </div>
 
           {isFiles && (
