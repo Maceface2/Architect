@@ -38,11 +38,20 @@ import {
 import { registerAuthIpc, setAuthMainWindow, setAuthLogoutHandler } from './auth'
 import { detectRuntimes, getDetected, rescanRuntimes, refreshCliPromptModels } from './runtimeDetection'
 import { initAutoUpdater, checkForUpdatesManual, quitAndInstall } from './updater'
+import { logMain, getMainLogPath } from './logger'
+import { bundleBugReport } from './bugReport'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
 app.name = 'Architect'
 app.setName('Architect')
 process.title = 'Architect'
+
+process.on('uncaughtException', (err) => {
+  logMain('error', 'uncaughtException', err)
+})
+process.on('unhandledRejection', (reason) => {
+  logMain('error', 'unhandledRejection', reason)
+})
 
 const iconPath = join(__dirname, '../../resources/icon.png')
 const CANVAS_FILENAME = 'architect-canvas.json'
@@ -593,6 +602,35 @@ ipcMain.handle('update:check', () => checkForUpdatesManual())
 ipcMain.handle('update:install', () => { quitAndInstall() })
 ipcMain.handle('app:get-version', () => app.getVersion())
 
+// ── Bug report IPC ─────────────────────────────────────────────────────────
+
+ipcMain.handle('bugreport:bundle', (_event, args: {
+  userMessage: string
+  rendererLogs: string
+  projectDir: string | null
+  activeDispatchId: string | null
+  includeLogs: boolean
+}) => {
+  return bundleBugReport({
+    userMessage: args.userMessage,
+    rendererLogs: args.rendererLogs,
+    projectDir: args.projectDir,
+    activeDispatchId: args.activeDispatchId,
+    appVersion: app.getVersion(),
+    includeLogs: args.includeLogs,
+  })
+})
+
+ipcMain.handle('bugreport:save-to-file', (_event, args: { text: string }) => {
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const file = path.join(app.getPath('downloads'), `architect-bug-report-${stamp}.txt`)
+  fs.writeFileSync(file, args.text, 'utf-8')
+  shell.showItemInFolder(file)
+  return file
+})
+
+ipcMain.handle('bugreport:get-log-path', () => getMainLogPath())
+
 // ── App lifecycle ──────────────────────────────────────────────────────────
 
 app.whenReady().then(async () => {
@@ -602,6 +640,12 @@ app.whenReady().then(async () => {
   await detectRuntimes()
   initAutoUpdater()
   createWindow()
+  app.on('render-process-gone', (_event, _wc, details) => {
+    logMain('error', `render-process-gone reason=${details.reason} exitCode=${details.exitCode}`)
+  })
+  app.on('child-process-gone', (_event, details) => {
+    logMain('error', `child-process-gone type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`)
+  })
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()
   })

@@ -315,6 +315,19 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
+  bugReport: {
+    bundle: (args: {
+      userMessage: string
+      rendererLogs: string
+      projectDir: string | null
+      activeDispatchId: string | null
+      includeLogs: boolean
+    }) => ipcRenderer.invoke('bugreport:bundle', args) as Promise<string>,
+    saveToFile: (args: { text: string }) =>
+      ipcRenderer.invoke('bugreport:save-to-file', args) as Promise<string>,
+    getLogPath: () => ipcRenderer.invoke('bugreport:get-log-path') as Promise<string>,
+  },
+
   update: {
     check: () => ipcRenderer.invoke('update:check') as Promise<{ ok: boolean; error?: string }>,
     install: () => ipcRenderer.invoke('update:install'),
