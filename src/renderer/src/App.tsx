@@ -1653,7 +1653,7 @@ Only discuss and advise without editing the file when the user is asking for cri
       ? 'Connect two component handles'
       : null
   const defaultZoneRuntime = projectSettings.dispatchRuntime ?? DEFAULT_AGENT_RUNTIME
-  const defaultZoneModel = projectSettings.dispatchModels[defaultZoneRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[defaultZoneRuntime]
+  const defaultZoneModel = projectSettings.dispatchModels[defaultZoneRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[defaultZoneRuntime] ?? ''
 
   const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
     setProjectSettings(current => ({ ...current, ...partial }))

@@ -408,21 +408,9 @@ function bobChatsDir(cwd: string): string {
 
 function readBobSessionMeta(path: string): BobSessionMeta | null {
   try {
-    const raw = fs.readFileSync(path, 'utf-8')
-    let parsed: any = null
-    const firstNewline = raw.indexOf('\n')
-    const firstLine = firstNewline >= 0 ? raw.slice(0, firstNewline) : raw
-    try {
-      parsed = JSON.parse(firstLine)
-    } catch {
-      try {
-        parsed = JSON.parse(raw)
-      } catch {
-        return null
-      }
-    }
+    const parsed = JSON.parse(fs.readFileSync(path, 'utf-8'))
     if (typeof parsed?.sessionId !== 'string' || typeof parsed?.projectHash !== 'string') return null
-    return { id: parsed.sessionId as string, projectHash: parsed.projectHash as string }
+    return { id: parsed.sessionId, projectHash: parsed.projectHash }
   } catch {
     return null
   }

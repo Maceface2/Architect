@@ -96,9 +96,11 @@ export const AGENT_RUNTIME_MAP = Object.fromEntries(
   AGENT_RUNTIMES.map(runtime => [runtime.id, runtime])
 ) as Record<AgentRuntime, AgentRuntimeDefinition>
 
+// Values are undefined for runtimes whose CLI manages its own model
+// (supportsModelSelection=false, e.g. bob). Callers must guard.
 export const DEFAULT_MODEL_BY_RUNTIME = Object.fromEntries(
   AGENT_RUNTIMES.map(runtime => [runtime.id, runtime.defaultModel])
-) as Record<AgentRuntime, string>
+) as Record<AgentRuntime, string | undefined>
 
 export function isAgentRuntime(value: unknown): value is AgentRuntime {
   return typeof value === 'string' && value in AGENT_RUNTIME_MAP

@@ -838,7 +838,7 @@ export function getZoneRuntime(zone: ZoneGraphNode, settings: ProjectSettings): 
 }
 
 export function getZoneModel(zone: ZoneGraphNode, runtime: AgentRuntime): string {
-  return zone.data.providerModels?.[runtime] || zone.data.model || DEFAULT_MODEL_BY_RUNTIME[runtime]
+  return zone.data.providerModels?.[runtime] || zone.data.model || DEFAULT_MODEL_BY_RUNTIME[runtime] || ''
 }
 
 interface ZoneIndex {
