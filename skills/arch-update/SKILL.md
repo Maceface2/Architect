@@ -1,5 +1,5 @@
 ---
-name: architect-canvas-update
+name: arch-update
 description: Modify an existing Architect canvas — add/remove/rename zones, move components between zones, edit edges, or refine specs. Use when the user asks to "update the canvas", "add a zone for X", "rename Y", "split this into two zones", or otherwise adjust an already-drawn diagram.
 ---
 

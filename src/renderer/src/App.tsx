@@ -1120,9 +1120,9 @@ ${canvasBlock}`
 
 For canvas generation, design, or update tasks, use the appropriate skill:
 
-- **architect-canvas-from-codebase** — generate a canvas by discovering an existing codebase.
-- **architect-canvas-from-scratch** — design a new canvas from a user goal (no code yet).
-- **architect-canvas-update** — modify the current canvas (add/remove/rename zones, move components, edit edges).
+- **arch-discover** — generate a canvas by discovering an existing codebase.
+- **arch-design** — design a new canvas from a user goal (no code yet).
+- **arch-update** — modify the current canvas (add/remove/rename zones, move components, edit edges).
 
 The skills carry the full canvas JSON shape, field rules, and the \`ARCHITECT_CANVAS_UPDATE\` streaming protocol — read the relevant one before editing.
 

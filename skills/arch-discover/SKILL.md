@@ -1,5 +1,5 @@
 ---
-name: architect-canvas-from-codebase
+name: arch-discover
 description: Generate an Architect canvas (zones, components, edges) by performing a deep architecture-discovery pass over an existing codebase. Use when the user asks for "a canvas of this repo", "discover architecture", "generate canvas from code", or invokes auto-canvas generation.
 ---
 

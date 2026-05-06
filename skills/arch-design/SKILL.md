@@ -1,5 +1,5 @@
 ---
-name: architect-canvas-from-scratch
+name: arch-design
 description: Design a new Architect canvas from a user goal when no existing codebase drives the design. Use when the user describes a system they want to build ("design a canvas for a SaaS billing app", "draft an architecture for X") with no source code to discover from.
 ---
 
