@@ -468,7 +468,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
   // shot — no race between seedInitialTurn and Claude's TUI being ready.
   const conductorPromptPath = join(projectDir, 'ARCHITECT', 'prompts', 'conductor.md')
   const conductorPrompt = fs.readFileSync(conductorPromptPath, 'utf-8')
-  const conductorModel = dispatch.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
+  const conductorModel = dispatch.model || DEFAULT_MODEL_BY_RUNTIME[conductorRuntime] || ''
   const conductorAdapter = getRuntimeAdapter(conductorRuntime)
   const planMode = dispatch.planMode === true
   // Plan mode in Architect = "the conductor plans with the user in prose

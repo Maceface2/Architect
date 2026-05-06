@@ -235,10 +235,11 @@ export default function SettingsPanel({
             </div>
           )}
           <div className="space-y-3">
-            {AGENT_RUNTIMES.filter(r => detection.byId[r.id].installed).map(runtime => {
+            {AGENT_RUNTIMES.filter(r => detection.byId[r.id].installed && r.supportsModelSelection).map(runtime => {
               const detected = detection.byId[runtime.id]
-              const current = settings.dispatchModels[runtime.id] ?? runtime.defaultModel
-              const suggestions = detected.models.length > 0 ? detected.models : runtime.suggestedModels
+              const current = settings.dispatchModels[runtime.id] ?? runtime.defaultModel ?? ''
+              const detectedModels = detected.models ?? []
+              const suggestions = detectedModels.length > 0 ? detectedModels : (runtime.suggestedModels ?? [])
               const probedAtLabel = detected.probedAt
                 ? new Date(detected.probedAt).toLocaleString([], {
                     month: 'short',
@@ -268,7 +269,7 @@ export default function SettingsPanel({
                   <input
                     value={current}
                     onChange={event => setModel(runtime.id, event.target.value)}
-                    placeholder={runtime.defaultModel}
+                    placeholder={runtime.defaultModel ?? ''}
                     className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                   />
                   <div className="flex flex-wrap gap-1.5 mt-1.5">

@@ -11,3 +11,4 @@ test_results/
 .env.local
 
 ARCHITECT/
+architect-canvas.json

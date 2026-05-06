@@ -74,7 +74,7 @@ import BugReportModal from './components/layout/BugReportModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
-import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, type AgentRuntime } from '../../shared/agentRuntimes'
+import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, isAgentRuntime, type AgentRuntime } from '../../shared/agentRuntimes'
 import type { SessionInfo, TerminalInfo } from '../../shared/electronTypes'
 
 interface CanvasUpdate {
@@ -633,7 +633,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         : null
       if (!mode) return
       const runtime = event.runtime
-      if (runtime !== 'claude' && runtime !== 'codex' && runtime !== 'gemini' && runtime !== 'opencode') return
+      if (!isAgentRuntime(runtime)) return
       // Persist immediately. A setIsDirty-only path loses this pointer if the
       // app closes before the next save, and the next startup would fall
       // through to DEFAULT_AGENT_RUNTIME — exactly the bug this field exists to fix.
@@ -815,10 +815,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
             systemPrompt: config.systemPrompt,
             ...zoneDefaults,
             agentRuntime: config.runtime,
-            providerModels: {
-              ...zoneDefaults.providerModels,
-              [config.runtime]: config.model || DEFAULT_MODEL_BY_RUNTIME[config.runtime],
-            },
+            providerModels: (() => {
+              const seed = config.model || DEFAULT_MODEL_BY_RUNTIME[config.runtime]
+              if (!seed) return zoneDefaults.providerModels
+              return { ...zoneDefaults.providerModels, [config.runtime]: seed }
+            })(),
           },
         }
         return [...nds, newZone]
@@ -1655,7 +1656,7 @@ Only discuss and advise without editing the file when the user is asking for cri
       ? 'Connect two component handles'
       : null
   const defaultZoneRuntime = projectSettings.dispatchRuntime ?? DEFAULT_AGENT_RUNTIME
-  const defaultZoneModel = projectSettings.dispatchModels[defaultZoneRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[defaultZoneRuntime]
+  const defaultZoneModel = projectSettings.dispatchModels[defaultZoneRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[defaultZoneRuntime] ?? ''
 
   const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
     setProjectSettings(current => ({ ...current, ...partial }))

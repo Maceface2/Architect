@@ -385,6 +385,129 @@ export function isGeminiSessionIdForCwd(cwd: string, sessionId: string): boolean
   return false
 }
 
+// --- Bob (IBM bob-shell) ---
+// Sessions live at ~/.bob/tmp/<sha256(resolve(cwd))>/chats/session-<ts>-<UUID>.json.
+// Each file is a single JSON object: { sessionId, projectHash, startTime, lastUpdated, messages: [...] }.
+// No projects.json fallback, no subagent kind — simpler than gemini.
+const BOB_ROOT = join(os.homedir(), '.bob')
+const BOB_TMP_ROOT = join(BOB_ROOT, 'tmp')
+const BOB_TRUSTED_FOLDERS_PATH = join(BOB_ROOT, 'trustedFolders.json')
+
+interface BobSessionMeta {
+  id: string
+  projectHash: string
+}
+
+function hashBobProjectRoot(cwd: string): string {
+  return createHash('sha256').update(resolve(cwd)).digest('hex')
+}
+
+function bobChatsDir(cwd: string): string {
+  return join(BOB_TMP_ROOT, hashBobProjectRoot(cwd), 'chats')
+}
+
+function readBobSessionMeta(path: string): BobSessionMeta | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(path, 'utf-8'))
+    if (typeof parsed?.sessionId !== 'string' || typeof parsed?.projectHash !== 'string') return null
+    return { id: parsed.sessionId, projectHash: parsed.projectHash }
+  } catch {
+    return null
+  }
+}
+
+function listBobSessionIdsForCwd(cwd: string): Set<string> {
+  const ids = new Set<string>()
+  const projectHash = hashBobProjectRoot(cwd)
+  const dir = bobChatsDir(cwd)
+  let files: string[]
+  try {
+    files = fs.readdirSync(dir).filter(
+      name => name.startsWith('session-') && (name.endsWith('.json') || name.endsWith('.jsonl')),
+    )
+  } catch {
+    return ids
+  }
+  for (const file of files) {
+    const meta = readBobSessionMeta(join(dir, file))
+    if (!meta || meta.projectHash !== projectHash) continue
+    ids.add(meta.id)
+  }
+  return ids
+}
+
+export function snapshotBobSessions(cwd: string): Set<string> {
+  return listBobSessionIdsForCwd(cwd)
+}
+
+export async function captureNewBobSession(
+  cwd: string,
+  before: Set<string>,
+  timeoutMs = 90000,
+  pollMs = 750,
+): Promise<string | null> {
+  const start = Date.now()
+  let lastSize = before.size
+  while (Date.now() - start < timeoutMs) {
+    const current = listBobSessionIdsForCwd(cwd)
+    for (const id of current) {
+      if (!before.has(id)) return id
+    }
+    if (current.size !== lastSize) {
+      console.log(`[session-capture] bob poll: project sessions ${lastSize} → ${current.size} (none new)`)
+      lastSize = current.size
+    }
+    await new Promise(resolve => setTimeout(resolve, pollMs))
+  }
+  return null
+}
+
+export function isBobSessionIdForCwd(cwd: string, sessionId: string): boolean {
+  const projectHash = hashBobProjectRoot(cwd)
+  const dir = bobChatsDir(cwd)
+  let files: string[]
+  try {
+    files = fs.readdirSync(dir).filter(name => name.endsWith('.json') || name.endsWith('.jsonl'))
+  } catch {
+    return false
+  }
+  for (const file of files) {
+    const meta = readBobSessionMeta(join(dir, file))
+    if (meta?.id === sessionId && meta.projectHash === projectHash) return true
+  }
+  return false
+}
+
+// Pre-seed the project cwd into ~/.bob/trustedFolders.json so bob's first
+// launch in a fresh directory doesn't block on a trust dialog (mirrors
+// ensureClaudeProjectTrusted). The file is a flat object keyed by absolute
+// path with values like 'TRUST_FOLDER'. Best-effort: any read/parse/write
+// failure is swallowed.
+export function ensureBobProjectTrusted(cwd: string): void {
+  const target = resolve(cwd)
+  let config: Record<string, unknown> = {}
+  try {
+    const raw = fs.readFileSync(BOB_TRUSTED_FOLDERS_PATH, 'utf-8')
+    const parsed = JSON.parse(raw)
+    if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) {
+      config = parsed as Record<string, unknown>
+    }
+  } catch {
+    // File missing or unreadable — start from empty.
+  }
+  if (config[target] === 'TRUST_FOLDER') return
+  config[target] = 'TRUST_FOLDER'
+  try {
+    fs.mkdirSync(BOB_ROOT, { recursive: true })
+    const tmp = `${BOB_TRUSTED_FOLDERS_PATH}.architect.${process.pid}.tmp`
+    fs.writeFileSync(tmp, JSON.stringify(config, null, 2))
+    fs.renameSync(tmp, BOB_TRUSTED_FOLDERS_PATH)
+  } catch {
+    // Concurrent writer or perms issue — drop the update; worst case is
+    // bob shows the trust dialog once.
+  }
+}
+
 // --- OpenCode ---
 // OpenCode keeps sessions in a SQLite DB. We use the public CLI listing so we
 // don't couple to internal schema. Each poll spawns a process, so use a longer

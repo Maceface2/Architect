@@ -37,9 +37,11 @@ export default function AssistantLaunchModal({
   const detection = useRuntimeDetection()
   const runtimeOptions = pickerRuntimes(detection.byId)
   const runtimeDetected = detection.byId[selectedRuntime]
-  const modelSuggestions = runtimeDetected.models.length > 0
-    ? runtimeDetected.models
-    : runtimeMeta.suggestedModels
+  const supportsModel = runtimeMeta.supportsModelSelection
+  const detectedModels = runtimeDetected.models ?? []
+  const modelSuggestions = detectedModels.length > 0
+    ? detectedModels
+    : (runtimeMeta.suggestedModels ?? [])
   const runtimeNotInstalled = !runtimeDetected.installed
 
   const resolveDefaultModel = useCallback((rt: AgentRuntime): string => {
@@ -48,7 +50,7 @@ export default function AssistantLaunchModal({
     // zone/dispatch per-CLI default). Fall back to the CLI's hardcoded
     // default so changing Settings-page model presets can't retarget
     // the assistant's model.
-    return projectSettings.assistantModels?.[rt] ?? meta.defaultModel
+    return projectSettings.assistantModels?.[rt] ?? meta.defaultModel ?? ''
   }, [projectSettings.assistantModels])
 
   const [model, setModel] = useState<string>(() => resolveDefaultModel(runtime))
@@ -224,24 +226,32 @@ export default function AssistantLaunchModal({
             )}
           </section>
 
-          <section>
-            <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
-            <select
-              value={model}
-              onChange={e => setModel(e.target.value)}
-              className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
-            >
-              {modelSuggestions.map(m => (
-                <option key={m} value={m}>{m}</option>
-              ))}
-              {!modelSuggestions.includes(model) && (
-                <option value={model}>{model}</option>
-              )}
-            </select>
-            <p className="text-[11px] text-fg-subtle mt-1">
-              Selecting a model does nothing until you Start new or Resume — the change applies to whichever session you launch.
-            </p>
-          </section>
+          {supportsModel ? (
+            <section>
+              <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
+              <select
+                value={model}
+                onChange={e => setModel(e.target.value)}
+                className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
+              >
+                {modelSuggestions.map(m => (
+                  <option key={m} value={m}>{m}</option>
+                ))}
+                {!modelSuggestions.includes(model) && model && (
+                  <option value={model}>{model}</option>
+                )}
+              </select>
+              <p className="text-[11px] text-fg-subtle mt-1">
+                Selecting a model does nothing until you Start new or Resume — the change applies to whichever session you launch.
+              </p>
+            </section>
+          ) : (
+            <section>
+              <p className="text-[11px] text-fg-subtle leading-relaxed">
+                {runtimeMeta.label} picks its own model — no model selection here.
+              </p>
+            </section>
+          )}
 
           <section className="flex items-center justify-between gap-3">
             <p className="text-[11px] text-fg-subtle">

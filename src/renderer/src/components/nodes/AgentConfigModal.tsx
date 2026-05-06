@@ -82,9 +82,11 @@ export default function AgentConfigModal({
   const effectiveModelSuggestions = resolveZoneModelSuggestions({
     runtime: effectiveRuntime,
     settings: projectSettings,
-    detectedModels: effectiveDetected.models,
-    fallbackSuggested: effectiveRuntimeMeta.suggestedModels,
+    detectedModels: effectiveDetected.models ?? [],
+    fallbackSuggested: effectiveRuntimeMeta.suggestedModels ?? [],
   })
+  const supportsModel = effectiveRuntimeMeta.supportsModelSelection
+  const effectiveDetectedModels = effectiveDetected.models ?? []
   // True when the zone has explicitly diverged from the canvas default.
   // Drives the "Use default" button visibility — clicking it sets
   // agentRuntime back to the canvas default so isOverride flips false.
@@ -283,42 +285,50 @@ export default function AgentConfigModal({
                 </div>
               </Section>
 
-              <Section title="Model">
-                <div className="space-y-2">
-                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2">
-                    <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Effective runtime</p>
-                    <p className="text-[12px] text-fg mt-1">{effectiveRuntimeMeta.label}</p>
-                  </div>
-                  <input
-                    value={effectiveModel}
-                    onChange={event => setRuntimeModel(effectiveRuntime, event.target.value)}
-                    placeholder={DEFAULT_MODEL_BY_RUNTIME[effectiveRuntime]}
-                    className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
-                  />
-                  <div className="flex flex-wrap gap-1.5">
-                    {effectiveModelSuggestions.map(model => (
-                      <button
-                        key={model}
-                        onClick={() => setRuntimeModel(effectiveRuntime, model)}
-                        className={`px-2 py-1 rounded text-[11px] border transition-colors ${
-                          effectiveModel === model
-                            ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                            : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                        }`}
-                      >
-                        {shortModelLabel(model)}
-                      </button>
-                    ))}
-                  </div>
-                  {effectiveDetected.models.length > effectiveModelSuggestions.length && (
-                    <ZoneModelBrowse
-                      available={effectiveDetected.models}
-                      current={effectiveModel}
-                      onPick={id => setRuntimeModel(effectiveRuntime, id)}
+              {supportsModel ? (
+                <Section title="Model">
+                  <div className="space-y-2">
+                    <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2">
+                      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Effective runtime</p>
+                      <p className="text-[12px] text-fg mt-1">{effectiveRuntimeMeta.label}</p>
+                    </div>
+                    <input
+                      value={effectiveModel}
+                      onChange={event => setRuntimeModel(effectiveRuntime, event.target.value)}
+                      placeholder={DEFAULT_MODEL_BY_RUNTIME[effectiveRuntime]}
+                      className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
                     />
-                  )}
-                </div>
-              </Section>
+                    <div className="flex flex-wrap gap-1.5">
+                      {effectiveModelSuggestions.map(model => (
+                        <button
+                          key={model}
+                          onClick={() => setRuntimeModel(effectiveRuntime, model)}
+                          className={`px-2 py-1 rounded text-[11px] border transition-colors ${
+                            effectiveModel === model
+                              ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
+                              : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
+                          }`}
+                        >
+                          {shortModelLabel(model)}
+                        </button>
+                      ))}
+                    </div>
+                    {effectiveDetectedModels.length > effectiveModelSuggestions.length && (
+                      <ZoneModelBrowse
+                        available={effectiveDetectedModels}
+                        current={effectiveModel}
+                        onPick={id => setRuntimeModel(effectiveRuntime, id)}
+                      />
+                    )}
+                  </div>
+                </Section>
+              ) : (
+                <Section title="Model">
+                  <p className="text-[11px] text-fg-subtle leading-relaxed">
+                    {effectiveRuntimeMeta.label} manages its own model — no model selection here.
+                  </p>
+                </Section>
+              )}
 
               <Section title="Skills">
                 <p className="text-[10px] text-fg-subtle uppercase tracking-wider mb-2">Presets</p>

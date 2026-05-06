@@ -10,14 +10,17 @@ export interface DetectedRuntime {
   binaryPath?: string
   // models the user can pick. When modelsSource === 'probed' these came from
   // a live CLI invocation; otherwise they're the curated suggestedModels list
-  // from agentRuntimes.ts.
-  models: string[]
+  // from agentRuntimes.ts. Undefined for runtimes whose CLI manages the model
+  // itself (supportsModelSelection=false, e.g. bob) — UI pickers must gate
+  // on the runtime def's supportsModelSelection before reading this.
+  models?: string[]
   modelsSource: 'probed' | 'suggested'
   // Only set when modelsSource === 'probed'. For opencode this is the time
   // of the live `opencode models` shell-out; for claude/codex/gemini it's
   // the time the user last clicked "Refresh models" (a CLI-prompt probe).
   probedAt?: number
-  defaultModel: string
+  // Undefined for runtimes whose CLI picks its own model (bob).
+  defaultModel?: string
 }
 
 export interface RuntimeDetectionResult {
@@ -44,5 +47,9 @@ export const INSTALL_COMMANDS: Record<AgentRuntime, { brew?: string; npm?: strin
     brew: 'brew install sst/tap/opencode',
     npm: 'npm install -g opencode-ai',
     url: 'https://opencode.ai',
+  },
+  bob: {
+    brew: 'brew install ibm/bob/bob',
+    url: 'https://github.com/IBM/bob',
   },
 }
