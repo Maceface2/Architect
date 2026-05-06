@@ -9,14 +9,8 @@ test_results/
 .env
 .env.local
 
-# ARCHITECT/ — ephemeral per-dispatch and per-machine state. The canvas
-# (architect-canvas.json) and the assistant-context files (.assistant-context.*.md)
-# are the only durable artifacts in this directory.
-ARCHITECT/mailbox/
-ARCHITECT/runtime/
-ARCHITECT/dispatches/
-ARCHITECT/sessions/
-ARCHITECT/outputs/
-ARCHITECT/prompts/
-ARCHITECT/manifest.json
-ARCHITECT/terminal-layout.json
+ARCHITECT/
+architect-canvas.json
+
+# TypeScript incremental build cache — regenerated on every tsc run.
+*.tsbuildinfo
