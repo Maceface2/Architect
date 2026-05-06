@@ -125,44 +125,36 @@ export function composeInitialTurn(userPrompt: string): string {
   return `New dispatch. User task:\n${trimmed || '(empty — ask the user for one before assigning work)'}\n\nFirst emit one {type:"plan"} decision line with a markdown plan: overall goal, engaged zones, per-zone responsibilities, dependencies/order, cross-zone contracts, acceptance criteria, and non-goals/constraints. After the harness confirms the plan was recorded, you may emit revised {type:"plan"} decisions if the user prompts changes in this same session. Only emit {type:"assign"} when the current recorded plan is ready to execute.`
 }
 
-// Plan-mode kick-off. The user wants to think through the plan with the
-// conductor before any zone gets a task. The conductor stays in
-// conversation with the user (its PTY is unlocked) and only emits its
-// first {type:"assign"} once the user has signalled GO — either by typing
-// the literal token GO into the terminal, or (Claude only) by approving
-// the plan via the native plan-approval UI (ExitPlanMode).
+// Plan-mode kick-off. The user pairs with the conductor directly to shape
+// the plan before any zone gets a task. The conductor reads project source
+// as needed (Conductor catches integration issues zones can't see), but
+// zones do NOT run their own plan loops — the conductor owns planning.
 //
-// `conductorRuntime` is used to gate runtime-specific tool references:
-// non-Claude runtimes (codex/gemini/opencode) don't have ExitPlanMode and
-// will hallucinate calls to it if it's mentioned in the prompt.
+// `conductorRuntime` gates runtime-specific tool references. Claude has
+// AskUserQuestion + ExitPlanMode; other runtimes get a tool-agnostic
+// numbered-list + approval-keyword fallback.
 export function composePlanModeInitialTurn(userPrompt: string, conductorRuntime: AgentRuntime): string {
   const trimmed = userPrompt.trim()
-  const goSignal = conductorRuntime === 'claude'
-    ? `The user signals GO in either of two equivalent ways:
-1. They type the literal token \`GO\` (case-insensitive) on its own line in the terminal.
-2. They approve your plan via the plan-approval UI (ExitPlanMode tool).`
-    : `The user signals GO by typing the literal token \`GO\` (case-insensitive) on its own line in the terminal.`
+  const approvalGuidance = conductorRuntime === 'claude'
+    ? `Use **AskUserQuestion** for clarifications (one question per call when the choice matters; batch with multiple questions only when several small choices arrive together). Do NOT dump grouped questions in prose. When the plan is ready, use **ExitPlanMode** to request approval — do not invent a custom approval keyword.`
+    : `Surface clarifying choices as a clear numbered list (one decision at a time when it matters). When the plan is ready, ask the user to reply with \`approve\` (or \`revise <notes>\`) to signal go-ahead.`
 
   return `New dispatch in **plan mode**. User task:
 ${trimmed || '(empty — ask the user what they want built)'}
 
-You are paired with the user directly: the user will type into your terminal. Work through the plan with them. Cover:
+You are paired with the user directly: they will type into your terminal. Work through the plan with them. Read project source files relevant to the task — you catch integration issues zones can't see. Zones do NOT run their own plan loops; planning is yours. Cover:
 
 - which zones own which files / parts of the system
-- the seams between zones (interface contracts, shared file paths)
-- order of operations (which zone goes first, what blocks what)
+- seams between zones (interface contracts, shared file paths)
+- order of operations and what blocks what
 - acceptance criteria
-- anything ambiguous in the user's task that needs clarifying
+- anything ambiguous in the user's task
 
-When you have alternatives the user should choose between (test framework, file layout, library, etc.), surface them as a clear numbered list — don't bury the choice in prose.
+${approvalGuidance}
 
-**Architecture canvas changes during planning.** The zones, components, and edges shown to you above are a snapshot taken when this dispatch started — and zones were spawned from that snapshot. If the discussion uncovers a structural change (a zone needs to be added/removed/renamed, a component should move to a different zone), call it out plainly and ask the user to update the canvas in the UI before giving GO. Structural changes only take effect on a fresh dispatch — the zones you have right now are fixed for this run.
+**Canvas is frozen for this dispatch.** Zones/components/edges shown above are a snapshot; zones were spawned from it. If the discussion uncovers a needed structural change (add/remove/rename a zone, move a component), call it out and ask the user to update the canvas in the UI — that only takes effect on a fresh dispatch.
 
-Iterate until the plan is solid. During this conversation, respond to the user in normal prose. Do NOT emit \`{type:"assign"}\` yet.
-
-${goSignal}
-
-When the user gives GO, emit one \`{type:"plan"}\` activity line containing the agreed markdown plan. Wait for the harness confirmation. If the user prompts more changes in this same session, emit another \`{type:"plan"}\` revision. Only emit \`{type:"assign"}\` when the current recorded plan is ready to execute.`
+During planning, respond in prose. Do NOT emit \`{type:"assign"}\` yet. When the user approves, emit one \`{type:"plan"}\` activity line with the agreed markdown plan, wait for harness confirmation, and only then emit \`{type:"assign"}\`. If the user prompts more changes, emit another \`{type:"plan"}\` revision.`
 }
 
 export function composePlanRecordedTurn(planRevision: number, planPath: string, workboardPath: string): string {
