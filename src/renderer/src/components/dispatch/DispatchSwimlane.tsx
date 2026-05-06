@@ -69,6 +69,7 @@ const KIND_STYLES: Record<ActivityKind, KindStyle> = {
 // vs positive completion) without competing with agent-event cards.
 const HARNESS_LABEL_COLORS: Record<OrchestrationEvent['kind'], string> = {
   'dispatch-started': 'rgb(180 167 224)',
+  'plan-recorded': 'rgb(180 167 224)',
   'task-dispatched': 'rgb(148 163 184)',
   'task-queued': 'rgb(148 163 184)',
   'task-released': 'rgb(110 213 145)',

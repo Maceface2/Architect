@@ -114,7 +114,7 @@ Every meaningful action lands as one line:
 
 ```ts
 interface ActivityEvent {
-    ts: string // ISO8601
+    ts: string; // ISO8601
     kind:
         | "task-received" // agent acknowledges a dispatched task
         | "progress" // mid-work update (optional, keeps stale detection quiet)
@@ -122,10 +122,10 @@ interface ActivityEvent {
         | "answer" // reply to a prior ask (conductor → zone flow, rare)
         | "done" // task finished successfully
         | "failed" // task aborted with reason
-        | "note" // free-form log line; conductor decisions use this
-    taskId?: string
-    content: string
-    structured?: Record<string, unknown>
+        | "note"; // free-form log line; conductor decisions use this
+    taskId?: string;
+    content: string;
+    structured?: Record<string, unknown>;
 }
 ```
 
@@ -160,7 +160,7 @@ Every coordinated PTY (zones in a dispatch + the conductor) is shared between tw
 The renderer auto-drives the lock from `TerminalPanel.tsx` so users don't manage it explicitly:
 
 - **Acquire** on any non-Enter, non-Arrow keystroke into a coordinated terminal — the moment the user starts typing, scheduler writes are queued.
-- **Release** on Enter — *unless* the user looks like they're inside a slash-command picker. The renderer maintains a per-PTY line buffer (printable + Backspace) and a `pickerActiveUntil` timestamp. Enter on a line whose first non-whitespace char is `/` (covers `/model`, `/cmd `, `/cmd  arg`, bare `/`) refreshes a 2.5 s suppression window; arrow-key navigation refreshes the same window. While the window is hot, Enter does not release. Once the user is arrow-free and slash-free for 2.5 s, the next Enter releases as normal.
+- **Release** on Enter — _unless_ the user looks like they're inside a slash-command picker. The renderer maintains a per-PTY line buffer (printable + Backspace) and a `pickerActiveUntil` timestamp. Enter on a line whose first non-whitespace char is `/` (covers `/model`, `/cmd `, `/cmd  arg`, bare `/`) refreshes a 2.5 s suppression window; arrow-key navigation refreshes the same window. While the window is hot, Enter does not release. Once the user is arrow-free and slash-free for 2.5 s, the next Enter releases as normal.
 
 Detection runs on `term.onKey` (DOM keydown), not `term.onData`, so it ignores protocol chatter (focus reports, cursor-position replies, mouse motion) that some CLIs — Codex in particular — emit through `onData`. The `PICKER_SUPPRESS_MS` constant lives at the top of `TerminalPanel.tsx`.
 
@@ -182,15 +182,18 @@ The Conductor responds with **one activity-log line** per turn, `kind: 'note'`, 
 
 ```ts
 type ConductorDecision =
-  | { type: "assign";  assignments: Array<{ zoneId: string; body: string; taskId?: string }> }
-  | { type: "answer";  targetZoneId: string; body: string }
-  | { type: "final";   summary: string }
-  | { type: "noop";    reason?: string }
+    | {
+          type: "assign";
+          assignments: Array<{ zoneId: string; body: string; taskId?: string }>;
+      }
+    | { type: "answer"; targetZoneId: string; body: string }
+    | { type: "final"; summary: string }
+    | { type: "noop"; reason?: string };
 ```
 
 The scheduler's activity watcher parses each conductor line via `parseDecision`, executes it (pty.write to zones, mark task done, emit `dispatch:complete`, etc.), and appends the decision JSON to `DispatchRecord.conductorDecisions[]` for audit + resume.
 
-**No drain loop** is prescribed. The Conductor's prompt explicitly says: *"You do not run a loop. The harness drives your turn-taking."*
+**No drain loop** is prescribed. The Conductor's prompt explicitly says: _"You do not run a loop. The harness drives your turn-taking."_
 
 #### Scheduler responsibilities
 
@@ -260,14 +263,21 @@ Every per-CLI quirk sits behind `RuntimeAdapter` in `src/main/runtimes/types.ts`
 
 ```ts
 interface RuntimeAdapter {
-    readonly id: AgentRuntime
-    readonly supportsSystemPromptFlag: boolean // only claude today
-    buildSpawnArgs(opts: SpawnArgs): string[]
-    buildResumeArgs(opts: ResumeArgs): string[]
-    composeSystemAndUser(systemPrompt: string, userPrompt: string): ComposedPrompt
-    snapshotSessions(cwd: string): Promise<Set<string>> | Set<string>
-    captureNewSession(cwd: string, before: Set<string>, timeoutMs?: number): Promise<string | null>
-    revalidateSession(cwd: string, sessionId: string): boolean
+    readonly id: AgentRuntime;
+    readonly supportsSystemPromptFlag: boolean; // only claude today
+    buildSpawnArgs(opts: SpawnArgs): string[];
+    buildResumeArgs(opts: ResumeArgs): string[];
+    composeSystemAndUser(
+        systemPrompt: string,
+        userPrompt: string,
+    ): ComposedPrompt;
+    snapshotSessions(cwd: string): Promise<Set<string>> | Set<string>;
+    captureNewSession(
+        cwd: string,
+        before: Set<string>,
+        timeoutMs?: number,
+    ): Promise<string | null>;
+    revalidateSession(cwd: string, sessionId: string): boolean;
 }
 ```
 
@@ -280,7 +290,7 @@ Every call site in `terminals.ts` / `dispatch.ts` goes through `getRuntimeAdapte
 
 ### Session & dispatch persistence
 
-Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral:
+Storage lives under the project's `ARCHITECT/` directory.
 
 **Durable (survives dispatch teardown)**:
 
@@ -289,20 +299,20 @@ Storage lives under the project's `ARCHITECT/` directory. Durable vs. ephemeral:
 
     ```ts
     interface DispatchRecord {
-        architectSessionId: string
-        architectRuntime: AgentRuntime
-        dispatchId?: string
-        zoneIds: string[]
-        zoneLabels: string[]
-        zoneSessions: Array<{ zoneId; label; runtime; sessionId }>
-        userPrompt: string
-        summary: string
-        model: string
-        planMode: boolean
-        timestamp: string
-        protocolVersion?: number // = 5 for v5 dispatches
-        pendingTasks?: PendingTask[] // in-flight at teardown; re-delivered on resume
-        conductorDecisions?: string[] // append-only audit log of parsed decision JSON
+        architectSessionId: string;
+        architectRuntime: AgentRuntime;
+        dispatchId?: string;
+        zoneIds: string[];
+        zoneLabels: string[];
+        zoneSessions: Array<{ zoneId; label; runtime; sessionId }>;
+        userPrompt: string;
+        summary: string;
+        model: string;
+        planMode: boolean;
+        timestamp: string;
+        protocolVersion?: number; // = 5 for v5 dispatches
+        pendingTasks?: PendingTask[]; // in-flight at teardown; re-delivered on resume
+        conductorDecisions?: string[]; // append-only audit log of parsed decision JSON
     }
     ```
 

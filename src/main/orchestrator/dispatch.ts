@@ -569,6 +569,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       idleThresholdMs: settings.harnessTimeouts.idleThresholdMs,
       staleEscalationMs: settings.harnessTimeouts.staleEscalationMs,
       statusTickMs: STATUS_TICK_MS,
+      userPrompt,
     },
     buildSchedulerDeps(projectDir, dispatchId, broadcast),
   )
@@ -727,6 +728,9 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       // Rehydrate the dependsOn dep gate from the prior run so a queued
       // task whose upstream had already completed releases on resume.
       initialCompletedZones: record.completedZones,
+      initialPlanRevision: record.planRevision,
+      userPrompt: record.userPrompt,
+      initialPendingTasks: record.pendingTasks,
     },
     buildSchedulerDeps(projectDir, pinnedDispatchId, broadcast),
   )

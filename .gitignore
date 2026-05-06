@@ -5,12 +5,10 @@ dist/
 *.log
 graphify-out/
 out-tsc/
+*.tsbuildinfo
 test_results/
 .env
 .env.local
 
 ARCHITECT/
 architect-canvas.json
-
-# TypeScript incremental build cache — regenerated on every tsc run.
-*.tsbuildinfo

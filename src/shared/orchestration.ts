@@ -19,6 +19,7 @@ export type OrchestrationKind =
   | 'cancel-rejected'              // {type:'cancel'} targeted unknown zone or no current task
   | 'all-done-detected'
   | 'conductor-decision'
+  | 'plan-recorded'
   | 'assign-rejected'
   | 'premature-final'
   | 'pty-exit'

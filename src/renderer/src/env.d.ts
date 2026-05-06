@@ -79,7 +79,7 @@ interface ElectronAPI {
       kind:
         | 'dispatch-started'
         | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
-        | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+        | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'plan-recorded' | 'assign-rejected'
         | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
         | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
       participantId?: string
@@ -242,7 +242,7 @@ interface ElectronAPI {
           kind:
             | 'dispatch-started'
             | 'task-dispatched' | 'task-superseded' | 'task-retried' | 'task-exhausted'
-            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'assign-rejected'
+            | 'task-answered' | 'all-done-detected' | 'conductor-decision' | 'plan-recorded' | 'assign-rejected'
             | 'premature-final' | 'pty-exit' | 'status-change' | 'stale-escalation'
             | 'unassigned-ask-dropped' | 'deadlock-detected' | 'redispatched'
           participantId?: string
@@ -252,6 +252,17 @@ interface ElectronAPI {
         }
       }) => void,
     ) => () => void
+  }
+  bugReport: {
+    bundle: (args: {
+      userMessage: string
+      rendererLogs: string
+      projectDir: string | null
+      activeDispatchId: string | null
+      includeLogs: boolean
+    }) => Promise<string>
+    saveToFile: (args: { text: string }) => Promise<string>
+    getLogPath: () => Promise<string>
   }
   update: {
     check: () => Promise<{ ok: boolean; error?: string }>

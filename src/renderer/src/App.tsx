@@ -70,6 +70,8 @@ import { ProjectDirProvider } from './context/ProjectDirContext'
 import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
+import BugReportModal from './components/layout/BugReportModal'
+import { ErrorBoundary } from './components/ErrorBoundary'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, isAgentRuntime, type AgentRuntime } from '../../shared/agentRuntimes'
@@ -392,6 +394,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
+  const [bugReportOpen, setBugReportOpen] = useState(false)
   // True while the terminal page is rendering in a detached BrowserWindow.
   // The docked panel hides itself and shows a "popped out" placeholder; all
   // session/layout/theme updates flow over the terminalPage IPC bus until
@@ -1698,6 +1701,7 @@ Only discuss and advise without editing the file when the user is asking for cri
           canRedo={canRedo}
           updateReady={updateReady}
           onUpdateInstall={onUpdateInstall}
+          onOpenBugReport={() => setBugReportOpen(true)}
         />
         <div className="flex flex-1 overflow-hidden">
           <div
@@ -1872,6 +1876,13 @@ Only discuss and advise without editing the file when the user is asking for cri
           </div>
         </div>
         <UserMenu />
+        {bugReportOpen && (
+          <BugReportModal
+            projectDir={projectDir}
+            activeDispatchId={activeDispatchId}
+            onClose={() => setBugReportOpen(false)}
+          />
+        )}
       </div>
       </ProjectDirProvider>
       </InterfaceSettingsProvider>
@@ -1888,7 +1899,9 @@ function MainApp() {
 
   return (
     <ReactFlowProvider>
-      <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
+      <ErrorBoundary>
+        <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
+      </ErrorBoundary>
     </ReactFlowProvider>
   )
 }
