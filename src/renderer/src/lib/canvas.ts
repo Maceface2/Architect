@@ -51,7 +51,9 @@ export const DEFAULT_TOOLS: NodeTools = {
 
 function buildDispatchModels(): RuntimeModelMap {
   const map: RuntimeModelMap = {}
-  for (const runtime of AGENT_RUNTIMES) map[runtime.id] = runtime.defaultModel
+  for (const runtime of AGENT_RUNTIMES) {
+    if (runtime.defaultModel) map[runtime.id] = runtime.defaultModel
+  }
   return map
 }
 
@@ -109,9 +111,13 @@ function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
 export function createDefaultZoneAgentConfig(settings: ProjectSettings = createDefaultProjectSettings()) {
   const runtime = settings.dispatchRuntime
   const seedModel = settings.dispatchModels[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
+  // Only seed providerModels for runtimes that actually have a model — bob
+  // and similar self-managed CLIs have no defaultModel and must not get an
+  // undefined entry (it crashes downstream string ops).
+  const providerModels: RuntimeModelMap = seedModel ? { [runtime]: seedModel } : {}
   return {
     agentRuntime: runtime,
-    providerModels: { [runtime]: seedModel } as RuntimeModelMap,
+    providerModels,
     openSections: [],
     skills: [],
     tools: { ...settings.dispatchTools },
@@ -186,7 +192,7 @@ export function getEffectiveModel(
   settings: ProjectSettings
 ): string {
   const runtime = getEffectiveRuntime(data, settings)
-  return data.providerModels?.[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime]
+  return data.providerModels?.[runtime] ?? DEFAULT_MODEL_BY_RUNTIME[runtime] ?? ''
 }
 
 function normalizeProviderModels(
@@ -209,7 +215,8 @@ function normalizeProviderModels(
   }
 
   if (!providerModels[dispatchRuntime]) {
-    providerModels[dispatchRuntime] = DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
+    const fallback = DEFAULT_MODEL_BY_RUNTIME[dispatchRuntime]
+    if (fallback) providerModels[dispatchRuntime] = fallback
   }
 
   return providerModels

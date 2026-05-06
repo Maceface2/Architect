@@ -80,7 +80,7 @@ const TERM_THEME_LIGHT = {
 
 const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 
-const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode'])
+const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode', 'bob'])
 
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
 const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()

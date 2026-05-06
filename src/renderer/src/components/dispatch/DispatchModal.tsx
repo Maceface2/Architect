@@ -44,12 +44,14 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   const runtimeMeta = AGENT_RUNTIMES.find(r => r.id === conductorRuntime) ?? AGENT_RUNTIMES[0]
   const conductorDetected = detection.byId[conductorRuntime]
   const runtimeOptions = pickerRuntimes(detection.byId)
-  const modelSuggestions = conductorDetected.models.length > 0
-    ? conductorDetected.models
-    : runtimeMeta.suggestedModels
+  const supportsModel = runtimeMeta.supportsModelSelection
+  const detectedModels = conductorDetected.models ?? []
+  const modelSuggestions = detectedModels.length > 0
+    ? detectedModels
+    : (runtimeMeta.suggestedModels ?? [])
   const conductorNotInstalled = !conductorDetected.installed
   const [model, setModel] = useState<string>(
-    projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime]
+    projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime] ?? ''
   )
   const [planMode, setPlanMode] = useState(projectSettings.dispatchPlanMode)
   const [selectedZoneIds, setSelectedZoneIds] = useState<Set<string>>(() => new Set(zones.map(z => z.id)))
@@ -72,7 +74,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
   // swaps runtimes, reset `model` to that runtime's configured default so
   // stale Codex-model strings don't leak into a Claude dispatch.
   useEffect(() => {
-    setModel(projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime])
+    setModel(projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime] ?? '')
   }, [conductorRuntime, projectSettings.dispatchModels])
 
   const reload = useCallback(async () => {
@@ -267,22 +269,24 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
               </p>
             </div>
 
-            <div className="grid grid-cols-2 gap-4">
-              <div>
-                <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
-                <select
-                  value={model}
-                  onChange={e => setModel(e.target.value)}
-                  className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
-                >
-                  {modelSuggestions.map(m => (
-                    <option key={m} value={m}>{m}</option>
-                  ))}
-                  {!modelSuggestions.includes(model) && (
-                    <option value={model}>{model}</option>
-                  )}
-                </select>
-              </div>
+            <div className={supportsModel ? 'grid grid-cols-2 gap-4' : ''}>
+              {supportsModel && (
+                <div>
+                  <label className="block text-xs font-medium text-fg-muted mb-1.5">Model ({runtimeMeta.label})</label>
+                  <select
+                    value={model}
+                    onChange={e => setModel(e.target.value)}
+                    className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg focus:outline-none focus:border-accent"
+                  >
+                    {modelSuggestions.map(m => (
+                      <option key={m} value={m}>{m}</option>
+                    ))}
+                    {!modelSuggestions.includes(model) && model && (
+                      <option value={model}>{model}</option>
+                    )}
+                  </select>
+                </div>
+              )}
 
               <div>
                 <label className="block text-xs font-medium text-fg-muted mb-1.5">Permissions</label>

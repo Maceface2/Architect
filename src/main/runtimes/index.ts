@@ -1,4 +1,5 @@
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import { bobAdapter } from './bob'
 import { claudeAdapter } from './claude'
 import { codexAdapter } from './codex'
 import { geminiAdapter } from './gemini'
@@ -10,6 +11,7 @@ const adapters: Record<AgentRuntime, RuntimeAdapter> = {
   codex: codexAdapter,
   gemini: geminiAdapter,
   opencode: opencodeAdapter,
+  bob: bobAdapter,
 }
 
 export function getRuntimeAdapter(runtime: AgentRuntime): RuntimeAdapter {

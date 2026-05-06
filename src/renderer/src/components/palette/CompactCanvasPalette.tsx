@@ -232,20 +232,21 @@ function ZoneCreateDialog({
   const [label, setLabel] = useState('New Zone')
   const [systemPrompt, setSystemPrompt] = useState('')
   const [runtime, setRuntime] = useState<AgentRuntime>(defaultRuntime)
-  const [model, setModel] = useState(defaultModel || DEFAULT_MODEL_BY_RUNTIME[defaultRuntime])
+  const [model, setModel] = useState(defaultModel || DEFAULT_MODEL_BY_RUNTIME[defaultRuntime] || '')
   const [color, setColor] = useState('#58A6FF')
   const runtimeDef = getAgentRuntime(runtime)
   const detection = useRuntimeDetection()
   const projectSettings = useProjectSettings()
   const runtimeOptions = pickerRuntimes(detection.byId)
   const runtimeDetected = detection.byId[runtime]
+  const supportsModel = runtimeDef.supportsModelSelection
   // Match AgentConfigModal's chip-cap logic so zone creation and zone
   // editing surface the same shortlist.
   const modelSuggestions = resolveZoneModelSuggestions({
     runtime,
     settings: projectSettings,
-    detectedModels: runtimeDetected.models,
-    fallbackSuggested: runtimeDef.suggestedModels,
+    detectedModels: runtimeDetected.models ?? [],
+    fallbackSuggested: runtimeDef.suggestedModels ?? [],
   })
 
   return (
@@ -273,7 +274,7 @@ function ZoneCreateDialog({
                   type="button"
                   onClick={() => {
                     setRuntime(option.id)
-                    setModel(DEFAULT_MODEL_BY_RUNTIME[option.id])
+                    setModel(DEFAULT_MODEL_BY_RUNTIME[option.id] ?? '')
                   }}
                   title={notInstalled ? 'Selected but not installed on this machine' : undefined}
                   className={`rounded px-2 py-1.5 text-xs transition-colors ${
@@ -292,23 +293,27 @@ function ZoneCreateDialog({
           </div>
         )}
       </div>
-      <TextField label="Model" value={model} onChange={setModel} />
-      <div className="flex flex-wrap gap-1">
-        {modelSuggestions.map(option => (
-          <button
-            key={option}
-            type="button"
-            onClick={() => setModel(option)}
-            className={`rounded border px-2 py-1 text-[10px] transition-colors ${
-              model === option
-                ? 'border-accent bg-accent/15 text-fg'
-                : 'border-white/10 bg-black/20 text-fg-subtle hover:border-white/20 hover:text-fg-muted'
-            }`}
-          >
-            {option}
-          </button>
-        ))}
-      </div>
+      {supportsModel && (
+        <>
+          <TextField label="Model" value={model} onChange={setModel} />
+          <div className="flex flex-wrap gap-1">
+            {modelSuggestions.map(option => (
+              <button
+                key={option}
+                type="button"
+                onClick={() => setModel(option)}
+                className={`rounded border px-2 py-1 text-[10px] transition-colors ${
+                  model === option
+                    ? 'border-accent bg-accent/15 text-fg'
+                    : 'border-white/10 bg-black/20 text-fg-subtle hover:border-white/20 hover:text-fg-muted'
+                }`}
+              >
+                {option}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
       <ColorField label="Color" value={color} onChange={setColor} />
       <DialogActions
         submitLabel="Place zone"
@@ -317,7 +322,7 @@ function ZoneCreateDialog({
           label: label.trim() || 'New Zone',
           systemPrompt: systemPrompt.trim(),
           runtime,
-          model: model.trim() || DEFAULT_MODEL_BY_RUNTIME[runtime],
+          model: supportsModel ? (model.trim() || DEFAULT_MODEL_BY_RUNTIME[runtime] || '') : '',
           color,
         })}
       />

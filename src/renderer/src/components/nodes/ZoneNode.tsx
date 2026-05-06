@@ -138,7 +138,9 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
             >
               {isOverride ? runtimeMeta.shortLabel : `default:${runtimeMeta.shortLabel}`}
             </span>
-            <span className={`text-[10px] font-mono truncate ${subtleTextClass}`}>{shortModelLabel(effectiveModel)}</span>
+            {runtimeMeta.supportsModelSelection && effectiveModel && (
+              <span className={`text-[10px] font-mono truncate ${subtleTextClass}`}>{shortModelLabel(effectiveModel)}</span>
+            )}
           </div>
           <div className="flex items-center gap-2 flex-shrink-0">
             <button
@@ -220,6 +222,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
 }
 
 function shortModelLabel(model: string): string {
+  if (!model) return ''
   return model.includes('/') ? model.split('/').pop() || model : model
 }
 

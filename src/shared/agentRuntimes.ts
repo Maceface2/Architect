@@ -1,4 +1,4 @@
-export type AgentRuntime = 'claude' | 'codex' | 'gemini' | 'opencode'
+export type AgentRuntime = 'claude' | 'codex' | 'gemini' | 'opencode' | 'bob'
 export type AgentRuntimeMode = 'inherit' | 'override'
 export type AssistantMode = 'architecture' | 'general'
 export type EffortLevel = 'low' | 'medium' | 'high'
@@ -17,8 +17,13 @@ export interface AgentRuntimeDefinition {
   shortLabel: string
   binary: string
   accentColor: string
-  defaultModel: string
-  suggestedModels: string[]
+  // Whether the user can pick the model for this runtime. False for runtimes
+  // whose CLI manages the model itself (bob); true for the rest. UI pickers
+  // hide the model dropdown when false; the adapter's buildSpawnArgs MUST NOT
+  // emit a `--model` flag for runtimes where this is false.
+  supportsModelSelection: boolean
+  defaultModel?: string
+  suggestedModels?: string[]
 }
 
 export const DEFAULT_AGENT_RUNTIME: AgentRuntime = 'claude'
@@ -30,6 +35,7 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     shortLabel: 'claude',
     binary: 'claude',
     accentColor: '#f59e0b',
+    supportsModelSelection: true,
     defaultModel: 'claude-sonnet-4-6',
     suggestedModels: ['claude-haiku-4-5-20251001', 'claude-sonnet-4-6', 'claude-opus-4-7'],
   },
@@ -39,6 +45,7 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     shortLabel: 'codex',
     binary: 'codex',
     accentColor: '#10b981',
+    supportsModelSelection: true,
     defaultModel: 'gpt-5.4-mini',
     suggestedModels: ['gpt-5.4-mini', 'gpt-5.3-codex', 'gpt-5.4'],
   },
@@ -48,6 +55,7 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     shortLabel: 'gemini',
     binary: 'gemini',
     accentColor: '#60a5fa',
+    supportsModelSelection: true,
     defaultModel: 'gemini-2.5-pro',
     suggestedModels: ['gemini-2.5-flash', 'gemini-2.5-pro'],
   },
@@ -57,6 +65,7 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
     shortLabel: 'open',
     binary: 'opencode',
     accentColor: '#f472b6',
+    supportsModelSelection: true,
     // Models that `opencode models` returns with zero credentials
     // configured — i.e. the user does NOT need to plug in any provider API
     // key to use them. (Billing may still happen via OpenCode's own
@@ -70,6 +79,16 @@ export const AGENT_RUNTIMES: AgentRuntimeDefinition[] = [
       'opencode/minimax-m2.5-free',
       'opencode/nemotron-3-super-free',
     ],
+  },
+  {
+    id: 'bob',
+    label: 'Bob Shell',
+    shortLabel: 'bob',
+    binary: 'bob',
+    accentColor: '#0f62fe',
+    // bob picks its own model — there is no user-relevant --model flag, and
+    // the adapter MUST NOT emit one. UI pickers gate on this field.
+    supportsModelSelection: false,
   },
 ]
 
@@ -112,6 +131,8 @@ export function effortArgsFor(runtime: AgentRuntime, effort: EffortLevel): strin
     case 'gemini':
       return []
     case 'opencode':
+      return []
+    case 'bob':
       return []
   }
 }

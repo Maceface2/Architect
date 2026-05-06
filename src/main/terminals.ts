@@ -19,6 +19,7 @@ import {
 import {
   appendZoneSession,
   deleteZoneSession,
+  ensureBobProjectTrusted,
   ensureClaudeProjectTrusted,
   getZoneSessionRecord,
   listZoneSessions,
@@ -552,6 +553,7 @@ export function spawnAgentSession({
   // makes captureNewClaudeSession poll to timeout and freezes fresh spawns
   // (e.g. first assistant load in a brand-new project dir).
   if (runtime === 'claude') ensureClaudeProjectTrusted(cwd)
+  if (runtime === 'bob') ensureBobProjectTrusted(cwd)
   console.log(`[spawn] ${runtime} (zone=${id}) cwd=${cwd} cmd=${bin} args=${JSON.stringify(spawnArgs)}${resumeSessionId ? ' [RESUME]' : ''}`)
   const ptyProcess = pty.spawn(bin, spawnArgs, {
     name: 'xterm-256color',
