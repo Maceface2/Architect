@@ -69,10 +69,33 @@ button:focus {
 body {
   margin: 0;
   padding: 0;
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
+  /* Single-face mono UI. JetBrains Mono Variable is loaded once in main.tsx
+     and inherited everywhere; weight/size/tracking carry hierarchy. */
+  font-family:
+    'JetBrains Mono Variable',
+    'JetBrains Mono',
+    ui-monospace,
+    SFMono-Regular,
+    Menlo,
+    monospace;
+  /* tnum: tabular figures so numbers align across tables, badges, counters.
+     liga/calt off: kill JetBrains Mono's programming ligatures (==>, !==, &&)
+     in UI text — they belong in the editor terminal, not in chrome. */
+  font-feature-settings: 'tnum' 1, 'liga' 0, 'calt' 0;
+  font-variant-numeric: tabular-nums;
+  /* Mono letterforms are slightly wider than proportional sans; a touch of
+     negative tracking at small UI sizes keeps copy from feeling spaced-out. */
+  letter-spacing: -0.005em;
   -webkit-font-smoothing: antialiased;
   background-color: rgb(var(--bg-canvas));
   color: rgb(var(--fg));
+}
+
+/* Re-enable ligatures + contextual alternates inside the embedded terminal
+   surface — that's where users want ==>, fi, etc. to render naturally. */
+.xterm,
+.xterm * {
+  font-feature-settings: 'tnum' 1, 'liga' 1, 'calt' 1 !important;
 }
 
 /* React Flow canvas */

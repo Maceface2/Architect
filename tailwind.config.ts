@@ -8,10 +8,27 @@ function v(token: string) {
   return `rgb(var(--${token}) / <alpha-value>)`
 }
 
+// JetBrains Mono Variable as the single UI typeface. Hierarchy is carried by
+// weight (400/500/600/700) + size + tracking, never by a second family. The
+// stack falls back through bundled woff2, installed JetBrains Mono, then
+// platform mono so a font load failure never produces a system serif.
+const MONO_STACK = [
+  '"JetBrains Mono Variable"',
+  '"JetBrains Mono"',
+  'ui-monospace',
+  'SFMono-Regular',
+  'Menlo',
+  'monospace',
+]
+
 export default {
   content: ['./src/renderer/**/*.{ts,tsx,html}'],
   theme: {
     extend: {
+      fontFamily: {
+        sans: MONO_STACK,
+        mono: MONO_STACK,
+      },
       colors: {
         canvas: v('bg-canvas'),
         panel: v('bg-panel'),

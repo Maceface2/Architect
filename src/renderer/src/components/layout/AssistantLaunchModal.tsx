@@ -216,7 +216,7 @@ export default function AssistantLaunchModal({
             )}
             {runtimeNotInstalled && detection.installed.length > 0 && (
               <p className="text-[11px] text-amber-300 mt-2">
-                {runtimeMeta.label} is not installed on this machine — launching it will fail.
+                {runtimeMeta.label} is not installed on this machine. Launching it will fail.
               </p>
             )}
             {runtimeChanged && (
@@ -242,13 +242,13 @@ export default function AssistantLaunchModal({
                 )}
               </select>
               <p className="text-[11px] text-fg-subtle mt-1">
-                Selecting a model does nothing until you Start new or Resume — the change applies to whichever session you launch.
+                Selecting a model does nothing until you Start new or Resume. The change applies to whichever session you launch.
               </p>
             </section>
           ) : (
             <section>
               <p className="text-[11px] text-fg-subtle leading-relaxed">
-                {runtimeMeta.label} picks its own model — no model selection here.
+                {runtimeMeta.label} picks its own model. No model selection here.
               </p>
             </section>
           )}
@@ -286,7 +286,7 @@ export default function AssistantLaunchModal({
                   const when = new Date(record.capturedAt).toLocaleString()
                   const isEditing = editing?.sessionId === record.sessionId
                   const mismatch = record.runtime !== selectedRuntime
-                  const mismatchTip = `Recorded under ${record.runtime} — switch the CLI above to resume.`
+                  const mismatchTip = `Recorded under ${record.runtime}. Switch the CLI above to resume.`
                   return (
                     <li
                       key={record.sessionId}
@@ -400,7 +400,7 @@ export default function AssistantLaunchModal({
             >
               <h3 className="text-sm font-semibold text-fg">Interrupt current session?</h3>
               <p className="text-xs text-fg-muted mt-2 leading-relaxed">
-                The active {modeLabel} assistant session will be killed. In-flight tool calls will be cancelled. The transcript is saved — you can resume it later from Previous sessions.
+                The active {modeLabel} assistant session will be killed. In-flight tool calls will be cancelled. The transcript is saved. You can resume it later from Previous sessions.
               </p>
               <div className="flex items-center justify-end gap-2 mt-4">
                 <button

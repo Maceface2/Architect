@@ -76,7 +76,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Report a bug</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            Describe what happened, then click <span className="text-fg">Copy logs &amp; open form</span>. Architect copies a diagnostic bundle to your clipboard and opens the feedback form — paste the bundle into the &ldquo;Logs&rdquo; field.
+            Describe what happened, then click <span className="text-fg">Copy logs &amp; open form</span>. Architect copies a diagnostic bundle to your clipboard and opens the feedback form. Paste the bundle into the &ldquo;Logs&rdquo; field.
           </p>
         </div>
 
@@ -123,7 +123,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
             onClick={() => void handleSave()}
             disabled={working}
             className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node disabled:opacity-50 disabled:pointer-events-none transition-colors"
-            title="Save the bundle to a file in Downloads — useful if the logs are too long to paste into the form"
+            title="Save the bundle to a file in Downloads. Useful if the logs are too long to paste into the form."
           >
             {working && <Loader2 size={11} className="animate-spin" />}
             Save to file

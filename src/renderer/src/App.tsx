@@ -191,44 +191,70 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
   }
 
   return (
-    <div className="relative h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
+    <div className="relative h-screen w-screen bg-canvas text-fg select-none flex flex-col overflow-hidden">
       {/* Drag strip across the top so the user can move the window before
-          they've picked a project (TopNav, which is the normal drag region,
-          isn't mounted yet). Sits behind the centered content; everything
-          interactive opts out via no-drag. */}
+          they've picked a project (TopNav, which owns drag normally, isn't
+          mounted yet). Behind the composition; interactive elements opt out. */}
       <div
-        className="absolute top-0 left-0 right-0 h-9"
+        className="absolute top-0 left-0 right-0 h-9 z-0"
         style={{ WebkitAppRegion: 'drag' } as CSSProperties}
         aria-hidden
       />
-      <UserMenu />
-
-      <div className="flex flex-col items-center gap-4">
-        <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
-          <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <circle cx="40" cy="360" r="14" fill="#58A6FF" />
-          <circle cx="200" cy="360" r="14" fill="#58A6FF" />
-          <circle cx="360" cy="40" r="14" fill="#58A6FF" />
-        </svg>
-        <div className="text-center">
-          <h1 className="text-2xl font-semibold text-fg tracking-tight">ARCHITECT</h1>
-          <p className="text-sm text-fg-subtle mt-1">Open a project folder to get started</p>
-        </div>
+      <div className="absolute top-2.5 right-3 z-10">
+        <UserMenu />
       </div>
 
-      <button
-        onClick={pick}
-        disabled={loading}
-        className="flex items-center gap-2.5 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-sm font-medium rounded-lg transition-colors"
-      >
-        {loading ? 'Opening…' : 'Open Project Folder'}
-      </button>
+      {/* Title block: two columns separated by a hairline rule. The lockup is
+          a drafting-style nameplate; the action column reads as the next step
+          in a numbered procedure. Asymmetric on purpose, breaks the centered-
+          welcome-stack reflex. */}
+      <main className="flex-1 flex items-center justify-center px-10">
+        <div className="w-full max-w-3xl flex items-stretch gap-12">
+          <section className="flex-1 flex flex-col items-start justify-end gap-5 pb-1">
+            <svg width="56" height="56" viewBox="0 0 400 400" fill="none" aria-hidden>
+              <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+              <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+              <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
+              <circle cx="40" cy="360" r="14" fill="#58A6FF" />
+              <circle cx="200" cy="360" r="14" fill="#58A6FF" />
+              <circle cx="360" cy="40" r="14" fill="#58A6FF" />
+            </svg>
+            <div>
+              <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle mb-2">
+                / Schematic for AI agent CLIs
+              </div>
+              <h1 className="text-[32px] font-medium uppercase tracking-[0.2em] leading-none text-fg">
+                Architect
+              </h1>
+            </div>
+          </section>
 
-      <p className="text-xs text-fg-subtle">
-        All agents will be scoped to this directory
-      </p>
+          <div className="w-px self-stretch bg-white/[0.08]" aria-hidden />
+
+          <section className="flex-1 flex flex-col items-start justify-end gap-3 pb-1">
+            <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle">
+              01 / Open project
+            </div>
+            <button
+              onClick={pick}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-[11px] font-medium uppercase tracking-[0.18em] rounded-[3px] transition-colors"
+            >
+              {loading ? 'Opening…' : 'Choose folder'}
+            </button>
+            <p className="text-[11px] text-fg-subtle leading-relaxed mt-1 max-w-[28ch]">
+              All agents are scoped to this directory.
+            </p>
+          </section>
+        </div>
+      </main>
+
+      {/* Drawing-sheet footer: hairline rule + tracked monoglyphs left/right.
+          Reinforces the title-block convention without adding decoration. */}
+      <footer className="flex items-center justify-between px-6 py-3 border-t border-white/[0.06] text-fg-subtle">
+        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">v0.1.0 / alpha</span>
+        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">Sheet 01 of 01</span>
+      </footer>
     </div>
   )
 }
@@ -268,12 +294,6 @@ function CanvasConflictModal({
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
-          </p>
-        </div>
-
-        <div className="px-5 py-4">
-          <p className="text-xs leading-5 text-fg-subtle">
-            Choose whether to replace the current canvas with the assistant&apos;s version or keep your local edits and ignore this incoming change.
           </p>
         </div>
 
@@ -1645,8 +1665,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             <UserMenu />
           </nav>
           <div
-            className="flex-1 flex overflow-hidden"
-            style={{ flexDirection: assistantOrientation === 'bottom' ? 'column' : 'row' }}
+            className={`flex-1 flex overflow-hidden ${assistantOrientation === 'bottom' ? 'flex-col' : 'flex-row'}`}
           >
             <div className="flex-1 flex overflow-hidden">
 

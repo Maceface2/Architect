@@ -86,7 +86,7 @@ export default function ComponentConfigModal({
             <textarea
               value={specs}
               onChange={event => patch({ specs: event.target.value })}
-              placeholder="Describe this component in detail — its responsibilities, API contracts, schemas, ports, interfaces, invariants, anything the zone's agent needs to know when building it."
+              placeholder="Describe this component in detail: responsibilities, API contracts, schemas, ports, interfaces, invariants, anything the zone's agent needs to know when building it."
               autoFocus
               className="flex-1 bg-transparent text-fg text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-fg-subtle font-mono"
             />
@@ -115,7 +115,7 @@ export default function ComponentConfigModal({
                   className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg font-mono tracking-widest placeholder-fg-subtle focus:outline-none focus:border-white/20 uppercase"
                   placeholder="TAG"
                 />
-                <p className="text-[10px] text-fg-subtle mt-1.5">Up to 8 chars — shown in the corner of the node.</p>
+                <p className="text-[10px] text-fg-subtle mt-1.5">Up to 8 chars. Shown in the corner of the node.</p>
               </Section>
 
               <Section title="Accent color">
