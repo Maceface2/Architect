@@ -935,9 +935,11 @@ export interface StartAssistantOpts {
   // Which session to use when spawning this mode's PTY. Read only when main
   // actually spawns — a live PTY is reused (ignoring this) unless `force`.
   session?: { mode: 'new' } | { mode: 'resume'; sessionId: string }
-  // Optional seed prompt for a fresh session. When omitted, defaults to
-  // "Read ARCHITECT/.assistant-context.<mode>.md" — each mode has its own
-  // context file so prompts don't trample each other.
+  // Optional seed prompt for a fresh session. When omitted, the assistant
+  // starts with no kickoff turn — `contextMd` is delivered as the system
+  // prompt (via --append-system-prompt for Claude, folded into the first
+  // user turn for runtimes without a system-prompt flag) and the assistant
+  // waits for the user's first message.
   initialPrompt?: string
   // Force kill-and-respawn even if this mode's PTY is already alive. Set
   // by the launcher modal (Start new / Resume specific / model change);
@@ -1035,13 +1037,10 @@ async function doStartAssistant(
   const safeRuntime = isAgentRuntime(runtime) ? runtime : DEFAULT_AGENT_RUNTIME
   const architectDir = join(projectDir, 'ARCHITECT')
   fs.mkdirSync(architectDir, { recursive: true })
-  // Per-mode context files so Architecture and General don't trample each
-  // other's system prompt. A shared path caused the wrong mode's content to
-  // be loaded if the user told a still-running assistant to "re-read the
-  // context file" after the other mode had written to it.
-  const contextFilename = `.assistant-context.${safeMode}.md`
-  const contextFile = join(architectDir, contextFilename)
-  fs.writeFileSync(contextFile, contextMd)
+  // contextMd (skill pointers + canvas state) is delivered as a system
+  // prompt at spawn time — see composeSystemAndUser below. No on-disk
+  // context file, no "Read X.md" kickoff turn. Refreshing canvas state
+  // requires relaunching the assistant.
 
   // Reuse vs. respawn: the launcher modal sets `opts.force` when the user
   // explicitly asks for a new/different session or model. Everything else
@@ -1078,9 +1077,17 @@ async function doStartAssistant(
   }
 
   const model = opts?.model ?? DEFAULT_MODEL_BY_RUNTIME[safeRuntime]
-  const initialPrompt = resumeSessionId
-    ? undefined
-    : opts?.initialPrompt ?? `Read ARCHITECT/${contextFilename}`
+  // Fresh spawn: route contextMd through the runtime adapter so Claude gets
+  // it via --append-system-prompt and other runtimes get it folded into the
+  // first user turn. opts.initialPrompt, when present, is delivered as the
+  // first user turn alongside contextMd-as-system-prompt — it does NOT
+  // replace contextMd. Resumes skip both (the conversation already has its
+  // system prompt and Claude drops --append-system-prompt under --resume).
+  const composed = resumeSessionId
+    ? null
+    : getRuntimeAdapter(safeRuntime).composeSystemAndUser(contextMd, opts?.initialPrompt ?? '')
+  const initialPrompt = composed?.firstUserPrompt
+  const appendSystemPromptFlag = composed?.appendSystemPromptFlag
 
   console.log(
     `[assistant] mode=${safeMode} runtime=${safeRuntime} model=${model} ` +
@@ -1126,6 +1133,7 @@ async function doStartAssistant(
     env: {},
     cwd: projectDir,
     initialPrompt,
+    appendSystemPrompt: appendSystemPromptFlag,
     model,
     capture: { projectDir, zoneKey, summary: `${ASSISTANT_LABELS[safeMode]}` },
     skipPermissions: false,

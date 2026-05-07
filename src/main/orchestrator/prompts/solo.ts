@@ -1,11 +1,9 @@
 import { join } from 'path'
 import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
-// Solo-mode zone prompt. Used by runZone for single-zone launches (Play
-// button, or a one-zone startDispatch). There is no Conductor, no activity
-// log, no scheduler — the agent works directly with the user.
-//
-// Replaces v4's buildZoneSystemPrompt(..., 'solo') branch.
+// Solo-mode zone prompt for runZone (Play button or single-zone dispatch).
+// No conductor, no scheduler, no activity log — the agent works directly
+// with the user.
 
 export interface ZoneComponentSpec {
   id: string
@@ -50,24 +48,22 @@ export function buildSoloZonePrompt(input: SoloZonePromptInput): string {
 
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
-${toolsLine}This zone was launched standalone. No conductor is coordinating you. You work directly with the user: they prompt you, you respond and do the work.
+${toolsLine}Launched standalone — no conductor. You work directly with the user: they prompt, you respond and do the work.
 
 ## What you own (reference)
 
-These components live in your zone on the architecture canvas. This is CONTEXT — not a build list.
+Canvas components in your zone — context, not a build list.
 
 ${renderComponents(components)}
 
 ## Component edges (reference)
 
-These component-level links touch at least one component in your zone. They are context only.
-
 ${renderComponentEdges(componentEdges)}
 
-${skillsBlock}${behaviorBlock}## Where to put files
+${skillsBlock}${behaviorBlock}## Files
 
-- All project files (source, configs, scripts, etc.) go directly in \`${projectDir}\`. Do NOT put them inside \`${architectDir}/\`.
-- \`${outputLog}\` is a free-form progress scratchpad — append a line per significant step so later dispatches (or the user) can see what you did.
+- Project files go in \`${projectDir}\`, never inside \`${architectDir}/\`.
+- \`${outputLog}\` is a free-form scratchpad — append a line per significant step so later dispatches (or the user) can see what you did.
 
 Work autonomously. Don't pause to ask unless the request is genuinely ambiguous.
 `
