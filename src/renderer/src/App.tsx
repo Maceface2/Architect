@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Loader2, Save } from 'lucide-react'
+import { Activity, Files, Layers, Loader2, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -939,6 +939,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [cancelCanvasTool])
 
   const onClear = useCallback(() => {
+    if (!window.confirm('Clear the canvas? This will remove all zones and components.')) return
     snapshotHistory()
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
@@ -1590,8 +1591,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
       <ProjectDirProvider value={projectDir}>
       <div className="flex flex-col h-screen bg-canvas text-fg overflow-hidden">
         <TopNav
-          activeTab={activeTab}
-          onTabChange={setActiveTab}
           onDispatch={onDispatch}
           dispatching={dispatching}
           nodeCount={zones.length}
@@ -1609,6 +1608,30 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onUpdateInstall={onUpdateInstall}
         />
         <div className="flex flex-1 overflow-hidden">
+          {/* Left sidebar navigation */}
+          <nav className="flex flex-col items-center gap-1 w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
+            {([
+              { id: 'Canvas',   icon: <Layers size={16} />,      title: 'Canvas'   },
+              { id: 'Files',    icon: <Files size={16} />,       title: 'Files'    },
+              { id: 'Terminal', icon: <TerminalIcon size={16} />, title: 'Terminal' },
+              { id: 'Logs',     icon: <Activity size={16} />,    title: 'Logs'     },
+              { id: 'Settings', icon: <Settings size={16} />,    title: 'Settings' },
+            ] as const).map(({ id, icon, title }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                title={title}
+                aria-label={title}
+                className={`flex items-center justify-center w-8 h-8 rounded transition-colors ${
+                  activeTab === id
+                    ? 'text-fg bg-node'
+                    : 'text-fg-subtle hover:text-fg hover:bg-node/50'
+                }`}
+              >
+                {icon}
+              </button>
+            ))}
+          </nav>
           <div
             className="flex-1 flex overflow-hidden"
             style={{ flexDirection: assistantOrientation === 'bottom' ? 'column' : 'row' }}
@@ -1644,6 +1667,26 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
               <Controls />
             </ReactFlow>
+
+            <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5">
+              <button
+                onClick={onClear}
+                className="px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+              >
+                Clear
+              </button>
+              <button
+                onClick={onSave}
+                className="relative flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                title="Save canvas"
+              >
+                <Save size={11} />
+                Save
+                {isDirty && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+            </div>
 
             <CompactCanvasPalette
               activeTool={activePaletteTool}
@@ -1781,29 +1824,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             </div>
           </div>
         </div>
-        <div className="flex items-center justify-end gap-2 h-9 px-3 border-t border-node-border bg-panel flex-shrink-0">
-          {isCanvas && (
-            <>
-              <button
-                onClick={onClear}
-                className="px-2.5 py-1 text-xs text-fg-muted border border-node-border rounded hover:bg-node hover:text-fg transition-colors"
-              >
-                Clear
-              </button>
-              <button
-                onClick={onSave}
-                className="relative flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-node-border rounded hover:bg-node hover:text-fg transition-colors"
-                title="Save canvas"
-              >
-                <Save size={11} />
-                Save
-                {isDirty && (
-                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
-                )}
-              </button>
-              <span className="w-px h-4 bg-node-border" />
-            </>
-          )}
+        <div className="flex items-center justify-end h-6 px-3 bg-canvas flex-shrink-0">
           <UserMenu />
         </div>
         {bugReportOpen && (

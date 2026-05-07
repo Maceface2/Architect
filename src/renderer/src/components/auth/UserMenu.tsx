@@ -55,14 +55,14 @@ export default function UserMenu() {
       )}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center w-7 h-7 rounded-md bg-node border border-node-border text-fg-muted hover:text-fg hover:bg-[#222] transition-colors"
+        className="flex items-center justify-center w-5 h-5 rounded bg-node border border-node-border text-fg-muted hover:text-fg hover:bg-[#222] transition-colors"
         title={email}
         aria-label="Account menu"
       >
         {initial ? (
-          <span className="text-[11px] font-semibold">{initial}</span>
+          <span className="text-[9px] font-semibold">{initial}</span>
         ) : (
-          <User size={13} />
+          <User size={10} />
         )}
       </button>
     </div>

@@ -1,9 +1,7 @@
 import type { CSSProperties } from 'react'
-import { Zap, Loader2, FolderOpen, MessageSquare, Undo2, Redo2, RefreshCw } from 'lucide-react'
+import { Zap, Loader2, MessageSquare, Undo2, Redo2, RefreshCw } from 'lucide-react'
 
 interface TopNavProps {
-  activeTab: string
-  onTabChange: (tab: string) => void
   onDispatch: () => void
   dispatching: boolean
   nodeCount: number
@@ -21,10 +19,7 @@ interface TopNavProps {
   onUpdateInstall: () => void
 }
 
-const TABS = ['Canvas', 'Files', 'Terminal', 'Logs', 'Settings']
-
 export default function TopNav({
-  activeTab, onTabChange,
   onDispatch, dispatching, nodeCount,
   projectDir, onChangeDir,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
@@ -34,14 +29,15 @@ export default function TopNav({
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
   return (
-    <div className="flex flex-col bg-panel border-b border-node-border flex-shrink-0">
+    <div className="flex bg-panel border-b border-node-border flex-shrink-0">
       {/* Row 1 — drag region (so the user can move the window from this bar)
           with the traffic lights inset over the left padding by hiddenInset.
           Buttons inside opt out via no-drag so clicks aren't swallowed. */}
       <div
-        className="flex items-center justify-between h-11 pr-4"
+        className="flex items-center h-11 pr-4 w-full"
         style={{ WebkitAppRegion: 'drag', paddingLeft: 88 } as CSSProperties}
       >
+        {/* Left: logo + dir picker */}
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
           <svg
             width="20"
@@ -64,11 +60,14 @@ export default function TopNav({
             className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-node border border-node-border transition-colors max-w-[200px]"
             title={projectDir}
           >
-            <FolderOpen size={11} className="text-amber-400 flex-shrink-0" />
             <span className="truncate font-mono">{dirName}</span>
           </button>
         </div>
 
+        {/* Spacer */}
+        <div className="flex-1" />
+
+        {/* Right: controls + dispatch */}
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
           <div className="flex items-center">
             <button
@@ -128,22 +127,6 @@ export default function TopNav({
         </div>
       </div>
 
-      {/* Row 2 — primary tabs. */}
-      <div className="flex items-center gap-0.5 h-9 px-4 border-t border-node-border/50">
-        {TABS.map(tab => (
-          <button
-            key={tab}
-            onClick={() => onTabChange(tab)}
-            className={`px-3 py-1.5 text-sm rounded transition-colors ${
-              activeTab === tab
-                ? 'text-fg bg-node'
-                : 'text-fg-muted hover:text-fg hover:bg-node/50'
-            }`}
-          >
-            {tab}
-          </button>
-        ))}
-      </div>
     </div>
   )
 }
