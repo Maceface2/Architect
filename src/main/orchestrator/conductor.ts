@@ -15,6 +15,18 @@ import type { AgentRuntime } from '../../shared/agentRuntimes'
 export type ConductorDecision =
   | { type: 'plan'; markdown: string; summary?: string }
   | {
+      type: 'explore'
+      // Read-only investigation tasks dispatched in parallel before the plan.
+      // Each zone returns one `done` event whose `structured` payload carries
+      // the exploration_report shape (see prompts/zone.ts). No `dependsOn` —
+      // exploration runs flat; synthesis happens afterwards in {type:"plan"}.
+      assignments: Array<{
+        zoneId: string
+        body: string
+        taskId?: string
+      }>
+    }
+  | {
       type: 'assign'
       assignments: Array<{
         zoneId: string
@@ -88,6 +100,24 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
     }
     if (!assignments.length) return null
     decision = { type: 'assign', assignments }
+  } else if (s.type === 'explore') {
+    if (!Array.isArray(s.assignments)) return null
+    const assignments: Array<{ zoneId: string; body: string; taskId?: string }> = []
+    for (const row of s.assignments) {
+      if (!row || typeof row !== 'object') return null
+      const a = row as Record<string, unknown>
+      if (typeof a.zoneId !== 'string' || typeof a.body !== 'string') return null
+      if (a.zoneId.trim().length === 0) return null
+      if (a.body.trim().length === 0) return null
+      const entry: { zoneId: string; body: string; taskId?: string } = {
+        zoneId: a.zoneId,
+        body: a.body,
+      }
+      if (typeof a.taskId === 'string') entry.taskId = a.taskId
+      assignments.push(entry)
+    }
+    if (!assignments.length) return null
+    decision = { type: 'explore', assignments }
   } else if (s.type === 'answer') {
     if (typeof s.targetZoneId !== 'string' || typeof s.body !== 'string') return null
     if (s.targetZoneId.trim().length === 0) return null
@@ -122,7 +152,22 @@ export function parseDecision(event: ActivityEvent): ParsedDecision | null {
 
 export function composeInitialTurn(userPrompt: string): string {
   const trimmed = userPrompt.trim()
-  return `New dispatch. User task:\n${trimmed || '(empty — ask the user for one before assigning work)'}\n\nFirst emit one {type:"plan"} decision line with a markdown plan: overall goal, engaged zones, per-zone responsibilities, dependencies/order, cross-zone contracts, acceptance criteria, and non-goals/constraints. After the harness confirms the plan was recorded, you may emit revised {type:"plan"} decisions if the user prompts changes in this same session. Only emit {type:"assign"} when the current recorded plan is ready to execute.`
+  return `New dispatch. User task:
+${trimmed || '(empty — ask the user for one before assigning work)'}
+
+**Default flow: delegate code reading to zones via {type:"explore"} before you plan.** Each zone reads its own slice in parallel and returns a structured exploration_report (scope, current state, dependencies, findings, proposed work). The harness collects them, diffs cross-zone contracts (needs_from vs provides_to), and sends you the bundle plus any mismatches as one user turn. You then synthesize {type:"plan"} grounded in concrete reports instead of canvas projection alone.
+
+Skip exploration only for trivial / well-scoped tasks (single-file change, isolated tweak). For anything spanning multiple zones, anything with uncertain scope, or anything where you'd otherwise read code yourself — emit {type:"explore"} first.
+
+You retain the right to read project files yourself for cross-zone reconciliation when reports conflict, look thin, or surface a contract mismatch you need to verify. Use it as an escape hatch, not the default.
+
+Sequence:
+1. (optional but usual) {type:"explore"} → harness dispatches read-only investigations to zones in parallel.
+2. Harness sends one user turn with all exploration_reports + contract-mismatch summary.
+3. {type:"plan"} → markdown plan grounded in reports: goal, engaged zones, per-zone responsibilities, ordering/dependencies, cross-zone contracts, acceptance criteria, non-goals.
+4. {type:"assign"} → execution waves. Plan can be revised mid-dispatch with another {type:"plan"} if the user prompts changes.
+
+The dispatch stays open after the first wave finishes. When the user types more requests at you, treat them as follow-up dispatches — assign new tasks, optionally revise the plan, ask zones questions on the user's behalf. Only emit {type:"final"} when the user signals they're done with this dispatch.`
 }
 
 // Plan-mode kick-off. The user pairs with the conductor directly to shape
@@ -142,19 +187,34 @@ export function composePlanModeInitialTurn(userPrompt: string, conductorRuntime:
   return `New dispatch in **plan mode**. User task:
 ${trimmed || '(empty — ask the user what they want built)'}
 
-You are paired with the user directly: they will type into your terminal. Work through the plan with them. Read project source files relevant to the task — you catch integration issues zones can't see. Zones do NOT run their own plan loops; planning is yours. Cover:
+You are paired with the user directly: they will type into your terminal. Work through the plan with them.
 
-- which zones own which files / parts of the system
-- seams between zones (interface contracts, shared file paths)
+**Default flow: delegate code reading to zones via {type:"explore"}.** When the user's task touches multiple zones or has uncertain scope, your first move (after any clarifying questions) is one \`{type:"explore"}\` decision dispatching read-only investigations to each relevant zone. Each zone reads its own slice in parallel and returns an exploration_report (scope, current state, dependencies, findings, proposed work, optional architecture flag). The harness bundles them with a cross-zone contract-mismatch summary and sends them back as one user turn. You then ground the plan you build with the user in those reports instead of skimming code yourself.
+
+Skip exploration only for trivial / single-zone changes. Do NOT default to reading project files yourself — that's the slower serial path and the whole point of the zones is they can audit their own slices in parallel.
+
+You may still read project files yourself as an **escape hatch** for cross-zone reconciliation: when two zones' reports disagree on a contract, when one zone's report is thin, or when the harness flags a mismatch you need to verify directly. Use it for surgical reads, not as the default investigation strategy.
+
+Cover with the user:
+- which zones own which files / parts of the system (informed by exploration_reports)
+- seams between zones (interface contracts, shared file paths) — reconcile contract mismatches surfaced by the harness
 - order of operations and what blocks what
 - acceptance criteria
 - anything ambiguous in the user's task
 
 ${approvalGuidance}
 
-**Canvas is frozen for this dispatch.** Zones/components/edges shown above are a snapshot; zones were spawned from it. If the discussion uncovers a needed structural change (add/remove/rename a zone, move a component), call it out and ask the user to update the canvas in the UI — that only takes effect on a fresh dispatch.
+**Canvas is frozen for this dispatch.** Zones/components/edges shown above are a snapshot; zones were spawned from it. If exploration reports flag a structural change (\`architecture_update_required: true\`), or the discussion uncovers one, tell the user to apply it via the Architecture Assistant — the change takes effect on the next dispatch, not this one.
 
-During planning, respond in prose. Do NOT emit \`{type:"assign"}\` yet. When the user approves, emit one \`{type:"plan"}\` activity line with the agreed markdown plan, wait for harness confirmation, and only then emit \`{type:"assign"}\`. If the user prompts more changes, emit another \`{type:"plan"}\` revision.`
+Sequence:
+1. (usual) Clarifying \`AskUserQuestion\` if the task is ambiguous.
+2. (usual for multi-zone) \`{type:"explore"}\` → harness dispatches read-only investigations.
+3. Harness sends bundled exploration_reports + contract-mismatch summary back as one user turn.
+4. Discuss the plan with the user in prose, grounded in reports.
+5. On user approval, emit one \`{type:"plan"}\` with the agreed markdown plan.
+6. \`{type:"assign"}\` only after the plan is recorded. Revise with another \`{type:"plan"}\` if the user prompts changes.
+
+The dispatch stays open after the first wave finishes. When the user types more requests at you, treat them as follow-up dispatches — assign new tasks, optionally revise the plan, ask zones questions on the user's behalf. Only emit \`{type:"final"}\` when the user signals they're done with this dispatch.`
 }
 
 export function composePlanRecordedTurn(planRevision: number, planPath: string, workboardPath: string): string {
@@ -204,7 +264,7 @@ export function composeStaleTurn(
 }
 
 export function composeAllDoneTurn(): string {
-  return `All engaged zones reported done. Emit one {type:"final","summary":"..."} decision for the user.`
+  return `All engaged zones reported done for the current wave. The dispatch stays open — zones are still alive and you can dispatch more work. Stand by for the user's next instruction. If they ask for follow-up work (a tweak, a question for a zone, a new feature), emit {type:"assign"} (revising the plan first via {type:"plan"} if scope expanded). Only emit {type:"final","summary":"..."} when the user signals they're done with this dispatch (e.g. "we're done", "close it out", or by closing the UI).`
 }
 
 export function composePtyExitTurn(
@@ -242,12 +302,18 @@ export function composeUnassignedAskDroppedTurn(
 // empty-body, and unknown-dependency reasons (parametric so we don't
 // proliferate composers).
 export function composeAssignRejectedTurn(
-  reason: 'plan-required' | 'unknown-zone' | 'duplicate-task' | 'empty-body' | 'unknown-dependency',
-  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[]; unknownDependency?: string },
+  reason: 'plan-required' | 'exploration-incomplete' | 'unknown-zone' | 'duplicate-task' | 'empty-body' | 'unknown-dependency',
+  details: { zoneId?: string; taskId?: string; knownZoneIds?: string[]; unknownDependency?: string; pendingExploration?: string[] },
 ): string {
   switch (reason) {
     case 'plan-required':
       return `Assignment rejected: no shared plan has been recorded yet. First emit {type:"plan", markdown:"..."} with the big-picture plan. You may revise that plan through more {type:"plan"} decisions in this same dispatch before assigning work.`
+    case 'exploration-incomplete': {
+      const pending = details.pendingExploration?.length
+        ? details.pendingExploration.join(', ')
+        : '(unknown)'
+      return `Assignment rejected: exploration is still in progress. Waiting on: ${pending}. Wait for the harness to forward the exploration_report bundle, then emit {type:"plan"} before assigning execution work.`
+    }
     case 'unknown-zone': {
       const known = details.knownZoneIds?.length ? details.knownZoneIds.join(', ') : '(none)'
       return `Assignment to unknown zone \`${details.zoneId ?? '?'}\` rejected. Known zones: ${known}. Reassign or emit {type:"final"}.`
@@ -293,6 +359,88 @@ export function composeQueuedTaskAutoFailedTurn(
 ): string {
   const verb = upstreamFate === 'failed' ? 'exhausted retries' : 'was cancelled'
   return `Queued task ${taskId} for ${zoneLabel} (\`${participantId}\`) auto-failed: upstream ${deadUpstreamLabel} (\`${deadUpstreamId}\`) ${verb}, so the dependency can never be satisfied. Reassign with a different plan or emit {type:"final"} if the dispatch is dead.`
+}
+
+// All exploration tasks are done; bundle the structured reports + a
+// contract-mismatch summary into one user turn. The conductor reads this
+// and emits {type:"plan"} grounded in concrete findings (or {type:"explore"}
+// again for follow-ups, or targeted file reads for reconciliation).
+export interface ExplorationReport {
+  participantId: string
+  label: string
+  taskId: string
+  scopeSummary: string
+  currentState: string
+  needsFrom: string[]
+  providesTo: string[]
+  findings: string[]
+  proposedWork: string
+  architectureUpdateRequired: boolean
+  architectureChangeDescription?: string
+}
+
+export interface ContractMismatch {
+  // 'unmatched-need' = zone A says it needs X from B, B's provides_to lacks
+  // matching content. 'unmatched-provide' = zone A says it provides X to B,
+  // B's needs_from lacks matching content.
+  kind: 'unmatched-need' | 'unmatched-provide'
+  fromParticipantId: string
+  fromLabel: string
+  toParticipantId: string
+  toLabel: string
+  detail: string
+}
+
+export function composeExplorationCompleteTurn(
+  reports: ExplorationReport[],
+  mismatches: ContractMismatch[],
+): string {
+  const lines: string[] = [
+    `All exploration tasks reported done (${reports.length}). Synthesize a {type:"plan"} grounded in these reports.`,
+    '',
+    '## Reports',
+    '',
+  ]
+  for (const r of reports) {
+    lines.push(`### ${r.label} (\`${r.participantId}\`) — ${r.taskId}`)
+    lines.push(`- **Scope:** ${r.scopeSummary}`)
+    lines.push(`- **Current state:** ${r.currentState}`)
+    if (r.needsFrom.length) lines.push(`- **Needs from:** ${r.needsFrom.join(', ')}`)
+    if (r.providesTo.length) lines.push(`- **Provides to:** ${r.providesTo.join(', ')}`)
+    if (r.findings.length) lines.push(`- **Findings:** ${r.findings.join('; ')}`)
+    lines.push(`- **Proposed work:** ${r.proposedWork}`)
+    if (r.architectureUpdateRequired) {
+      lines.push(`- **⚠ architecture_update_required:** ${r.architectureChangeDescription ?? '(no description provided)'}`)
+    }
+    lines.push('')
+  }
+  if (mismatches.length) {
+    lines.push('## Cross-zone contract mismatches')
+    lines.push('')
+    for (const m of mismatches) {
+      lines.push(`- **${m.kind}** — ${m.fromLabel} (\`${m.fromParticipantId}\`) → ${m.toLabel} (\`${m.toParticipantId}\`): ${m.detail}`)
+    }
+    lines.push('')
+    lines.push('Reconcile each mismatch in your plan: either revise the contract, ask a clarifying question via {type:"explore"} again, or read the relevant files directly.')
+  } else {
+    lines.push('## Cross-zone contract mismatches')
+    lines.push('')
+    lines.push('_(no contract mismatches detected across reports.)_')
+  }
+  lines.push('')
+  lines.push('Now emit one {type:"plan"} decision integrating these findings, then {type:"assign"} when the plan is ready.')
+  return lines.join('\n')
+}
+
+// Zone flagged a structural canvas change during exploration or execution.
+// Notify-only contract: conductor pauses, user resolves manually via the
+// Architecture Assistant, change applies on the next dispatch.
+export function composeArchitectureFlagTurn(
+  zoneLabel: string,
+  participantId: string,
+  description: string,
+): string {
+  return `Zone ${zoneLabel} (\`${participantId}\`) flagged a canvas change: ${description}\n\nPause execution dispatch. Tell the user to apply this change via the Architecture Assistant — the canvas is frozen for the current dispatch, so the change takes effect on the next one. Emit {type:"noop"} to acknowledge, or carry on with non-conflicting work if the flag does not block the rest of the plan.`
 }
 
 // Two or more zones are blocked on each other. Surface the cycle to the

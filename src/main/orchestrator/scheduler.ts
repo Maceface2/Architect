@@ -1,9 +1,12 @@
 import { randomBytes } from 'crypto'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
 import {
+  appendArchitectureFlag,
   appendDispatchConductorDecision,
+  appendExplorationReport,
   setDispatchCompletedZones,
   setDispatchPendingTasks,
+  setDispatchPhase,
   setDispatchPlanMetadata,
   type PendingTask,
 } from '../dispatchCapture'
@@ -16,9 +19,11 @@ import {
 } from './activity'
 import {
   composeAllDoneTurn,
+  composeArchitectureFlagTurn,
   composeAssignRejectedTurn,
   composeCancelRejectedTurn,
   composeDeadlockTurn,
+  composeExplorationCompleteTurn,
   composePlanRecordedTurn,
   composePrematureFinalTurn,
   composePtyExitTurn,
@@ -30,6 +35,8 @@ import {
   composeZoneFailedTurn,
   parseDecision,
   type ConductorDecision,
+  type ContractMismatch,
+  type ExplorationReport,
   type ParsedDecision,
 } from './conductor'
 import type { OrchestrationEvent } from './orchestrationLog'
@@ -84,6 +91,11 @@ export interface SchedulerConfig {
   initialPlanRevision?: number
   userPrompt?: string
   initialPendingTasks?: PendingTask[]
+  // Exploration phase rehydration. If absent, default is 'planning' (the
+  // pre-exploration baseline behavior). On resume, the scheduler restores
+  // these so a dispatch killed mid-exploration picks up where it left off.
+  initialDispatchPhase?: 'exploring' | 'planning' | 'executing'
+  initialExplorationReports?: Array<{ taskId: string; participantId: string; reportJson: string; ts: string }>
 }
 
 export interface SchedulerDeps {
@@ -161,6 +173,23 @@ export class Scheduler {
   private finalEmitted = false
   private planReady = false
   private planRevision = 0
+  // Exploration phase state. dispatchPhase defaults to 'planning' so legacy
+  // dispatches (no {type:"explore"} ever issued) behave identically to the
+  // pre-exploration baseline. The phase advances exploring → planning →
+  // executing as the conductor emits {type:"explore"} → reports complete →
+  // {type:"plan"} → first {type:"assign"}.
+  private dispatchPhase: 'exploring' | 'planning' | 'executing' = 'planning'
+  // taskIds the conductor dispatched as exploration. Used to gate "all
+  // exploration done" and to build the structured bundle that goes back to
+  // the conductor.
+  private readonly explorationTaskIds = new Set<string>()
+  // Reports collected during the exploration phase (keyed by taskId so the
+  // bundle order matches dispatch order). Persisted to DispatchRecord too.
+  private readonly explorationReports = new Map<string, ExplorationReport>()
+  // Set true once composeExplorationCompleteTurn has been written to the
+  // conductor — guards against re-emitting if the scheduler reattaches and
+  // tails the same `done` events on resume.
+  private explorationCompleteEmitted = false
 
   constructor(config: SchedulerConfig, deps: SchedulerDeps) {
     this.config = config
@@ -180,6 +209,24 @@ export class Scheduler {
     if (restoredRevision > 0 && hasSharedPlan(config.projectDir, config.dispatchId)) {
       this.planReady = true
       this.planRevision = restoredRevision
+    }
+    // Restore exploration state on resume. If the prior run was mid-exploring,
+    // come back in the same phase so the conductor doesn't get a stale
+    // "exploration complete" turn — those reports already landed.
+    if (config.initialDispatchPhase) {
+      this.dispatchPhase = config.initialDispatchPhase
+    } else if (this.planReady) {
+      // Pre-exploration v5 records that have a recorded plan are mid-execution.
+      this.dispatchPhase = 'executing'
+    }
+    if (config.initialExplorationReports?.length) {
+      for (const r of config.initialExplorationReports) {
+        const parsed = parseExplorationReportJson(r.reportJson, r.taskId, r.participantId, this.participantById.get(r.participantId)?.label ?? r.participantId)
+        if (parsed) this.explorationReports.set(r.taskId, parsed)
+      }
+      // Reports already exist from the prior run — don't re-emit the
+      // bundle turn (the conductor saw it last time around).
+      this.explorationCompleteEmitted = true
     }
   }
 
@@ -402,10 +449,29 @@ export class Scheduler {
   private executeDecision(parsed: ParsedDecision): void {
     const decision = parsed.decision
     switch (decision.type) {
+      case 'explore':
+        this.dispatchExplorationWave(decision)
+        break
       case 'plan':
         this.recordSharedPlan(decision)
         break
       case 'assign':
+        if (this.dispatchPhase === 'exploring') {
+          const pending = Array.from(this.explorationTaskIds).filter(tid => {
+            const t = this.tasksByTaskId.get(tid)
+            return t ? !isTerminalStatus(t.status) : false
+          })
+          this.recordOrchestration({
+            kind: 'assign-rejected',
+            summary: 'Rejected assign during exploration phase',
+            structured: { reason: 'exploration-incomplete', pendingExploration: pending },
+          })
+          this.writeToParticipant(
+            CONDUCTOR_PARTICIPANT_ID,
+            composeAssignRejectedTurn('exploration-incomplete', { pendingExploration: pending }),
+          )
+          break
+        }
         if (!this.planReady) {
           this.recordOrchestration({
             kind: 'assign-rejected',
@@ -417,6 +483,11 @@ export class Scheduler {
             composeAssignRejectedTurn('plan-required', {}),
           )
           break
+        }
+        // First successful assign past the plan gate flips us into executing.
+        if (this.dispatchPhase !== 'executing') {
+          this.dispatchPhase = 'executing'
+          this.persistDispatchPhase()
         }
         for (const assignment of decision.assignments) {
           const zone = this.findZoneByLoose(assignment.zoneId)
@@ -707,6 +778,12 @@ export class Scheduler {
     } catch (err) {
       console.error('[scheduler] failed to persist plan metadata', err)
     }
+    // Plan recorded → leave exploring/planning for the planning phase. The
+    // executing phase is entered on the first successful {type:"assign"}.
+    if (this.dispatchPhase !== 'planning' && this.dispatchPhase !== 'executing') {
+      this.dispatchPhase = 'planning'
+      this.persistDispatchPhase()
+    }
     this.recordOrchestration({
       kind: 'plan-recorded',
       participantId: CONDUCTOR_PARTICIPANT_ID,
@@ -716,6 +793,144 @@ export class Scheduler {
     this.writeToParticipant(
       CONDUCTOR_PARTICIPANT_ID,
       composePlanRecordedTurn(this.planRevision, planPath, workboardPath),
+    )
+  }
+
+  // Dispatch a wave of read-only exploration tasks. Validates each assignment
+  // (unknown zones, duplicate ids, empty bodies) using the same primitives
+  // {type:"assign"} uses. No `dependsOn` — exploration is flat. Each zone
+  // reads its slice and emits a `done` event whose `structured` payload
+  // carries the exploration_report shape.
+  private dispatchExplorationWave(decision: Extract<ConductorDecision, { type: 'explore' }>): void {
+    if (this.dispatchPhase === 'executing' || this.planReady) {
+      // Exploration only makes sense before the plan is recorded. Reject so
+      // the conductor doesn't rewind by accident — if it really wants to
+      // explore mid-execution, it can {type:"assign"} a read-only task body.
+      this.recordOrchestration({
+        kind: 'explore-rejected',
+        summary: 'Rejected explore after plan was recorded',
+        structured: { reason: 'plan-already-recorded' },
+      })
+      this.writeToParticipant(
+        CONDUCTOR_PARTICIPANT_ID,
+        'Exploration rejected: a shared plan is already recorded. Continue with {type:"assign"} (you can include a read-only investigation task body if you need more info before assigning the next wave).',
+      )
+      return
+    }
+    if (this.dispatchPhase !== 'exploring') {
+      this.dispatchPhase = 'exploring'
+      this.persistDispatchPhase()
+    }
+    for (const assignment of decision.assignments) {
+      const zone = this.findZoneByLoose(assignment.zoneId)
+      if (!zone) {
+        this.recordOrchestration({
+          kind: 'assign-rejected',
+          summary: `Rejected explore to unknown zone "${assignment.zoneId}"`,
+          structured: { reason: 'unknown-zone', zoneId: assignment.zoneId, phase: 'exploring' },
+        })
+        this.writeToParticipant(
+          CONDUCTOR_PARTICIPANT_ID,
+          composeAssignRejectedTurn('unknown-zone', {
+            zoneId: assignment.zoneId,
+            knownZoneIds: this.config.zones.map(z => z.participantId),
+          }),
+        )
+        continue
+      }
+      if (assignment.taskId && this.tasksByTaskId.has(assignment.taskId)) {
+        this.recordOrchestration({
+          kind: 'assign-rejected',
+          participantId: zone.participantId,
+          taskId: assignment.taskId,
+          summary: `Rejected duplicate explore taskId ${assignment.taskId}`,
+          structured: { reason: 'duplicate-task', phase: 'exploring' },
+        })
+        this.writeToParticipant(
+          CONDUCTOR_PARTICIPANT_ID,
+          composeAssignRejectedTurn('duplicate-task', { taskId: assignment.taskId }),
+        )
+        continue
+      }
+      if (!assignment.body || assignment.body.trim().length === 0) {
+        this.recordOrchestration({
+          kind: 'assign-rejected',
+          participantId: zone.participantId,
+          summary: `Rejected empty-body explore to ${zone.label}`,
+          structured: { reason: 'empty-body', phase: 'exploring' },
+        })
+        this.writeToParticipant(
+          CONDUCTOR_PARTICIPANT_ID,
+          composeAssignRejectedTurn('empty-body', { zoneId: zone.participantId }),
+        )
+        continue
+      }
+      // Prepend the EXPLORE marker so the zone prompt's exploration handler
+      // fires. The zone treats this as read-only and the `done` event MUST
+      // carry the exploration_report structured payload.
+      const created = this.createInFlightTask({
+        zoneId: zone.zoneId,
+        participantId: zone.participantId,
+        body: `[exploration] ${assignment.body}`,
+        taskId: assignment.taskId,
+        attempts: 0,
+        initialStatus: 'pending',
+      })
+      if (!created) continue
+      this.explorationTaskIds.add(created.taskId)
+      this.recordOrchestration({
+        kind: 'exploration-dispatched',
+        participantId: zone.participantId,
+        taskId: created.taskId,
+        summary: `Dispatched exploration to ${zone.label}`,
+      })
+      this.writeToParticipant(zone.participantId, this.composeExploreTaskPrompt(created))
+    }
+  }
+
+  private composeExploreTaskPrompt(task: InFlightTask): string {
+    return `EXPLORE ${task.taskId}: ${task.body}`
+  }
+
+  private persistDispatchPhase(): void {
+    try {
+      setDispatchPhase(this.config.projectDir, this.config.architectSessionId, this.dispatchPhase)
+    } catch (err) {
+      console.error('[scheduler] failed to persist dispatchPhase', err)
+    }
+  }
+
+  // Once every explorationTaskId has reached a terminal state (done / failed /
+  // cancelled), build the bundle + contract-mismatch summary and send one user
+  // turn to the conductor. Failed exploration zones simply lack a report in
+  // the bundle — the conductor sees the gap and decides whether to re-explore,
+  // assign without that zone's input, or final out.
+  private maybeFinishExplorationPhase(): void {
+    if (this.dispatchPhase !== 'exploring') return
+    if (this.explorationCompleteEmitted) return
+    if (this.explorationTaskIds.size === 0) return
+    for (const tid of this.explorationTaskIds) {
+      const task = this.tasksByTaskId.get(tid)
+      if (!task) continue
+      if (!isTerminalStatus(task.status)) return
+    }
+    // All exploration tasks done. Build the bundle.
+    const reports: ExplorationReport[] = []
+    for (const tid of this.explorationTaskIds) {
+      const r = this.explorationReports.get(tid)
+      if (r) reports.push(r)
+    }
+    const mismatches = computeContractMismatches(reports)
+    this.explorationCompleteEmitted = true
+    this.recordOrchestration({
+      kind: 'exploration-complete',
+      participantId: CONDUCTOR_PARTICIPANT_ID,
+      summary: `Exploration complete (${reports.length} reports, ${mismatches.length} contract mismatches)`,
+      structured: { reportCount: reports.length, mismatches },
+    })
+    this.writeToParticipant(
+      CONDUCTOR_PARTICIPANT_ID,
+      composeExplorationCompleteTurn(reports, mismatches),
     )
   }
 
@@ -764,6 +979,11 @@ export class Scheduler {
   private handleZoneActivity(participantId: string, event: ActivityEvent): void {
     const zone = this.participantById.get(participantId)
     if (!zone) return
+    // Architecture flags are honored on any zone event kind (the zone may
+    // catch a structural mismatch during task-received, progress, or done).
+    // Fire before the kind-specific switch so a malformed `done` payload
+    // doesn't suppress the flag.
+    this.maybeHandleArchitectureFlag(zone, event)
     const currentTaskId = this.currentTaskByParticipant.get(participantId)
     const task = currentTaskId ? this.tasksByTaskId.get(currentTaskId) : undefined
 
@@ -854,6 +1074,23 @@ export class Scheduler {
     task.status = 'done'
     this.currentTaskByParticipant.delete(zone.participantId)
     this.blockedOnByParticipant.delete(zone.participantId)
+
+    // Was this an exploration task? Capture the structured report and short-
+    // circuit the regular done flow — exploration `done` events do NOT mark
+    // the zone as completed (zones do real execution work after exploration),
+    // do not release queued tasks, and do not feed the all-done detector.
+    // Architecture flags were already handled at the top of handleZoneActivity.
+    if (this.explorationTaskIds.has(taskId)) {
+      this.captureExplorationReport(zone, task, event)
+      this.updateStateAtomic(zone.participantId, {
+        lastTaskStatus: 'done',
+        lastTaskId: taskId,
+      })
+      this.persistPendingTasks()
+      this.maybeFinishExplorationPhase()
+      return true
+    }
+
     // Mark the zone as having completed at least one task. Queued tasks
     // gate on this set, not on per-task ids — once a zone reaches `done`,
     // anything `dependsOn` it is unblocked.
@@ -886,6 +1123,67 @@ export class Scheduler {
     return true
   }
 
+  private captureExplorationReport(zone: SchedulerZone, task: InFlightTask, event: ActivityEvent): void {
+    const structured = event.structured && typeof event.structured === 'object'
+      ? (event.structured as Record<string, unknown>)
+      : null
+    if (!structured) {
+      console.warn(`[scheduler] exploration done from ${zone.participantId} missing structured payload; skipping report capture`)
+      return
+    }
+    const report = parseExplorationReport(structured, task.taskId, zone.participantId, zone.label)
+    if (!report) {
+      console.warn(`[scheduler] exploration report from ${zone.participantId} failed validation; skipping`)
+      return
+    }
+    this.explorationReports.set(task.taskId, report)
+    try {
+      appendExplorationReport(this.config.projectDir, this.config.architectSessionId, {
+        taskId: task.taskId,
+        participantId: zone.participantId,
+        reportJson: JSON.stringify(structured),
+      })
+    } catch (err) {
+      console.error('[scheduler] failed to persist exploration report', err)
+    }
+  }
+
+  // Notify-only architecture flag handling. Zones can flag a structural
+  // canvas change at any kind of event (task-received, progress, ask, done,
+  // failed, note) by setting structured.architecture_update_required = true
+  // with an optional architecture_change_description. We persist the flag,
+  // broadcast it to the renderer, and pty.write the conductor a pause turn.
+  private maybeHandleArchitectureFlag(zone: SchedulerZone, event: ActivityEvent): void {
+    const structured = event.structured && typeof event.structured === 'object'
+      ? (event.structured as Record<string, unknown>)
+      : null
+    if (!structured) return
+    if (structured.architecture_update_required !== true) return
+    const description = typeof structured.architecture_change_description === 'string'
+      && structured.architecture_change_description.trim().length > 0
+      ? structured.architecture_change_description.trim()
+      : '(no description provided)'
+    try {
+      appendArchitectureFlag(this.config.projectDir, this.config.architectSessionId, {
+        participantId: zone.participantId,
+        description,
+      })
+    } catch (err) {
+      console.error('[scheduler] failed to persist architecture flag', err)
+    }
+    this.recordOrchestration({
+      kind: 'architecture-flag',
+      participantId: zone.participantId,
+      taskId: event.taskId,
+      summary: `${zone.label} flagged a canvas change: ${description}`,
+      structured: { description },
+    })
+    this.writeToParticipant(
+      CONDUCTOR_PARTICIPANT_ID,
+      composeArchitectureFlagTurn(zone.label, zone.participantId, description),
+    )
+  }
+
   private onZoneTaskFailed(zone: SchedulerZone, event: ActivityEvent): boolean {
     const taskId = event.taskId ?? this.currentTaskByParticipant.get(zone.participantId)
     if (!taskId) {
@@ -903,6 +1201,8 @@ export class Scheduler {
       console.warn(`[scheduler] ${zone.participantId} cross-zone failed dropped: taskId=${taskId} belongs to ${task.participantId}`)
       return false
     }
+
+    const isExploration = this.explorationTaskIds.has(taskId)
 
     // Retry path: keep the same taskId so the conductor's outgoing-task
     // correlation stays stable. Only the attempts counter increments.
@@ -922,16 +1222,17 @@ export class Scheduler {
         summary: `Retrying ${zone.label} (attempt ${task.attempts}/${zone.retriesAllowed})`,
         structured: { attempts: task.attempts, retriesAllowed: zone.retriesAllowed, reason: event.content },
       })
-      // Re-deliver immediately. Include the prior error in the prompt so
-      // the zone knows to try a different approach.
-      this.writeToParticipant(
-        zone.participantId,
-        this.composeTaskPrompt(
-          task,
-          `TASK ${taskId} (retry ${task.attempts}/${zone.retriesAllowed})`,
-          `Previous attempt failed: ${event.content}\nTry a different approach.`,
-        ),
-      )
+      // Re-deliver immediately. Exploration tasks re-issue as EXPLORE
+      // (no shared-plan context — the plan doesn't exist yet); regular
+      // tasks re-issue with the standard plan-context prefix.
+      const retryPrompt = isExploration
+        ? `EXPLORE ${taskId} (retry ${task.attempts}/${zone.retriesAllowed}): ${task.body}\n\nPrevious attempt failed: ${event.content}\nTry a different approach. Stay read-only.`
+        : this.composeTaskPrompt(
+            task,
+            `TASK ${taskId} (retry ${task.attempts}/${zone.retriesAllowed})`,
+            `Previous attempt failed: ${event.content}\nTry a different approach.`,
+          )
+      this.writeToParticipant(zone.participantId, retryPrompt)
       this.writeToParticipant(
         CONDUCTOR_PARTICIPANT_ID,
         composeZoneFailedTurn(
@@ -977,8 +1278,16 @@ export class Scheduler {
       ),
     )
     // Cascade auto-fail to anything queued waiting on this zone — it
-    // didn't reach `done`, so the dep gate can never close.
-    this.cascadeAutoFail(zone.participantId, 'failed')
+    // didn't reach `done`, so the dep gate can never close. Skipped for
+    // exploration tasks since they don't have downstream dependents.
+    if (!isExploration) {
+      this.cascadeAutoFail(zone.participantId, 'failed')
+    } else {
+      // A failed exploration task may unblock the exploration phase if it
+      // was the last one outstanding — the bundle will simply lack this
+      // zone's report, and the conductor decides next steps.
+      this.maybeFinishExplorationPhase()
+    }
     return true
   }
 
@@ -1484,6 +1793,10 @@ function orchestrationSummaryForDecision(decision: ConductorDecision): string {
   switch (decision.type) {
     case 'plan':
       return `Conductor plan${decision.summary ? `: ${decision.summary}` : ''}`
+    case 'explore':
+      return decision.assignments.length === 1
+        ? `Conductor explore → ${decision.assignments[0].zoneId}`
+        : `Conductor explore × ${decision.assignments.length}`
     case 'assign':
       return decision.assignments.length === 1
         ? `Conductor assign → ${decision.assignments[0].zoneId}`
@@ -1497,4 +1810,152 @@ function orchestrationSummaryForDecision(decision: ConductorDecision): string {
     case 'noop':
       return `Conductor noop${decision.reason ? `: ${decision.reason}` : ''}`
   }
+}
+
+// Parse an exploration_report `structured` payload into the typed ExplorationReport
+// shape consumed by composeExplorationCompleteTurn. Returns null if required
+// fields are missing or malformed — callers log and skip.
+function parseExplorationReport(
+  structured: Record<string, unknown>,
+  taskId: string,
+  participantId: string,
+  label: string,
+): ExplorationReport | null {
+  // The zone prompt instructs zones to set kind:'exploration-report' so the
+  // payload is self-describing. We accept reports without that marker (legacy
+  // safety) but log the absence so misbehaving zones get noticed.
+  if (structured.kind !== undefined && structured.kind !== 'exploration-report') {
+    console.warn(`[scheduler] exploration report from ${participantId} has unexpected kind=${String(structured.kind)}`)
+  }
+  const scopeSummary = stringField(structured.scope_summary)
+  const currentState = stringField(structured.current_state)
+  const proposedWork = stringField(structured.proposed_work)
+  if (scopeSummary === null || currentState === null || proposedWork === null) return null
+  const dependencies = (structured.dependencies && typeof structured.dependencies === 'object'
+    ? structured.dependencies
+    : {}) as Record<string, unknown>
+  const needsFrom = stringArrayField(dependencies.needs_from)
+  const providesTo = stringArrayField(dependencies.provides_to)
+  const findings = stringArrayField(structured.findings)
+  const architectureUpdateRequired = structured.architecture_update_required === true
+  const architectureChangeDescription = typeof structured.architecture_change_description === 'string'
+    && structured.architecture_change_description.trim().length > 0
+    ? structured.architecture_change_description.trim()
+    : undefined
+  return {
+    participantId,
+    label,
+    taskId,
+    scopeSummary,
+    currentState,
+    needsFrom,
+    providesTo,
+    findings,
+    proposedWork,
+    architectureUpdateRequired,
+    architectureChangeDescription,
+  }
+}
+
+function parseExplorationReportJson(
+  reportJson: string,
+  taskId: string,
+  participantId: string,
+  label: string,
+): ExplorationReport | null {
+  try {
+    const parsed = JSON.parse(reportJson)
+    if (!parsed || typeof parsed !== 'object') return null
+    return parseExplorationReport(parsed as Record<string, unknown>, taskId, participantId, label)
+  } catch {
+    return null
+  }
+}
+
+function stringField(v: unknown): string | null {
+  if (typeof v !== 'string') return null
+  const t = v.trim()
+  return t.length > 0 ? t : null
+}
+
+function stringArrayField(v: unknown): string[] {
+  if (!Array.isArray(v)) return []
+  const out: string[] = []
+  for (const entry of v) {
+    if (typeof entry !== 'string') continue
+    const t = entry.trim()
+    if (t.length > 0) out.push(t)
+  }
+  return out
+}
+
+// Diff the dependencies declared across reports. For each "A needs X from B"
+// we check that B's provides_to contains a matching token (substring or
+// equality, case-insensitive). Vice versa for provides_to claims. The match
+// is intentionally loose — zones describe their contracts in prose, not in
+// strict identifiers — so this surfaces likely mismatches without false-
+// rejecting close-but-not-identical wording. The conductor reads the result
+// and decides.
+function computeContractMismatches(reports: ExplorationReport[]): ContractMismatch[] {
+  const byParticipantId = new Map<string, ExplorationReport>()
+  const byLabel = new Map<string, ExplorationReport>()
+  for (const r of reports) {
+    byParticipantId.set(r.participantId, r)
+    byLabel.set(r.label.toLowerCase(), r)
+  }
+  const findReport = (token: string): ExplorationReport | null => {
+    // Tokens may be participantIds, labels, or freeform — try ids first, then
+    // labels, then a permissive label-substring scan.
+    const direct = byParticipantId.get(token)
+    if (direct) return direct
+    const labelDirect = byLabel.get(token.toLowerCase())
+    if (labelDirect) return labelDirect
+    const lowered = token.toLowerCase()
+    for (const r of reports) {
+      if (lowered.includes(r.participantId.toLowerCase())) return r
+      if (lowered.includes(r.label.toLowerCase())) return r
+    }
+    return null
+  }
+  const mismatches: ContractMismatch[] = []
+  for (const r of reports) {
+    for (const need of r.needsFrom) {
+      const peer = findReport(need)
+      if (!peer || peer.participantId === r.participantId) continue
+      const matched = peer.providesTo.some(p => looselyMatches(p, r.label) || looselyMatches(p, r.participantId) || looselyMatches(need, p))
+      if (!matched) {
+        mismatches.push({
+          kind: 'unmatched-need',
+          fromParticipantId: r.participantId,
+          fromLabel: r.label,
+          toParticipantId: peer.participantId,
+          toLabel: peer.label,
+          detail: `${r.label} needs "${need}" but ${peer.label}'s provides_to does not list a matching item`,
+        })
+      }
+    }
+    for (const provide of r.providesTo) {
+      const peer = findReport(provide)
+      if (!peer || peer.participantId === r.participantId) continue
+      const matched = peer.needsFrom.some(n => looselyMatches(n, r.label) || looselyMatches(n, r.participantId) || looselyMatches(provide, n))
+      if (!matched) {
+        mismatches.push({
+          kind: 'unmatched-provide',
+          fromParticipantId: r.participantId,
+          fromLabel: r.label,
+          toParticipantId: peer.participantId,
+          toLabel: peer.label,
+          detail: `${r.label} provides "${provide}" but ${peer.label}'s needs_from does not list a matching item`,
+        })
+      }
+    }
+  }
+  return mismatches
+}
+
+function looselyMatches(a: string, b: string): boolean {
+  const la = a.toLowerCase().trim()
+  const lb = b.toLowerCase().trim()
+  if (!la || !lb) return false
+  return la === lb || la.includes(lb) || lb.includes(la)
 }

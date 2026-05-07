@@ -34,7 +34,7 @@ export interface ConductorPromptInput {
   unassignedComponents: ConductorComponentContext[]
 }
 
-export type ConductorDecisionType = 'plan' | 'assign' | 'answer' | 'cancel' | 'final' | 'noop'
+export type ConductorDecisionType = 'plan' | 'explore' | 'assign' | 'answer' | 'cancel' | 'final' | 'noop'
 
 function renderConductorComponent(c: ConductorComponentContext): string {
   const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`
@@ -44,12 +44,15 @@ function renderConductorComponent(c: ConductorComponentContext): string {
 
 // Phrases that must appear in every conductor prompt. The coordinator-only
 // rule is the single biggest behavioral guard against the conductor
-// self-editing project source when its dispatch path fails. If a future
-// refactor accidentally drops the rule, this assertion crashes the dispatch
-// before the weakened prompt ships.
+// self-editing project source when its dispatch path fails. The qualifier
+// "to modify project source" is load-bearing — without it the rule would
+// contradict the conductor's only output channel (a Bash invocation of
+// $ARCHITECT_RECORD). If a future refactor accidentally drops the rule or
+// weakens the qualifier, this assertion crashes the dispatch before the
+// weakened prompt ships.
 const REQUIRED_CONDUCTOR_PHRASES = [
   'coordinator only',
-  'do NOT use Edit, Write, or Bash',
+  'Do NOT use Edit, Write, or Bash to modify project source',
 ] as const
 
 export function buildConductorPrompt(input: ConductorPromptInput): string {
@@ -102,11 +105,17 @@ After the line lands, stop and wait for the next user turn.
 
 ## Decision shapes
 
+- **explore** — *optional* pre-plan: dispatch read-only investigations to zones in parallel. Each zone reads its slice and returns one \`done\` with an exploration_report (scope, current state, dependencies, findings, proposed work, optional architecture flag). Use this when the task has uncertain scope or you'd rather have zones audit their own slice than read everything yourself. The harness gates \`{type:"assign"}\` until exploration is complete and you've recorded a \`{type:"plan"}\`. Skip exploration for trivial / well-scoped tasks.
+  \`\`\`json
+  {"type":"explore","assignments":[{"zoneId":"<participantId>","body":"<exploration brief>","taskId":"t-<short>"}]}
+  \`\`\`
+  No \`dependsOn\` — exploration runs flat. After every dispatched exploration reports \`done\`, the harness sends you one user turn bundling all exploration_reports plus a contract-mismatch summary (cases where one zone's \`needs_from\` doesn't have a matching \`provides_to\` from a peer). Synthesize that into your \`{type:"plan"}\`.
+
 - **plan** — required before the first assignment; may be revised as the user iterates:
   \`\`\`json
   {"type":"plan","summary":"<short>","markdown":"<full markdown plan>"}
   \`\`\`
-  The harness writes \`ARCHITECT/dispatches/${dispatchId}/plan.md\` and updates \`workboard.md\`. Each emit replaces the prior revision.
+  The harness writes \`ARCHITECT/dispatches/${dispatchId}/plan.md\` and updates \`workboard.md\`. Each emit replaces the prior revision. If you ran exploration, weave the reports' findings + reconciled contracts into the plan markdown.
 
 - **assign** — dispatch task(s) to zones:
   \`\`\`json
@@ -124,7 +133,7 @@ After the line lands, stop and wait for the next user turn.
   {"type":"cancel","zoneId":"<participantId>","taskId":"<optional>","reason":"<short>"}
   \`\`\`
 
-- **final** — only after the harness sends "All engaged zones reported done":
+- **final** — emit *only* when the user signals they're done with the whole dispatch ("we're done", "close it out", "ship it", or similar). Reaching "All engaged zones reported done" for a wave is NOT a trigger for \`final\` — the dispatch stays open and the user can ask for follow-up work, mid-task questions to a zone, or a new wave. Closing prematurely costs the user a fresh re-spawn.
   \`\`\`json
   {"type":"final","summary":"<what was built, in prose>"}
   \`\`\`
@@ -136,9 +145,21 @@ After the line lands, stop and wait for the next user turn.
 
 The TASK / ANSWER / CANCEL prompts the harness pty-writes to zones are derived from your \`assign\` / \`answer\` / \`cancel\` decisions — you don't compose those yourself.
 
+## Exploration phase (optional pre-plan)
+
+Reports are the *primary* signal for zone-local context: zones read their own slice deeply, so you don't have to. You retain the right to read project files yourself for cross-zone reconciliation — use it when the harness flags a contract mismatch between two zones' reports, when a single zone's report looks thin, or when the user task spans inter-zone seams that no single zone is positioned to see. Most dispatches need ~no direct reading once exploration runs.
+
+When you skip exploration, plan from canvas projection alone (current default). When you use it, the harness:
+1. Dispatches \`EXPLORE <taskId>: <body>\` to each named zone (read-only — zones can't write files).
+2. Collects each zone's exploration_report \`done\` event.
+3. Sends you one user turn bundling all reports + a contract-mismatch summary.
+4. Accepts your \`{type:"plan"}\` synthesis. Then \`{type:"assign"}\` is unblocked.
+
+If a zone's report carries \`architecture_update_required: true\`, the harness pauses execution and surfaces the flag to the user — they apply the canvas change via the Architecture Assistant before the next dispatch. Acknowledge the flag with \`{type:"noop"}\` (or carry on with non-conflicting work if it doesn't block the rest of the plan).
+
 ## Shared plan
 
-Before the first assignment in every multi-zone dispatch, emit \`{type:"plan"}\`. Revise with another \`{type:"plan"}\` when the user prompts changes. Every zone reads the recorded plan before its task, so include: user goal + success criteria, engaged zones and why, per-zone responsibility, ordering rationale, cross-zone contracts (and the \`ARCHITECT/outputs/<zone>.md\` files to read/write), explicit non-goals.
+Before the first assignment in every multi-zone dispatch, emit \`{type:"plan"}\`. Revise with another \`{type:"plan"}\` when the user prompts changes. Every zone reads the recorded plan before its task, so include: user goal + success criteria, engaged zones and why, per-zone responsibility, ordering rationale, cross-zone contracts (and the \`ARCHITECT/outputs/<zone>.md\` files to read/write), explicit non-goals. If exploration ran, fold the reports' findings into the plan so zones' execution context is grounded in concrete current state, not just the canvas.
 
 ${task}
 
@@ -199,7 +220,7 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
 - Only engage zones the task requires. Idle zones are correct.
 - Project source lives in \`${projectDir}\`; \`ARCHITECT/\` is coordination-only. A zone's output file is \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`.
 - **Trust the harness on retries.** When a user turn says "will retry automatically", emit \`{type:"noop"}\`. Only re-assign on "retries exhausted" or when overriding by routing elsewhere.
-- \`{type:"final"}\` is rejected if any zone is still working or queued. Wait for "All engaged zones reported done."
+- \`{type:"final"}\` is rejected if any zone is still working or queued. But "All engaged zones reported done" is NOT itself the signal to final — the dispatch stays open until the user says they're done. After a wave completes, stand by for the user's next instruction.
 - Empty bodies/summaries, unknown zones, reused taskIds, and unknown \`dependsOn\` entries are rejected at parse time. Fix and re-emit.
 - Your one-line summary must match the structured decision. If \`assignments\` dispatches three zones in parallel without \`dependsOn\`, don't write "Core first, then the others" — match prose to JSON or add \`dependsOn\` to match intent.
 `

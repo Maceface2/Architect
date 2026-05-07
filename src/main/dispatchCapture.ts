@@ -63,6 +63,29 @@ export interface DispatchRecord {
   planPath?: string
   workboardPath?: string
   planUpdatedAt?: string
+  // Exploration phase state (additive — older v5 records simply lack these).
+  // dispatchPhase tracks the high-level lifecycle: 'exploring' before all
+  // exploration reports land, 'planning' once they're synthesized into the
+  // shared plan, 'executing' once {type:"plan"} has been recorded.
+  dispatchPhase?: 'exploring' | 'planning' | 'executing'
+  // Raw structured payloads from each zone's exploration_report `done` event.
+  // reportJson holds the JSON-stringified `structured` object.
+  explorationReports?: Array<{
+    taskId: string
+    participantId: string
+    reportJson: string
+    ts: string
+  }>
+  // Notify-only signals raised by zones via structured.architecture_update_required.
+  // The renderer surfaces these; the conductor pauses execution until the user
+  // resolves them via the Architecture Assistant. resolved is updated when the
+  // user dismisses the flag in the UI.
+  architectureFlags?: Array<{
+    ts: string
+    participantId: string
+    description: string
+    resolved: boolean
+  }>
 }
 
 export const DISPATCH_PROTOCOL_VERSION = 5
@@ -119,6 +142,22 @@ function readDispatch(path: string): DispatchRecord | null {
       planPath: typeof parsed.planPath === 'string' ? parsed.planPath : undefined,
       workboardPath: typeof parsed.workboardPath === 'string' ? parsed.workboardPath : undefined,
       planUpdatedAt: typeof parsed.planUpdatedAt === 'string' ? parsed.planUpdatedAt : undefined,
+      dispatchPhase: parsed.dispatchPhase === 'exploring' || parsed.dispatchPhase === 'planning' || parsed.dispatchPhase === 'executing'
+        ? parsed.dispatchPhase
+        : undefined,
+      explorationReports: Array.isArray(parsed.explorationReports)
+        ? (parsed.explorationReports.filter(r => r && typeof r === 'object'
+          && typeof (r as Record<string, unknown>).taskId === 'string'
+          && typeof (r as Record<string, unknown>).participantId === 'string'
+          && typeof (r as Record<string, unknown>).reportJson === 'string'
+          && typeof (r as Record<string, unknown>).ts === 'string') as DispatchRecord['explorationReports'])
+        : undefined,
+      architectureFlags: Array.isArray(parsed.architectureFlags)
+        ? (parsed.architectureFlags.filter(f => f && typeof f === 'object'
+          && typeof (f as Record<string, unknown>).ts === 'string'
+          && typeof (f as Record<string, unknown>).participantId === 'string'
+          && typeof (f as Record<string, unknown>).description === 'string') as DispatchRecord['architectureFlags'])
+        : undefined,
     }
   } catch {
     return null
@@ -234,5 +273,61 @@ export function setDispatchPlanMetadata(
     workboardPath: metadata.workboardPath,
     planUpdatedAt: metadata.planUpdatedAt ?? new Date().toISOString(),
   })
+  return true
+}
+
+export function setDispatchPhase(
+  projectDir: string,
+  id: string,
+  phase: NonNullable<DispatchRecord['dispatchPhase']>,
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  saveDispatch(projectDir, { ...rec, dispatchPhase: phase })
+  return true
+}
+
+export function appendExplorationReport(
+  projectDir: string,
+  id: string,
+  entry: { taskId: string; participantId: string; reportJson: string; ts?: string },
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  const existing = rec.explorationReports ?? []
+  const ts = entry.ts ?? new Date().toISOString()
+  saveDispatch(projectDir, {
+    ...rec,
+    explorationReports: [...existing, { taskId: entry.taskId, participantId: entry.participantId, reportJson: entry.reportJson, ts }],
+  })
+  return true
+}
+
+export function appendArchitectureFlag(
+  projectDir: string,
+  id: string,
+  entry: { participantId: string; description: string; ts?: string },
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  const existing = rec.architectureFlags ?? []
+  const ts = entry.ts ?? new Date().toISOString()
+  saveDispatch(projectDir, {
+    ...rec,
+    architectureFlags: [...existing, { ts, participantId: entry.participantId, description: entry.description, resolved: false }],
+  })
+  return true
+}
+
+export function resolveArchitectureFlag(
+  projectDir: string,
+  id: string,
+  flagTs: string,
+): boolean {
+  const rec = getDispatch(projectDir, id)
+  if (!rec) return false
+  const existing = rec.architectureFlags ?? []
+  const updated = existing.map(f => (f.ts === flagTs ? { ...f, resolved: true } : f))
+  saveDispatch(projectDir, { ...rec, architectureFlags: updated })
   return true
 }

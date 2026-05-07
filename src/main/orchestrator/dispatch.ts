@@ -731,6 +731,8 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       initialPlanRevision: record.planRevision,
       userPrompt: record.userPrompt,
       initialPendingTasks: record.pendingTasks,
+      initialDispatchPhase: record.dispatchPhase,
+      initialExplorationReports: record.explorationReports,
     },
     buildSchedulerDeps(projectDir, pinnedDispatchId, broadcast),
   )

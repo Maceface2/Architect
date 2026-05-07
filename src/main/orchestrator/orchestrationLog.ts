@@ -23,6 +23,7 @@ const KNOWN_KINDS: ReadonlySet<string> = new Set<OrchestrationKind>([
   'cancel-rejected', 'all-done-detected', 'conductor-decision', 'plan-recorded', 'assign-rejected',
   'premature-final', 'pty-exit', 'status-change', 'stale-escalation',
   'unassigned-ask-dropped', 'deadlock-detected', 'redispatched',
+  'exploration-dispatched', 'exploration-complete', 'explore-rejected', 'architecture-flag',
 ])
 
 function runtimeRoot(projectDir: string, dispatchId: string): string {

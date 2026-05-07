@@ -91,6 +91,10 @@ const HARNESS_LABEL_COLORS: Record<OrchestrationEvent['kind'], string> = {
   'unassigned-ask-dropped': 'rgb(228 178 99)',
   'deadlock-detected': 'rgb(248 113 113)',
   'redispatched': 'rgb(148 163 184)',
+  'exploration-dispatched': 'rgb(180 167 224)',
+  'exploration-complete': 'rgb(110 213 145)',
+  'explore-rejected': 'rgb(228 178 99)',
+  'architecture-flag': 'rgb(248 113 113)',
 }
 
 const TIME_GUTTER_PX = 80

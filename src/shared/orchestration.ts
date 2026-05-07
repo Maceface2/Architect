@@ -28,6 +28,10 @@ export type OrchestrationKind =
   | 'unassigned-ask-dropped'
   | 'deadlock-detected'
   | 'redispatched'
+  | 'exploration-dispatched'       // conductor dispatched a read-only exploration task to a zone
+  | 'exploration-complete'         // all exploration_reports collected; bundle sent to conductor
+  | 'explore-rejected'             // {type:'explore'} after plan was already recorded
+  | 'architecture-flag'            // zone flagged a structural canvas change (notify-only)
 
 export interface OrchestrationEvent {
   ts: string
