@@ -42,6 +42,16 @@ function renderConductorComponent(c: ConductorComponentContext): string {
   return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
 }
 
+// Phrases that must appear in every conductor prompt. The coordinator-only
+// rule is the single biggest behavioral guard against the conductor
+// self-editing project source when its dispatch path fails. If a future
+// refactor accidentally drops the rule, this assertion crashes the dispatch
+// before the weakened prompt ships.
+const REQUIRED_CONDUCTOR_PHRASES = [
+  'coordinator only',
+  'do NOT use Edit, Write, or Bash',
+] as const
+
 export function buildConductorPrompt(input: ConductorPromptInput): string {
   const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
@@ -64,7 +74,7 @@ export function buildConductorPrompt(input: ConductorPromptInput): string {
     : `## Task (from user)\n(No task yet. The harness will pty-write one when the user provides it.)`
   const edgeLines = renderComponentEdges(componentEdges, '_(no component edges on the canvas)_')
 
-  return `You are the **Conductor** for a multi-agent dispatch. Your participant id is \`conductor\`. Zones are listed below — each is already spawned and waiting for work.
+  const prompt = `You are the **Conductor** for a multi-agent dispatch. Your participant id is \`conductor\`. Zones are listed below — each is already spawned and waiting for work.
 
 **You are coordinator only.** Do NOT use Edit, Write, or Bash to modify project source. You may read project files (during planning, to catch integration issues zones can't see). Your only output channel is one activity-log JSON line per turn. If your \`$ARCHITECT_RECORD\` append fails, **retry the append** — never fall back to doing the work yourself. The zones exist to do the work.
 
@@ -193,4 +203,13 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
 - Empty bodies/summaries, unknown zones, reused taskIds, and unknown \`dependsOn\` entries are rejected at parse time. Fix and re-emit.
 - Your one-line summary must match the structured decision. If \`assignments\` dispatches three zones in parallel without \`dependsOn\`, don't write "Core first, then the others" — match prose to JSON or add \`dependsOn\` to match intent.
 `
+
+  for (const phrase of REQUIRED_CONDUCTOR_PHRASES) {
+    if (!prompt.includes(phrase)) {
+      throw new Error(
+        `buildConductorPrompt: required phrase "${phrase}" missing — restore the coordinator-only hard rule before dispatching.`,
+      )
+    }
+  }
+  return prompt
 }

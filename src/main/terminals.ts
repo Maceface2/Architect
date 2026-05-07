@@ -1079,9 +1079,10 @@ async function doStartAssistant(
   const model = opts?.model ?? DEFAULT_MODEL_BY_RUNTIME[safeRuntime]
   // Fresh spawn: route contextMd through the runtime adapter so Claude gets
   // it via --append-system-prompt and other runtimes get it folded into the
-  // first user turn. An explicit opts.initialPrompt overrides — caller takes
-  // responsibility for context delivery in that case. Resumes get neither
-  // (the conversation already has its system prompt).
+  // first user turn. opts.initialPrompt, when present, is delivered as the
+  // first user turn alongside contextMd-as-system-prompt — it does NOT
+  // replace contextMd. Resumes skip both (the conversation already has its
+  // system prompt and Claude drops --append-system-prompt under --resume).
   const composed = resumeSessionId
     ? null
     : getRuntimeAdapter(safeRuntime).composeSystemAndUser(contextMd, opts?.initialPrompt ?? '')
