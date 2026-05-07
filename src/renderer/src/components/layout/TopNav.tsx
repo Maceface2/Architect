@@ -108,7 +108,7 @@ export default function TopNav({
               title="A new version of Architect was downloaded. Click to restart and install."
             >
               <RefreshCw size={12} />
-              Update ready — Restart
+              Update ready / Restart
             </button>
           )}
           <button

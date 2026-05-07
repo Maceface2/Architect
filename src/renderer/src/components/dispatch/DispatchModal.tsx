@@ -156,7 +156,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 : selectedCount >= 2
                   ? `Architect coordinator will run across ${selectedCount} selected zones.`
                   : selectedCount === 1
-                    ? 'Single zone selected — will run directly without coordinator.'
+                    ? 'Single zone selected. Runs directly without a coordinator.'
                     : 'Select at least one zone below.'}
             </p>
           </div>
@@ -300,7 +300,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 </label>
                 <p className="text-[11px] text-fg-subtle mt-1">
                   {selectedCount >= 2
-                    ? 'Applied to the Architect coordinator only — zones still execute autonomously.'
+                    ? 'Applied to the Architect coordinator only. Zones still execute autonomously.'
                     : 'Claude will plan before making changes.'}
                 </p>
               </div>

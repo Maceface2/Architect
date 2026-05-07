@@ -216,7 +216,7 @@ export default function AgentConfigModal({
                     : resetState === 'done'
                       ? 'Conversation reset'
                       : resetState === 'error'
-                        ? 'Reset failed — retry'
+                        ? 'Reset failed. Retry.'
                         : 'Reset conversation'}
                 </button>
               )}
@@ -325,7 +325,7 @@ export default function AgentConfigModal({
               ) : (
                 <Section title="Model">
                   <p className="text-[11px] text-fg-subtle leading-relaxed">
-                    {effectiveRuntimeMeta.label} manages its own model — no model selection here.
+                    {effectiveRuntimeMeta.label} manages its own model. No model selection here.
                   </p>
                 </Section>
               )}
