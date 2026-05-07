@@ -32,9 +32,9 @@ export default function UserMenu() {
   const initial = email.slice(0, 1).toUpperCase()
 
   return (
-    <div ref={wrapRef} className="fixed bottom-3 right-3 z-40">
+    <div ref={wrapRef} className="relative">
       {open && (
-        <div className="absolute bottom-10 right-0 w-60 rounded-lg border border-node-border bg-[#161616] shadow-2xl overflow-hidden">
+        <div className="absolute bottom-full mb-1 right-0 w-60 rounded-lg border border-node-border bg-[#161616] shadow-2xl overflow-hidden">
           <div className="px-3 py-2.5 border-b border-node-border">
             <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Account</div>
             <div className="mt-0.5 text-xs text-fg truncate" title={email}>
@@ -55,7 +55,7 @@ export default function UserMenu() {
       )}
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex items-center justify-center w-8 h-8 rounded-md bg-node border border-node-border text-fg-muted hover:text-fg hover:bg-[#222] transition-colors shadow-md"
+        className="flex items-center justify-center w-7 h-7 rounded-md bg-node border border-node-border text-fg-muted hover:text-fg hover:bg-[#222] transition-colors"
         title={email}
         aria-label="Account menu"
       >

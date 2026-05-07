@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Loader2, Save } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -786,6 +786,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   )
 
   const onPaneClick = useCallback((event: ReactMouseEvent) => {
+    ;(document.activeElement as HTMLElement | null)?.blur()
     if (!pendingCreate) return
     const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
 
@@ -1591,14 +1592,11 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
         <TopNav
           activeTab={activeTab}
           onTabChange={setActiveTab}
-          onClear={onClear}
           onDispatch={onDispatch}
           dispatching={dispatching}
           nodeCount={zones.length}
           projectDir={projectDir}
           onChangeDir={onChangeDir}
-          onSave={onSave}
-          isDirty={isDirty}
           onAssistantToggle={handleAssistantToggle}
           assistantOpen={assistantOpen}
           isRedispatch={dispatchedGraph !== null}
@@ -1609,7 +1607,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           canRedo={canRedo}
           updateReady={updateReady}
           onUpdateInstall={onUpdateInstall}
-          onOpenBugReport={() => setBugReportOpen(true)}
         />
         <div className="flex flex-1 overflow-hidden">
           <div
@@ -1752,6 +1749,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                 onAssistantOrientationChange={handleAssistantOrientationChange}
                 onGenerateCanvasFromCodebase={() => void handleAutoCanvasGenerate()}
                 generatingCanvasFromCodebase={autoCanvasStarting}
+                onOpenBugReport={() => setBugReportOpen(true)}
               />
             </div>
           )}
@@ -1783,7 +1781,31 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             </div>
           </div>
         </div>
-        <UserMenu />
+        <div className="flex items-center justify-end gap-2 h-9 px-3 border-t border-node-border bg-panel flex-shrink-0">
+          {isCanvas && (
+            <>
+              <button
+                onClick={onClear}
+                className="px-2.5 py-1 text-xs text-fg-muted border border-node-border rounded hover:bg-node hover:text-fg transition-colors"
+              >
+                Clear
+              </button>
+              <button
+                onClick={onSave}
+                className="relative flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-node-border rounded hover:bg-node hover:text-fg transition-colors"
+                title="Save canvas"
+              >
+                <Save size={11} />
+                Save
+                {isDirty && (
+                  <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
+                )}
+              </button>
+              <span className="w-px h-4 bg-node-border" />
+            </>
+          )}
+          <UserMenu />
+        </div>
         {bugReportOpen && (
           <BugReportModal
             projectDir={projectDir}

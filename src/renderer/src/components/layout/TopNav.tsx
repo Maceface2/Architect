@@ -1,17 +1,14 @@
 import type { CSSProperties } from 'react'
-import { Zap, Loader2, FolderOpen, Save, Bot, Undo2, Redo2, RefreshCw, Bug } from 'lucide-react'
+import { Zap, Loader2, FolderOpen, MessageSquare, Undo2, Redo2, RefreshCw } from 'lucide-react'
 
 interface TopNavProps {
   activeTab: string
   onTabChange: (tab: string) => void
-  onClear: () => void
   onDispatch: () => void
   dispatching: boolean
   nodeCount: number
   projectDir: string
   onChangeDir: () => void
-  onSave: () => void
-  isDirty: boolean
   onAssistantToggle: () => void
   assistantOpen: boolean
   isRedispatch: boolean
@@ -22,19 +19,17 @@ interface TopNavProps {
   canRedo: boolean
   updateReady: boolean
   onUpdateInstall: () => void
-  onOpenBugReport: () => void
 }
 
 const TABS = ['Canvas', 'Files', 'Terminal', 'Logs', 'Settings']
 
 export default function TopNav({
-  activeTab, onTabChange, onClear,
+  activeTab, onTabChange,
   onDispatch, dispatching, nodeCount,
-  projectDir, onChangeDir, onSave, isDirty,
+  projectDir, onChangeDir,
   onAssistantToggle, assistantOpen, isRedispatch, changedCount,
   onUndo, onRedo, canUndo, canRedo,
   updateReady, onUpdateInstall,
-  onOpenBugReport,
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
@@ -96,17 +91,6 @@ export default function TopNav({
             </button>
           </div>
           <button
-            onClick={onSave}
-            className="relative flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
-            title="Save canvas"
-          >
-            <Save size={12} />
-            Save
-            {isDirty && (
-              <span className="absolute -top-1 -right-1 w-2 h-2 rounded-full bg-amber-400" />
-            )}
-          </button>
-          <button
             onClick={onAssistantToggle}
             className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border transition-colors ${
               assistantOpen
@@ -115,19 +99,8 @@ export default function TopNav({
             }`}
             title="Architecture assistant"
           >
-            <Bot size={12} />
+            <MessageSquare size={12} />
             Assistant
-          </button>
-          <button onClick={onClear} className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors">
-            Clear
-          </button>
-          <button
-            onClick={onOpenBugReport}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
-            title="Report a bug"
-          >
-            <Bug size={12} />
-            Report a bug
           </button>
           {updateReady && (
             <button

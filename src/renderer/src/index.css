@@ -60,6 +60,12 @@
   box-sizing: border-box;
 }
 
+/* No focus rings on buttons — this is a desktop app, not a web page. */
+button:focus {
+  outline: none;
+  box-shadow: none;
+}
+
 body {
   margin: 0;
   padding: 0;
