@@ -253,6 +253,9 @@ interface ElectronAPI {
       }) => void,
     ) => () => void
   }
+  menu: {
+    onAction: (cb: (action: string) => void) => () => void
+  }
   bugReport: {
     bundle: (args: {
       userMessage: string

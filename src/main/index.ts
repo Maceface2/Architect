@@ -1,4 +1,4 @@
-import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage } from 'electron'
+import { app, shell, BrowserWindow, ipcMain, dialog, nativeImage, Menu } from 'electron'
 import { join } from 'path'
 import fs from 'fs'
 import path from 'path'
@@ -106,6 +106,56 @@ function startCanvasWatcher(projectDir: string) {
     canvasWatcher = null
     watchedProjectDir = null
   }
+}
+
+function buildMenu(): void {
+  const isMac = process.platform === 'darwin'
+  const send = (action: string) => () => mainWindow?.webContents.send('menu:action', action)
+
+  const template: Electron.MenuItemConstructorOptions[] = [
+    ...(isMac ? [{
+      label: app.name,
+      submenu: [
+        { role: 'about' as const },
+        { type: 'separator' as const },
+        { label: 'Settings…', accelerator: 'CmdOrCtrl+,', click: send('settings') },
+        { type: 'separator' as const },
+        { role: 'services' as const },
+        { type: 'separator' as const },
+        { role: 'hide' as const },
+        { role: 'hideOthers' as const },
+        { role: 'unhide' as const },
+        { type: 'separator' as const },
+        { role: 'quit' as const },
+      ],
+    }] : []),
+    {
+      label: 'File',
+      submenu: [
+        { label: 'Open Folder…', accelerator: 'CmdOrCtrl+O', click: send('open-folder') },
+        { type: 'separator' as const },
+        { label: 'Save', accelerator: 'CmdOrCtrl+S', click: send('save') },
+        { type: 'separator' as const },
+        isMac ? { role: 'close' as const } : { role: 'quit' as const },
+      ],
+    },
+    {
+      label: 'Edit',
+      submenu: [
+        { label: 'Undo', accelerator: 'CmdOrCtrl+Z', click: send('undo') },
+        { label: 'Redo', accelerator: 'Shift+CmdOrCtrl+Z', click: send('redo') },
+        { type: 'separator' as const },
+        { role: 'cut' as const },
+        { role: 'copy' as const },
+        { role: 'paste' as const },
+        { role: 'selectAll' as const },
+      ],
+    },
+    { role: 'viewMenu' as const },
+    { role: 'windowMenu' as const },
+  ]
+
+  Menu.setApplicationMenu(Menu.buildFromTemplate(template))
 }
 
 function createWindow(): void {
@@ -650,6 +700,7 @@ app.whenReady().then(async () => {
   // getDetected() call returns a populated snapshot synchronously.
   await detectRuntimes()
   initAutoUpdater()
+  buildMenu()
   createWindow()
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow()

@@ -1514,6 +1514,16 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     return () => window.removeEventListener('keydown', handler)
   }, [activeTab, undoCanvas, redoCanvas])
 
+  useEffect(() => {
+    return window.electron.menu.onAction((action) => {
+      if (action === 'open-folder') onChangeDir()
+      else if (action === 'save') void onSave()
+      else if (action === 'undo') undoCanvas()
+      else if (action === 'redo') redoCanvas()
+      else if (action === 'settings') setActiveTab('Settings')
+    })
+  }, [onChangeDir, onSave, undoCanvas, redoCanvas])
+
   const isCanvas = activeTab === 'Canvas'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
@@ -1631,6 +1641,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                 {icon}
               </button>
             ))}
+            <div className="flex-1" />
+            <UserMenu />
           </nav>
           <div
             className="flex-1 flex overflow-hidden"
@@ -1823,9 +1835,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               </ResizablePanel>
             </div>
           </div>
-        </div>
-        <div className="flex items-center justify-end h-6 px-3 bg-canvas flex-shrink-0">
-          <UserMenu />
         </div>
         {bugReportOpen && (
           <BugReportModal

@@ -315,6 +315,14 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
+  menu: {
+    onAction: (cb: (action: string) => void) => {
+      const handler = (_: unknown, action: string) => cb(action)
+      ipcRenderer.on('menu:action', handler)
+      return () => ipcRenderer.removeListener('menu:action', handler)
+    },
+  },
+
   bugReport: {
     bundle: (args: {
       userMessage: string
