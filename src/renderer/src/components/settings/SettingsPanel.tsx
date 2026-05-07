@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Pin, X as XIcon } from 'lucide-react'
+import { Bug, Pin, X as XIcon } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
   DEFAULT_AGENT_RUNTIME,
@@ -30,6 +30,7 @@ interface Props {
   onAssistantOrientationChange: (next: AssistantOrientation) => void
   onGenerateCanvasFromCodebase: () => void
   generatingCanvasFromCodebase?: boolean
+  onOpenBugReport: () => void
 }
 
 const TOOL_ROWS: [keyof NodeTools, string][] = [
@@ -51,6 +52,7 @@ export default function SettingsPanel({
   onAssistantOrientationChange,
   onGenerateCanvasFromCodebase,
   generatingCanvasFromCodebase = false,
+  onOpenBugReport,
 }: Props) {
   // When zones disagree on runtime, highlight a "Custom" pill instead of any
   // concrete CLI — the canvas default still exists (seeds new zones) but no
@@ -442,7 +444,7 @@ export default function SettingsPanel({
           </div>
         </Section>
 
-        <AboutSection />
+        <AboutSection onOpenBugReport={onOpenBugReport} />
       </div>
     </div>
   )
@@ -456,7 +458,7 @@ type UpdateStatus =
   | { kind: 'downloaded'; version: string }
   | { kind: 'error'; message: string }
 
-function AboutSection() {
+function AboutSection({ onOpenBugReport }: { onOpenBugReport: () => void }) {
   const [version, setVersion] = useState<string>('')
   const [status, setStatus] = useState<UpdateStatus>({ kind: 'idle' })
 
@@ -509,6 +511,14 @@ function AboutSection() {
           )}
         </div>
         <div className="flex items-center gap-2 flex-shrink-0">
+          <button
+            onClick={onOpenBugReport}
+            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-fg-muted border border-white/10 rounded hover:text-fg hover:border-white/30 transition-colors"
+            title="Report a bug"
+          >
+            <Bug size={12} />
+            Report a bug
+          </button>
           {status.kind === 'downloaded' ? (
             <button
               onClick={onInstall}

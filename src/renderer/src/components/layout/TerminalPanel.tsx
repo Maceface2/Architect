@@ -194,9 +194,15 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
 
     if (active) {
       doFit()
+      const rafId = requestAnimationFrame(() => {
+        termInstances.get(info.id)?.term.focus()
+      })
       const ro = new ResizeObserver(doFit)
       ro.observe(containerRef.current)
-      return () => ro.disconnect()
+      return () => {
+        cancelAnimationFrame(rafId)
+        ro.disconnect()
+      }
     }
   }, [info.id, active])
 
@@ -665,6 +671,11 @@ function LayoutRenderer({
   )
 }
 
+function collectActiveTabs(node: LayoutNode): string[] {
+  if (node.kind === 'pane') return node.activeTab ? [node.activeTab] : []
+  return node.children.flatMap(collectActiveTabs)
+}
+
 export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot, onPanelPopout, popoutMode }: Props) {
   const [shellSessions, setShellSessions] = useState<TerminalInfo[]>([])
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
@@ -781,7 +792,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
     return unsub
   }, [layout, allSessions, onLayoutChange])
 
-  // Re-fit terminals when this panel becomes visible.
+  // Re-fit terminals when this panel becomes visible, then focus the active one.
   useEffect(() => {
     if (!isVisible) return
     const raf = requestAnimationFrame(() => {
@@ -791,6 +802,8 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
           window.electron.terminal.resize(id, instance.term.cols, instance.term.rows)
         } catch {}
       })
+      const activeId = layout ? collectActiveTabs(layout.root)[0] : null
+      if (activeId) termInstances.get(activeId)?.term.focus()
     })
     return () => cancelAnimationFrame(raf)
   }, [isVisible, layout])
