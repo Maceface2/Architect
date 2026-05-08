@@ -110,7 +110,7 @@ export default function SettingsPanel({
           <div className="space-y-3">
             <Field label="Zone style">
               <Seg
-                options={['default', 'architectural'] as const}
+                options={['default', 'architectural', 'terminal'] as const}
                 value={settings.interface.zoneTreatment}
                 onChange={value => setInterface({ zoneTreatment: value })}
               />
@@ -131,7 +131,7 @@ export default function SettingsPanel({
             </Field>
           </div>
           <p className="text-[11px] text-fg-subtle leading-relaxed mt-3">
-            <span className="text-fg-muted">Architectural</span> turns zones into outlined boxes with corner ticks and a floating label, like a blueprint. <span className="text-fg-muted">Default</span> keeps the current card look.
+            <span className="text-fg-muted">Default</span> keeps the filled card look. <span className="text-fg-muted">Architectural</span> turns zones into outlined regions with small zone-colored corner ticks and a slashed label. <span className="text-fg-muted">Terminal</span> drops fill and border entirely, leaving large neutral L-brackets and a <span className="font-mono">[ bracketed ]</span> label, like a TUI window.
           </p>
         </Section>
 
@@ -548,7 +548,7 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
         <h2 className="text-[10px] uppercase tracking-widest text-fg-subtle">{title}</h2>
         {hint && <p className="text-[11px] text-fg-subtle mt-1 leading-relaxed">{hint}</p>}
       </div>
-      <div className="rounded-xl border border-node-border bg-panel p-5">
+      <div className="rounded-md border border-node-border bg-panel p-5">
         {children}
       </div>
     </section>
@@ -711,7 +711,7 @@ function PinnedModelsEditor({
           className="w-full bg-black/40 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono disabled:opacity-50"
         />
         {filtered.length > 0 && !atLimit && (
-          <div className="absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded border border-white/10 bg-[#161616] shadow-lg">
+          <div className="absolute z-10 left-0 right-0 mt-1 max-h-48 overflow-y-auto rounded border border-white/10 bg-[#1c1916] shadow-lg">
             {filtered.map(id => (
               <button
                 key={id}

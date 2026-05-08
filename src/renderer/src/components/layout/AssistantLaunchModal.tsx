@@ -156,7 +156,7 @@ export default function AssistantLaunchModal({
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
+        className="bg-surface border border-white/10 rounded-md shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
@@ -395,7 +395,7 @@ export default function AssistantLaunchModal({
             onClick={() => setPendingNewConfirm(false)}
           >
             <div
-              className="bg-surface border border-white/10 rounded-lg shadow-2xl max-w-sm p-5"
+              className="bg-surface border border-white/10 rounded-md shadow-2xl max-w-sm p-5"
               onClick={e => e.stopPropagation()}
             >
               <h3 className="text-sm font-semibold text-fg">Interrupt current session?</h3>

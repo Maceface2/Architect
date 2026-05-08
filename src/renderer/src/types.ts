@@ -117,7 +117,7 @@ export interface AssistantSettings {
 // Pure UI preferences. Distinct from Dispatch / Assistant settings: nothing
 // here changes agent behavior — they only drive the renderer's chrome and
 // how nodes paint on the canvas.
-export type ZoneTreatment = 'default' | 'architectural'
+export type ZoneTreatment = 'default' | 'architectural' | 'terminal'
 export type InterfaceTheme = 'dark' | 'light'
 export type CanvasBackground = 'dots' | 'grid'
 
@@ -218,6 +218,16 @@ export type DispatchRequest =
       dispatchId: string
     }
 
+// A structured spec/note on a component. Renders as a `key · value` row on
+// the canvas card; value drives a color via fieldTypeColor when it matches
+// a known schema type (uuid, string, int…), otherwise neutral. Open-ended
+// by design: any key, any value. id is a stable key for React keying.
+export interface ComponentField {
+  id: string
+  key: string
+  value: string
+}
+
 // A component is a design artifact. It carries the core context (description, specs)
 // for one part of the system; zones overlay components to add agent behavior.
 export interface ComponentNodeData {
@@ -228,6 +238,7 @@ export interface ComponentNodeData {
   iconName: string
   color: string
   tag: string
+  fields?: ComponentField[]  // typed key/value rows shown on the card
   [key: string]: unknown
 }
 

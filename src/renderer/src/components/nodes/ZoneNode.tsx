@@ -7,6 +7,7 @@ import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
+import { hexToRgba } from '../../lib/color'
 import AgentConfigModal from './AgentConfigModal'
 import ZoneLaunchModal from './ZoneLaunchModal'
 import type {
@@ -22,17 +23,6 @@ import type {
 
 type ZoneNodeProps = NodeProps<Node<ZoneNodeData>>
 
-function hexToRgba(hex: string, alpha: number): string {
-  const cleaned = hex.replace('#', '')
-  const full = cleaned.length === 3
-    ? cleaned.split('').map(c => c + c).join('')
-    : cleaned
-  const r = parseInt(full.slice(0, 2), 16)
-  const g = parseInt(full.slice(2, 4), 16)
-  const b = parseInt(full.slice(4, 6), 16)
-  return `rgba(${r}, ${g}, ${b}, ${alpha})`
-}
-
 function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const { setNodes, getNodes, getEdges, deleteElements } = useReactFlow()
   const [modalOpen, setModalOpen] = useState(false)
@@ -41,6 +31,8 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const { zoneTreatment, theme } = useInterfaceSettings()
   const projectDir = useProjectDir()
   const isArchitectural = zoneTreatment === 'architectural'
+  const isTerminal = zoneTreatment === 'terminal'
+  const isChromeOnly = isArchitectural || isTerminal
   const isLight = theme === 'light'
   // In light mode the canvas is near-white. The default treatment's colored
   // tint overlays canvas, so we need higher alpha to keep the zone visible
@@ -90,29 +82,46 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
       />
 
       <div
-        className={`relative w-full h-full ${isArchitectural ? 'rounded-[2px]' : 'rounded-2xl'}`}
+        className={`relative w-full h-full ${isChromeOnly ? 'rounded-[2px]' : 'rounded-[6px]'}`}
         style={
-          isArchitectural
+          isTerminal
             ? {
+                // Terminal treatment: no fill, no border. The four neutral
+                // L-brackets do all the work, like a TUI window frame.
                 backgroundColor: 'transparent',
-                border: `1px solid ${hexToRgba(zoneColor, selected ? 0.55 : 0.3)}`,
-                boxShadow: 'none',
+                border: 'none',
+                boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.12)}` : 'none',
                 pointerEvents: 'none',
               }
-            : {
-                backgroundColor: hexToRgba(zoneColor, fillAlpha),
-                border: `1.5px ${selected ? 'solid' : 'dashed'} ${hexToRgba(zoneColor, selected ? 0.6 : 0.35)}`,
-                boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.15)}` : 'none',
-                pointerEvents: 'none',
-              }
+            : isArchitectural
+              ? {
+                  backgroundColor: 'transparent',
+                  border: `1px solid ${hexToRgba(zoneColor, selected ? 0.55 : 0.3)}`,
+                  boxShadow: 'none',
+                  pointerEvents: 'none',
+                }
+              : {
+                  // Default zone v2: solid hairline border (no longer dashed)
+                  // + tighter radius. Reads as a deliberate drawing region
+                  // rather than a soft container.
+                  backgroundColor: hexToRgba(zoneColor, fillAlpha),
+                  border: `1px solid ${hexToRgba(zoneColor, selected ? 0.6 : 0.32)}`,
+                  boxShadow: selected ? `0 0 0 1px ${hexToRgba(zoneColor, 0.25)}, 0 0 40px ${hexToRgba(zoneColor, 0.15)}` : 'none',
+                  pointerEvents: 'none',
+                }
         }
       >
-        {isArchitectural && <CornerTicks color={zoneColor} />}
-        {/* Header strip — shows zone metadata, draggable; gear icon opens modal */}
+        {isArchitectural && <CornerTicks color={zoneColor} tick={12} thick={1.5} inset={6} />}
+        {isTerminal && (
+          <CornerTicks color="rgb(var(--fg-muted))" tick={22} thick={2} inset={10} />
+        )}
+        {/* Header strip: shows zone metadata, draggable; gear icon opens modal.
+            Terminal mode sits inside the bracketed corners, so the strip is
+            inset slightly more on the left to clear the larger bracket leg. */}
         <div
-          className={`absolute left-0 right-0 top-0 flex items-center justify-between gap-2 px-3 py-2 ${isArchitectural ? '' : 'rounded-t-2xl'}`}
+          className={`absolute right-0 top-0 flex items-center justify-between gap-2 py-2 ${isChromeOnly ? '' : 'rounded-t-[6px]'} ${isTerminal ? 'left-9 pr-3' : 'left-0 px-3'}`}
           style={
-            isArchitectural
+            isChromeOnly
               ? { backgroundColor: 'transparent', borderBottom: 'none', pointerEvents: 'auto' }
               : {
                   backgroundColor: hexToRgba(zoneColor, headerAlpha),
@@ -124,10 +133,16 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
           <div className="flex items-center gap-2 min-w-0">
             <ZoneStatusGlyph status={status} zoneColor={zoneColor} />
             <span
-              className={`truncate ${isArchitectural ? 'text-[11px] font-medium uppercase tracking-[0.18em]' : `text-[13px] font-semibold ${labelTextClass}`}`}
+              className={`truncate ${
+                isTerminal
+                  ? 'text-[12px] font-medium text-fg-muted'
+                  : isArchitectural
+                    ? 'text-[11px] font-medium uppercase tracking-[0.22em]'
+                    : `text-[12px] font-semibold uppercase tracking-[0.12em] ${labelTextClass}`
+              }`}
               style={isArchitectural ? { color: zoneColor } : undefined}
             >
-              {label}
+              {isTerminal ? `[ ${label} ]` : isArchitectural ? `/ ${label}` : label}
             </span>
             <span
               className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
@@ -223,12 +238,20 @@ function shortModelLabel(model: string): string {
   return model.includes('/') ? model.split('/').pop() || model : model
 }
 
-// Architectural treatment: 12px L-shaped marks at every corner, inset 6px,
-// drawn from two perpendicular 1.5px spans in the zone color.
-function CornerTicks({ color }: { color: string }) {
-  const tick = 12
-  const thick = 1.5
-  const inset = 6
+// L-bracket corner marks. Used by both architectural (12px / 1.5px / zone
+// color) and terminal (22px / 2px / neutral fg-muted) treatments — geometry
+// is identical, scale and color differ.
+function CornerTicks({
+  color,
+  tick = 12,
+  thick = 1.5,
+  inset = 6,
+}: {
+  color: string
+  tick?: number
+  thick?: number
+  inset?: number
+}) {
   return (
     <>
       {/* top-left */}

@@ -33,10 +33,10 @@ function stripAnsi(s: string): string {
 // the rationale on light-mode color picks. Cursor stays purple here to
 // match the assistant accent that's used elsewhere in the UI.
 const TERM_THEME_DARK = {
-  background:   '#0d0d0d',
+  background:   '#14110e',
   foreground:   '#e2e8f0',
   cursor:       '#c084fc',
-  cursorAccent: '#0d0d0d',
+  cursorAccent: '#14110e',
   black:        '#1e1e1e',
   red:          '#f87171',
   green:        '#4ade80',

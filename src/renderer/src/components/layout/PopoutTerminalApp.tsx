@@ -4,10 +4,10 @@ import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
 
 const TERM_THEME = {
-  background:  '#0d0d0d',
+  background:  '#14110e',
   foreground:  '#e2e8f0',
   cursor:      '#58A6FF',
-  cursorAccent:'#0d0d0d',
+  cursorAccent:'#14110e',
   black:       '#1e1e1e',
   red:         '#f87171',
   green:       '#4ade80',

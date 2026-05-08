@@ -34,7 +34,7 @@ export default function UserMenu() {
   return (
     <div ref={wrapRef} className="relative">
       {open && (
-        <div className="absolute bottom-0 left-full ml-1 z-40 w-60 rounded-lg border border-node-border bg-[#161616] shadow-2xl overflow-hidden">
+        <div className="absolute bottom-0 left-full ml-1 z-40 w-60 rounded-lg border border-node-border bg-[#1c1916] shadow-2xl overflow-hidden">
           <div className="px-3 py-2.5 border-b border-node-border">
             <div className="text-[10px] uppercase tracking-wide text-fg-subtle">Account</div>
             <div className="mt-0.5 text-xs text-fg truncate" title={email}>

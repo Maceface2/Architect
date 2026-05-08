@@ -72,7 +72,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Report a bug</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">

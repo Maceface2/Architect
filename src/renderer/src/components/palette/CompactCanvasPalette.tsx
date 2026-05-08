@@ -80,7 +80,7 @@ export default function CompactCanvasPalette({
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-30 flex items-start gap-3">
-      <div className="pointer-events-auto flex flex-col gap-1 rounded-lg border border-white/10 bg-[#171717]/95 p-1 shadow-2xl backdrop-blur">
+      <div className="pointer-events-auto flex flex-col gap-1 rounded-lg border border-white/10 bg-[#1c1916]/95 p-1 shadow-2xl backdrop-blur">
         <ToolButton
           label="Edges"
           active={activeTool === 'edge' || dialog === 'edge'}
@@ -113,7 +113,7 @@ export default function CompactCanvasPalette({
       </div>
 
       {placementHint && (
-        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#171717]/95 px-3 py-2 text-xs text-fg-muted shadow-2xl backdrop-blur">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#1c1916]/95 px-3 py-2 text-xs text-fg-muted shadow-2xl backdrop-blur">
           <MousePointer2 size={14} className="text-accent" />
           {placementHint}
         </div>
@@ -379,7 +379,7 @@ function PaletteDialog({
   onClose: () => void
 }) {
   return (
-    <div className="pointer-events-auto w-[300px] rounded-lg border border-white/10 bg-[#171717]/95 p-4 shadow-2xl backdrop-blur">
+    <div className="pointer-events-auto w-[300px] rounded-lg border border-white/10 bg-[#1c1916]/95 p-4 shadow-2xl backdrop-blur">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-fg">{title}</h2>
         <button

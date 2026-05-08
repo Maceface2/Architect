@@ -51,7 +51,7 @@ export class ErrorBoundary extends Component<Props, State> {
 
     return (
       <div className="fixed inset-0 z-[1000] flex items-center justify-center bg-black/80 p-6">
-        <div className="w-full max-w-2xl rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+        <div className="w-full max-w-2xl rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
           <div className="border-b border-white/[0.06] px-5 py-4">
             <h2 className="text-base font-medium text-fg">Something went wrong</h2>
             <p className="mt-1 text-xs text-fg-muted">
