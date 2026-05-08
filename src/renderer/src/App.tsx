@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, Files, Layers, Loader2, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Activity, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -21,6 +21,7 @@ import {
   BackgroundVariant,
   Controls,
   ConnectionMode,
+  MiniMap,
   type Connection,
   type XYPosition,
 } from '@xyflow/react'
@@ -1700,6 +1701,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               className={pendingEdgeDefaults ? 'architect-edge-mode' : undefined}
               proOptions={{ hideAttribution: true }}
               fitView
+              minZoom={0.05}
+              maxZoom={3}
             >
               <Background
                 variant={projectSettings.interface.canvasBackground === 'grid' ? BackgroundVariant.Lines : BackgroundVariant.Dots}
@@ -1712,9 +1715,61 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                 }
               />
               <Controls />
+              <MiniMap
+                position="bottom-right"
+                pannable
+                zoomable
+                ariaLabel="Canvas minimap"
+                bgColor={projectSettings.interface.theme === 'light' ? '#f8fafc' : '#1a1714'}
+                maskColor={
+                  projectSettings.interface.theme === 'light'
+                    ? 'rgba(34, 31, 27, 0.10)'
+                    : 'rgba(20, 17, 14, 0.55)'
+                }
+                nodeColor={(node) => {
+                  const c = (node.data as { color?: string } | undefined)?.color
+                  return typeof c === 'string' ? c : '#58A6FF'
+                }}
+                nodeStrokeColor={projectSettings.interface.theme === 'light' ? '#cbd5e1' : '#443d35'}
+                nodeBorderRadius={2}
+                style={{
+                  border: '1px solid rgba(255, 255, 255, 0.08)',
+                  borderRadius: 6,
+                  width: 180,
+                  height: 120,
+                }}
+              />
             </ReactFlow>
 
-            <div className="absolute bottom-4 right-4 z-30 flex items-center gap-1.5">
+            <div className="absolute right-4 z-30 flex items-center gap-1.5" style={{ bottom: 144 }}>
+              <button
+                onClick={() => setProjectSettings(s => ({
+                  ...s,
+                  interface: {
+                    ...s.interface,
+                    componentDensity:
+                      s.interface.componentDensity === 'simplified' ? 'detailed' : 'simplified',
+                  },
+                }))}
+                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                title={
+                  projectSettings.interface.componentDensity === 'simplified'
+                    ? 'Switch to detailed UML node rendering'
+                    : 'Switch to simplified node rendering (header only)'
+                }
+              >
+                {projectSettings.interface.componentDensity === 'simplified' ? (
+                  <>
+                    <Rows3 size={11} />
+                    Simple
+                  </>
+                ) : (
+                  <>
+                    <LayoutList size={11} />
+                    Detail
+                  </>
+                )}
+              </button>
               <button
                 onClick={onClear}
                 className="px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"

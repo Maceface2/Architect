@@ -115,20 +115,22 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
         {isTerminal && (
           <CornerTicks color="rgb(var(--fg-muted))" tick={22} thick={2} inset={10} />
         )}
-        {/* Header strip: shows zone metadata, draggable; gear icon opens modal.
-            Terminal mode sits inside the bracketed corners, so the strip is
-            inset slightly more on the left to clear the larger bracket leg. */}
+        {/* Floating header: a fitted chip inset from the zone's top-left
+            corner, detached from edges and connected to nothing. Reads as
+            a label tag floating inside the zone rather than a flush header
+            strip. Default treatment gets its own tinted surface; the chrome-
+            only treatments (architectural / terminal) carry the same float
+            geometry but stay transparent so they read as raw annotations. */}
         <div
-          className={`absolute right-0 top-0 flex items-center justify-between gap-2 py-2 ${isChromeOnly ? '' : 'rounded-t-[6px]'} ${isTerminal ? 'left-9 pr-3' : 'left-0 px-3'}`}
-          style={
-            isChromeOnly
-              ? { backgroundColor: 'transparent', borderBottom: 'none', pointerEvents: 'auto' }
-              : {
-                  backgroundColor: hexToRgba(zoneColor, headerAlpha),
-                  borderBottom: `1px solid ${hexToRgba(zoneColor, headerBorderAlpha)}`,
-                  pointerEvents: 'auto',
-                }
-          }
+          className={`absolute flex items-center justify-between gap-2 whitespace-nowrap rounded-md ${isChromeOnly ? '' : 'border'} px-2.5 py-1`}
+          style={{
+            top: 12,
+            left: 12,
+            right: 12,
+            pointerEvents: 'auto',
+            backgroundColor: isChromeOnly ? 'transparent' : hexToRgba(zoneColor, headerAlpha),
+            borderColor: isChromeOnly ? 'transparent' : hexToRgba(zoneColor, headerBorderAlpha),
+          }}
         >
           <div className="flex items-center gap-2 min-w-0">
             <ZoneStatusGlyph status={status} zoneColor={zoneColor} />

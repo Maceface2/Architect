@@ -36,6 +36,7 @@ export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
   zoneTreatment: 'default',
   theme: 'dark',
   canvasBackground: 'dots',
+  componentDensity: 'detailed',
 }
 
 export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
@@ -109,6 +110,9 @@ function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
   }
   if (rec.canvasBackground === 'dots' || rec.canvasBackground === 'grid') {
     base.canvasBackground = rec.canvasBackground as CanvasBackground
+  }
+  if (rec.componentDensity === 'detailed' || rec.componentDensity === 'simplified') {
+    base.componentDensity = rec.componentDensity
   }
   return base
 }

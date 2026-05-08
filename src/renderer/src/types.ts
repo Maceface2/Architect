@@ -120,11 +120,13 @@ export interface AssistantSettings {
 export type ZoneTreatment = 'default' | 'architectural' | 'terminal'
 export type InterfaceTheme = 'dark' | 'light'
 export type CanvasBackground = 'dots' | 'grid'
+export type ComponentDensity = 'detailed' | 'simplified'
 
 export interface InterfaceSettings {
   zoneTreatment: ZoneTreatment
   theme: InterfaceTheme
   canvasBackground: CanvasBackground
+  componentDensity: ComponentDensity
 }
 
 // Full project settings persisted in architect-canvas.json. Composed of the

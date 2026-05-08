@@ -168,11 +168,11 @@ export default function ComponentConfigModal({
 
               {fields.length > 0 && (
                 <Section title="Preview">
-                  <div className="rounded-[3px] border border-white/[0.06] bg-component overflow-hidden">
+                  <div className="rounded-md border border-white/[0.06] bg-component overflow-hidden">
                     <div className="flex items-center justify-between gap-2 px-3 py-2 bg-canvas border-b border-white/[0.06]">
                       <div className="flex items-center gap-2 min-w-0">
-                        <Icon size={13} strokeWidth={1.7} className="text-fg-muted flex-shrink-0" />
-                        <span className="text-[13px] font-semibold text-fg truncate">
+                        <Icon size={12} strokeWidth={1.7} style={{ color }} className="flex-shrink-0" />
+                        <span className="text-[12px] font-semibold text-fg truncate">
                           {labelDraft || label || 'Component'}
                         </span>
                       </div>
@@ -200,6 +200,7 @@ export default function ComponentConfigModal({
                         </div>
                       ))}
                     </div>
+                    <div className="h-1 w-full" style={{ backgroundColor: color }} aria-hidden />
                   </div>
                 </Section>
               )}
