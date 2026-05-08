@@ -6,6 +6,7 @@ import {
   isEffortLevel,
   type AgentRuntime,
 } from '../../../shared/agentRuntimes'
+import { mintFieldId } from './fieldTypes'
 import type {
   ArchitectCanvasData,
   CanvasBackground,
@@ -96,7 +97,11 @@ function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
   const base = { ...DEFAULT_INTERFACE_SETTINGS }
   if (!raw || typeof raw !== 'object') return base
   const rec = raw as Record<string, unknown>
-  if (rec.zoneTreatment === 'architectural' || rec.zoneTreatment === 'default') {
+  if (
+    rec.zoneTreatment === 'architectural' ||
+    rec.zoneTreatment === 'default' ||
+    rec.zoneTreatment === 'terminal'
+  ) {
     base.zoneTreatment = rec.zoneTreatment as ZoneTreatment
   }
   if (rec.theme === 'light' || rec.theme === 'dark') {
@@ -445,6 +450,22 @@ function normalizeZoneData(raw: Record<string, unknown>, settings: ProjectSettin
 }
 
 function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData {
+  const rawFields = Array.isArray(raw.fields) ? (raw.fields as Array<Record<string, unknown>>) : []
+  const fields = rawFields
+    .map(f => ({
+      id: typeof f.id === 'string' && f.id.length > 0 ? f.id : mintFieldId(),
+      // Accept both the new key/value names and the legacy name/type names
+      // so canvases saved with the old shape still load cleanly.
+      key: typeof f.key === 'string'
+        ? f.key
+        : typeof f.name === 'string' ? f.name : '',
+      value: typeof f.value === 'string'
+        ? f.value
+        : typeof f.type === 'string' ? f.type : '',
+    }))
+    // Drop fully-empty rows; preserve partials so half-typed edits survive.
+    .filter(f => f.key.trim().length > 0 || f.value.trim().length > 0)
+
   return {
     label: typeof raw.label === 'string' ? raw.label : 'Component',
     description: typeof raw.description === 'string' ? raw.description : '',
@@ -453,6 +474,7 @@ function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData
     iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Wrench',
     color: typeof raw.color === 'string' ? raw.color : '#60a5fa',
     tag: typeof raw.tag === 'string' ? raw.tag : 'NODE',
+    fields,
   }
 }
 

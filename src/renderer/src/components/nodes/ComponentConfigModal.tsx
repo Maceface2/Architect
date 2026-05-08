@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import { X } from 'lucide-react'
+import { Plus, Trash2, X } from 'lucide-react'
 import { getIcon } from '../../lib/icons'
-import type { ComponentNodeData } from '../../types'
+import { fieldTypeColor, mintFieldId } from '../../lib/fieldTypes'
+import type { ComponentField, ComponentNodeData } from '../../types'
 
 interface Props {
   label: string
@@ -10,6 +11,7 @@ interface Props {
   iconName: string
   description: string
   specs: string
+  fields: ComponentField[]
   patch: (partial: Partial<ComponentNodeData>) => void
   onClose: () => void
 }
@@ -21,6 +23,7 @@ export default function ComponentConfigModal({
   iconName,
   description,
   specs,
+  fields,
   patch,
   onClose,
 }: Props) {
@@ -28,6 +31,16 @@ export default function ComponentConfigModal({
   const [tagDraft, setTagDraft] = useState(tag)
   const labelInputRef = useRef<HTMLInputElement>(null)
   const Icon = getIcon(iconName)
+
+  const updateField = (id: string, partial: Partial<ComponentField>) => {
+    patch({ fields: fields.map(f => (f.id === id ? { ...f, ...partial } : f)) })
+  }
+  const addField = () => {
+    patch({ fields: [...fields, { id: mintFieldId(), key: '', value: '' }] })
+  }
+  const removeField = (id: string) => {
+    patch({ fields: fields.filter(f => f.id !== id) })
+  }
 
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
@@ -52,7 +65,7 @@ export default function ComponentConfigModal({
       onClick={event => { if (event.target === event.currentTarget) onClose() }}
     >
       <div
-        className="bg-[#161616] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden"
+        className="bg-[#1c1916] rounded-md border border-white/10 shadow-2xl flex flex-col overflow-hidden"
         style={{ width: '90vw', height: '85vh', maxWidth: 1000 }}
       >
         {/* Header */}
@@ -95,6 +108,102 @@ export default function ComponentConfigModal({
           {/* Metadata sidebar */}
           <div className="w-[320px] flex-shrink-0 overflow-y-auto">
             <div className="p-6 space-y-6">
+              <Section title="Properties">
+                <div className="space-y-1.5">
+                  {fields.length === 0 && (
+                    <p className="text-[11px] text-fg-subtle leading-relaxed">
+                      Add structured spec rows. Any key, any value. Schema-type values
+                      (<span className="font-medium" style={{ color: fieldTypeColor('uuid') }}>uuid</span>,{' '}
+                      <span className="font-medium" style={{ color: fieldTypeColor('string') }}>string</span>,{' '}
+                      <span className="font-medium" style={{ color: fieldTypeColor('int') }}>int</span>…) get colored automatically; everything else renders neutral.
+                    </p>
+                  )}
+                  {fields.map(field => (
+                    <div key={field.id} className="flex items-center gap-1.5">
+                      <input
+                        value={field.key}
+                        onChange={event => updateField(field.id, { key: event.target.value })}
+                        placeholder="key"
+                        className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded-[2px] px-2 py-1 text-[12px] text-fg placeholder-fg-subtle focus:outline-none focus:border-white/20"
+                      />
+                      <input
+                        value={field.value}
+                        onChange={event => updateField(field.id, { value: event.target.value })}
+                        placeholder="value"
+                        list={`field-values-${field.id}`}
+                        className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded-[2px] px-2 py-1 text-[12px] placeholder-fg-subtle focus:outline-none focus:border-white/20"
+                        style={{ color: fieldTypeColor(field.value) }}
+                      />
+                      <datalist id={`field-values-${field.id}`}>
+                        <option value="string" />
+                        <option value="int" />
+                        <option value="float" />
+                        <option value="bool" />
+                        <option value="enum" />
+                        <option value="uuid" />
+                        <option value="date" />
+                        <option value="json" />
+                        <option value="array" />
+                        <option value="ref" />
+                      </datalist>
+                      <button
+                        onClick={() => removeField(field.id)}
+                        className="w-6 h-6 flex items-center justify-center rounded-[2px] text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors flex-shrink-0"
+                        title="Remove property"
+                        aria-label="Remove property"
+                      >
+                        <Trash2 size={11} />
+                      </button>
+                    </div>
+                  ))}
+                  <button
+                    onClick={addField}
+                    className="flex items-center gap-1.5 mt-1 px-2 py-1 text-[10px] uppercase tracking-[0.18em] font-medium text-fg-muted border border-white/[0.08] rounded-[2px] hover:bg-white/5 hover:text-fg transition-colors"
+                  >
+                    <Plus size={10} />
+                    Add property
+                  </button>
+                </div>
+              </Section>
+
+              {fields.length > 0 && (
+                <Section title="Preview">
+                  <div className="rounded-[3px] border border-white/[0.06] bg-component overflow-hidden">
+                    <div className="flex items-center justify-between gap-2 px-3 py-2 bg-canvas border-b border-white/[0.06]">
+                      <div className="flex items-center gap-2 min-w-0">
+                        <Icon size={13} strokeWidth={1.7} className="text-fg-muted flex-shrink-0" />
+                        <span className="text-[13px] font-semibold text-fg truncate">
+                          {labelDraft || label || 'Component'}
+                        </span>
+                      </div>
+                      {tagDraft && (
+                        <span className="text-[11px] italic text-fg-subtle flex-shrink-0">
+                          «{tagDraft.toLowerCase()}»
+                        </span>
+                      )}
+                    </div>
+                    <div className="px-3 py-2 space-y-0.5">
+                      {fields.map(field => (
+                        <div
+                          key={field.id}
+                          className="flex items-baseline justify-between gap-3 text-[12px] leading-relaxed"
+                        >
+                          <span className="text-fg truncate">
+                            {field.key || <span className="text-fg-subtle italic">unkeyed</span>}
+                          </span>
+                          <span
+                            className="flex-shrink-0 truncate text-right max-w-[60%]"
+                            style={{ color: fieldTypeColor(field.value) }}
+                          >
+                            {field.value || '—'}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </Section>
+              )}
+
               <Section title="Tagline">
                 <textarea
                   value={description}

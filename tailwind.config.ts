@@ -8,13 +8,13 @@ function v(token: string) {
   return `rgb(var(--${token}) / <alpha-value>)`
 }
 
-// JetBrains Mono Variable as the single UI typeface. Hierarchy is carried by
-// weight (400/500/600/700) + size + tracking, never by a second family. The
-// stack falls back through bundled woff2, installed JetBrains Mono, then
-// platform mono so a font load failure never produces a system serif.
+// Commit Mono as the single UI typeface (SIL OFL by Eigil Nikolajsen).
+// Hierarchy is carried by weight (400/500/600/700) + size + tracking, never
+// by a second family. Stack falls back through bundled woff2, installed
+// Commit Mono, then platform mono so a font load failure never produces a
+// system serif.
 const MONO_STACK = [
-  '"JetBrains Mono Variable"',
-  '"JetBrains Mono"',
+  '"Commit Mono"',
   'ui-monospace',
   'SFMono-Regular',
   'Menlo',

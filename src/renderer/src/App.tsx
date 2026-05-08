@@ -289,7 +289,7 @@ function CanvasConflictModal({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
@@ -327,7 +327,7 @@ function AutoCanvasOnboardingModal({
 }) {
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-2xl border border-white/[0.08] bg-[#151515] shadow-2xl">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Generate an architecture canvas?</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
@@ -1638,31 +1638,46 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onUpdateInstall={onUpdateInstall}
         />
         <div className="flex flex-1 overflow-hidden">
-          {/* Left sidebar navigation */}
-          <nav className="flex flex-col items-center gap-1 w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
+          {/* Left rail: vertical instrument strip. Each tab stacks an icon
+              over a tracked 3-letter mono code. The active tab is signaled
+              by an inset hairline rule along its top edge in the accent
+              color, never a side stripe or a filled pill. */}
+          <nav className="flex flex-col items-stretch w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
             {([
-              { id: 'Canvas',   icon: <Layers size={16} />,      title: 'Canvas'   },
-              { id: 'Files',    icon: <Files size={16} />,       title: 'Files'    },
-              { id: 'Terminal', icon: <TerminalIcon size={16} />, title: 'Terminal' },
-              { id: 'Logs',     icon: <Activity size={16} />,    title: 'Logs'     },
-              { id: 'Settings', icon: <Settings size={16} />,    title: 'Settings' },
-            ] as const).map(({ id, icon, title }) => (
-              <button
-                key={id}
-                onClick={() => setActiveTab(id)}
-                title={title}
-                aria-label={title}
-                className={`flex items-center justify-center w-8 h-8 rounded transition-colors ${
-                  activeTab === id
-                    ? 'text-fg bg-node'
-                    : 'text-fg-subtle hover:text-fg hover:bg-node/50'
-                }`}
-              >
-                {icon}
-              </button>
-            ))}
+              { id: 'Canvas',   code: 'CAN', icon: <Layers size={14} strokeWidth={1.7} />,      title: 'Canvas'   },
+              { id: 'Files',    code: 'FIL', icon: <Files size={14} strokeWidth={1.7} />,       title: 'Files'    },
+              { id: 'Terminal', code: 'TRM', icon: <TerminalIcon size={14} strokeWidth={1.7} />, title: 'Terminal' },
+              { id: 'Logs',     code: 'LOG', icon: <Activity size={14} strokeWidth={1.7} />,    title: 'Logs'     },
+              { id: 'Settings', code: 'SET', icon: <Settings size={14} strokeWidth={1.7} />,    title: 'Settings' },
+            ] as const).map(({ id, code, icon, title }) => {
+              const active = activeTab === id
+              return (
+                <button
+                  key={id}
+                  onClick={() => setActiveTab(id)}
+                  title={title}
+                  aria-label={title}
+                  className={`relative flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
+                    active ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
+                  }`}
+                >
+                  {active && (
+                    <span
+                      className="absolute left-1.5 right-1.5 top-0 h-px bg-accent"
+                      aria-hidden
+                    />
+                  )}
+                  {icon}
+                  <span className="text-[9px] font-bold uppercase tracking-[0.2em] leading-none">
+                    {code}
+                  </span>
+                </button>
+              )
+            })}
             <div className="flex-1" />
-            <UserMenu />
+            <div className="flex items-center justify-center pb-1">
+              <UserMenu />
+            </div>
           </nav>
           <div
             className={`flex-1 flex overflow-hidden ${assistantOrientation === 'bottom' ? 'flex-col' : 'flex-row'}`}

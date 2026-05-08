@@ -28,17 +28,20 @@ export default function TopNav({
 }: TopNavProps) {
   const dirName = projectDir.split('/').filter(Boolean).pop() ?? projectDir
 
+  const pad2 = (n: number) => String(n).padStart(2, '0')
+
   return (
     <div className="flex bg-panel border-b border-node-border flex-shrink-0">
-      {/* Row 1 — drag region (so the user can move the window from this bar)
-          with the traffic lights inset over the left padding by hiddenInset.
-          Buttons inside opt out via no-drag so clicks aren't swallowed. */}
+      {/* Header strip: drag region with traffic-light inset on the left and
+          a drafted action row on the right. All action chrome uses tracked
+          uppercase mono labels and rounded-[2px] for an instrument-panel
+          feel rather than the usual rounded-button vocabulary. */}
       <div
-        className="flex items-center h-11 pr-4 w-full"
+        className="flex items-center h-11 pr-3 w-full"
         style={{ WebkitAppRegion: 'drag', paddingLeft: 88 } as CSSProperties}
       >
-        {/* Left: logo + dir picker */}
-        <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
+        {/* Left: logo + path chip */}
+        <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
           <svg
             width="20"
             height="20"
@@ -57,71 +60,78 @@ export default function TopNav({
           </svg>
           <button
             onClick={onChangeDir}
-            className="flex items-center gap-1.5 px-2 py-1 rounded text-xs text-fg-muted hover:text-fg hover:bg-node border border-node-border transition-colors max-w-[200px]"
+            className="flex items-center gap-1.5 px-2 py-1 rounded-[2px] text-[11px] text-fg-muted hover:text-fg hover:bg-node border border-white/[0.08] transition-colors max-w-[220px]"
             title={projectDir}
           >
-            <span className="truncate font-mono">{dirName}</span>
+            <span className="text-fg-subtle flex-shrink-0">/</span>
+            <span className="truncate">{dirName}</span>
           </button>
         </div>
 
-        {/* Spacer */}
         <div className="flex-1" />
 
-        {/* Right: controls + dispatch */}
+        {/* Right: drafted action row. Hairline divider between groups. */}
         <div className="flex items-center gap-2" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
           <div className="flex items-center">
             <button
               onClick={onUndo}
               disabled={!canUndo}
-              className="flex items-center justify-center w-8 h-7 text-fg-muted border border-node-border rounded-l hover:bg-node transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              className="flex items-center justify-center w-7 h-7 text-fg-muted border border-white/[0.08] rounded-l-[2px] hover:bg-node hover:text-fg transition-colors disabled:opacity-30 disabled:pointer-events-none"
               title="Undo (⌘Z)"
               aria-label="Undo"
             >
-              <Undo2 size={13} />
+              <Undo2 size={12} />
             </button>
             <button
               onClick={onRedo}
               disabled={!canRedo}
-              className="flex items-center justify-center w-8 h-7 text-fg-muted border border-l-0 border-node-border rounded-r hover:bg-node transition-colors disabled:opacity-30 disabled:pointer-events-none"
+              className="flex items-center justify-center w-7 h-7 text-fg-muted border border-l-0 border-white/[0.08] rounded-r-[2px] hover:bg-node hover:text-fg transition-colors disabled:opacity-30 disabled:pointer-events-none"
               title="Redo (⇧⌘Z)"
               aria-label="Redo"
             >
-              <Redo2 size={13} />
+              <Redo2 size={12} />
             </button>
           </div>
+
+          <span className="w-px h-4 bg-white/[0.08]" aria-hidden />
+
           <button
             onClick={onAssistantToggle}
-            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs rounded border transition-colors ${
+            className={`flex items-center gap-1.5 h-7 px-2.5 text-[10px] font-medium uppercase tracking-[0.18em] rounded-[2px] border transition-colors ${
               assistantOpen
                 ? 'text-[#c084fc] border-[#c084fc]/40 bg-[#c084fc]/10 hover:bg-[#c084fc]/20'
-                : 'text-fg-muted border-node-border hover:bg-node'
+                : 'text-fg-muted border-white/[0.08] hover:bg-node hover:text-fg'
             }`}
             title="Architecture assistant"
           >
-            <MessageSquare size={12} />
+            <MessageSquare size={11} />
             Assistant
           </button>
+
           {updateReady && (
             <button
               onClick={onUpdateInstall}
-              className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-emerald-200 border border-emerald-400/40 bg-emerald-400/10 rounded hover:bg-emerald-400/20 transition-colors"
+              className="flex items-center gap-1.5 h-7 px-2.5 text-[10px] font-medium uppercase tracking-[0.18em] text-emerald-200 border border-emerald-400/40 bg-emerald-400/10 rounded-[2px] hover:bg-emerald-400/20 transition-colors"
               title="A new version of Architect was downloaded. Click to restart and install."
             >
-              <RefreshCw size={12} />
-              Update ready / Restart
+              <RefreshCw size={11} />
+              Update / Restart
             </button>
           )}
+
+          <span className="w-px h-4 bg-white/[0.08]" aria-hidden />
+
           <button
             onClick={onDispatch}
             disabled={dispatching || nodeCount === 0}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+            className="flex items-center gap-1.5 h-7 px-3 text-[10px] font-medium uppercase tracking-[0.18em] text-fg bg-accent rounded-[2px] hover:bg-accent/90 transition-colors disabled:opacity-40 disabled:pointer-events-none"
           >
-            {dispatching ? <Loader2 size={12} className="animate-spin" /> : <Zap size={12} />}
+            {dispatching ? <Loader2 size={11} className="animate-spin" /> : <Zap size={11} />}
             {dispatching
               ? 'Launching…'
               : isRedispatch
-                ? `Redispatch${changedCount > 0 ? ` (${changedCount} changed)` : ''}`
-                : `Dispatch${nodeCount > 0 ? ` (${nodeCount})` : ''}`
+                ? `Redispatch${changedCount > 0 ? ` · ${pad2(changedCount)}` : ''}`
+                : `Dispatch${nodeCount > 0 ? ` · ${pad2(nodeCount)}` : ''}`
             }
           </button>
         </div>

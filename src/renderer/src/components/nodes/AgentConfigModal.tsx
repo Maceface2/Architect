@@ -10,6 +10,7 @@ import { useProjectDir } from '../../context/ProjectDirContext'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import { resolveZoneModelSuggestions } from '../../lib/canvas'
+import { hexToRgba } from '../../lib/color'
 import type {
   ZoneNodeData,
   NodeSkillFile,
@@ -159,10 +160,13 @@ export default function AgentConfigModal({
       onClick={event => { if (event.target === event.currentTarget) onClose() }}
     >
       <div
-        className="bg-[#161616] rounded-2xl border border-white/10 shadow-2xl flex flex-col overflow-hidden"
+        className="bg-[#1c1916] rounded-md border border-white/10 shadow-2xl flex flex-col overflow-hidden"
         style={{ width: '90vw', height: '85vh', maxWidth: 1100 }}
       >
-        <div className="flex items-center gap-4 px-6 py-4 border-b border-white/[0.07] flex-shrink-0" style={{ borderLeftColor: zoneColor, borderLeftWidth: 4 }}>
+        <div
+          className="flex items-center gap-4 px-6 py-4 border-b flex-shrink-0"
+          style={{ borderBottomColor: hexToRgba(zoneColor, 0.32) }}
+        >
           <span className="text-[11px] font-bold tracking-widest flex-shrink-0 uppercase" style={{ color: zoneColor }}>Zone</span>
           <input
             ref={labelInputRef}
@@ -578,7 +582,7 @@ function ZoneModelBrowse({
         className="w-full bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
       />
       {filtered.length > 0 && (
-        <div className="absolute z-10 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded border border-white/10 bg-[#161616] shadow-lg">
+        <div className="absolute z-10 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded border border-white/10 bg-[#1c1916] shadow-lg">
           {filtered.map(id => (
             <button
               key={id}

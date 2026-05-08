@@ -45,10 +45,10 @@ interface Props {
 // darkened so they remain readable on a white background (the dark-mode
 // values wash out).
 const TERM_THEME_DARK = {
-  background:  '#0d0d0d',
+  background:  '#14110e',
   foreground:  '#e2e8f0',
   cursor:      '#58A6FF',
-  cursorAccent:'#0d0d0d',
+  cursorAccent:'#14110e',
   black:       '#1e1e1e',
   red:         '#f87171',
   green:       '#4ade80',
@@ -268,8 +268,8 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       {showPlanPill && (
         <div className="flex items-center justify-between gap-2 px-3 py-1.5 bg-amber-500/15 border-b border-amber-500/40 flex-shrink-0">
           <span className="text-[11px] text-amber-200 flex items-center gap-2">
-            <span className="px-1.5 py-0.5 rounded bg-amber-500/30 border border-amber-500/50 font-medium tracking-wide">PLAN MODE</span>
-            waiting for <span className="font-mono font-semibold">GO</span> — discuss the plan with the conductor, then type <span className="font-mono font-semibold">GO</span> to dispatch
+            <span className="px-1.5 py-0.5 rounded-[2px] bg-amber-500/30 border border-amber-500/50 font-medium uppercase tracking-[0.18em]">Plan Mode</span>
+            waiting for <span className="font-mono font-semibold">GO</span>. Discuss the plan with the conductor, then type <span className="font-mono font-semibold">GO</span> to dispatch.
           </span>
         </div>
       )}
@@ -434,7 +434,7 @@ function PaneView({
             >
               <button
                 onClick={() => onActivate(pane.id, tabId)}
-                className={`flex items-center gap-2 pl-3 pr-2 py-2 text-xs whitespace-nowrap ${
+                className={`flex items-center gap-2 pl-3 pr-2 py-1.5 text-xs whitespace-nowrap ${
                   isActive ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
                 }`}
               >
@@ -455,7 +455,7 @@ function PaneView({
                 </span>
                 {runtime && (
                   <span
-                    className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider"
+                    className="px-1.5 py-0.5 rounded-[2px] text-[9px] font-medium uppercase tracking-[0.2em]"
                     style={{ color: runtime.accentColor, backgroundColor: `${runtime.accentColor}20` }}
                   >
                     {runtime.shortLabel}
@@ -466,7 +466,7 @@ function PaneView({
                 <button
                   onClick={() => onResume(s)}
                   disabled={isResuming}
-                  className={`flex items-center justify-center w-6 h-6 rounded text-[10px] transition-colors ${
+                  className={`flex items-center justify-center w-5 h-5 rounded-[2px] text-[10px] transition-colors ${
                     isResuming
                       ? 'text-fg-subtle cursor-wait'
                       : 'text-emerald-400/70 hover:text-emerald-300 hover:bg-emerald-400/10'
@@ -474,16 +474,16 @@ function PaneView({
                   title={isResuming ? 'Resuming…' : resumeLabel}
                   aria-label={resumeLabel}
                 >
-                  <RotateCcw size={11} className={isResuming ? 'animate-spin' : ''} />
+                  <RotateCcw size={10} className={isResuming ? 'animate-spin' : ''} />
                 </button>
               )}
               <button
                 onClick={() => onPopout(s)}
-                className="flex items-center justify-center w-6 h-6 rounded text-fg-subtle hover:text-fg hover:bg-white/[0.06] transition-colors"
+                className="flex items-center justify-center w-5 h-5 rounded-[2px] text-fg-subtle hover:text-fg hover:bg-white/[0.06] transition-colors"
                 title="Pop out terminal to new window"
                 aria-label="Pop out terminal"
               >
-                <ExternalLink size={11} />
+                <ExternalLink size={10} />
               </button>
               {(() => {
                 const isClosing = closingIds.has(s.id)
@@ -493,7 +493,7 @@ function PaneView({
                   <button
                     onClick={() => !disabled && onClose(tabId)}
                     disabled={disabled}
-                    className={`flex items-center justify-center w-6 h-6 mr-1 rounded transition-colors ${
+                    className={`flex items-center justify-center w-5 h-5 mr-1 rounded-[2px] transition-colors ${
                       disabled
                         ? 'text-fg-subtle cursor-not-allowed'
                         : 'text-fg-subtle hover:text-fg hover:bg-white/[0.06]'
@@ -501,7 +501,7 @@ function PaneView({
                     title={title}
                     aria-label="Close terminal"
                   >
-                    <X size={11} />
+                    <X size={10} />
                   </button>
                 )
               })()}
@@ -515,11 +515,11 @@ function PaneView({
       <button
         onClick={onNewShell}
         style={titleBarItemStyle}
-        className="flex items-center justify-center w-7 h-7 ml-1 rounded text-fg-subtle hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
+        className="flex items-center justify-center w-6 h-6 ml-1 rounded-[2px] text-fg-subtle hover:text-emerald-300 hover:bg-emerald-400/10 transition-colors flex-shrink-0"
         title="New shell"
         aria-label="New shell"
       >
-        <Plus size={13} />
+        <Plus size={12} />
       </button>
     </>
   )

@@ -6,30 +6,34 @@
    Tailwind's `<alpha-value>` placeholder (configured in tailwind.config.ts)
    lets `bg-accent/90`, `hover:bg-node/50`, etc. resolve correctly. */
 :root {
-  --bg-canvas: 29 29 29;
-  --bg-panel: 24 20 24;
-  --bg-node: 58 55 54;
+  /* Warm Graphite palette. OKLCH lightness ~14-18%, hue 60 (warm yellow-
+     brown), chroma kept low (≤0.012) so the tint reads as a drafted
+     surface, not a stained one. Lifted off pure-black so the canvas reads
+     as graphite paper under a tungsten desk lamp. */
+  --bg-canvas: 34 31 27;
+  --bg-panel: 26 23 20;
+  --bg-node: 52 48 43;
   /* Dark-themed cards inside the canvas (e.g. ComponentNode). Stays dark
      in dark mode, flips to white-ish in light mode so cards aren't
      unreadable on a light backdrop. */
-  --bg-component: 30 30 30;
-  /* Terminal surface — kept separate from --bg-canvas so the terminal can
-     be a flat near-black in dark mode (better contrast for ANSI colors)
+  --bg-component: 42 39 35;
+  /* Terminal surface: kept separate from --bg-canvas so the terminal can
+     be a flatter near-black in dark mode (better contrast for ANSI colors)
      and pure white in light mode. xterm's own theme is updated to match. */
-  --bg-terminal: 13 13 13;
-  --border-node: 76 72 70;
+  --bg-terminal: 20 17 14;
+  --border-node: 68 61 53;
   --border-node-active: 88 166 255;
   --accent: 88 166 255;
-  --fg: 240 238 236;
-  --fg-muted: 162 158 156;
-  --fg-subtle: 108 104 102;
-  /* React Flow chrome — not Tailwind-bound, used directly in CSS rules below. */
-  --rf-dot: #6c6967;
-  --rf-controls-bg: #2c2a29;
-  --rf-controls-border: #4a4644;
-  --rf-controls-fg: #a8a4a2;
-  --rf-controls-bg-hover: #383532;
-  --rf-controls-fg-hover: #f0eeec;
+  --fg: 235 231 225;
+  --fg-muted: 170 162 152;
+  --fg-subtle: 117 105 95;
+  /* React Flow chrome: not Tailwind-bound, used directly in CSS rules below. */
+  --rf-dot: #5a5048;
+  --rf-controls-bg: #2c2823;
+  --rf-controls-border: #443d35;
+  --rf-controls-fg: #aaa298;
+  --rf-controls-bg-hover: #34302b;
+  --rf-controls-fg-hover: #ebe7e1;
 }
 
 :root[data-theme='light'] {
@@ -69,18 +73,17 @@ button:focus {
 body {
   margin: 0;
   padding: 0;
-  /* Single-face mono UI. JetBrains Mono Variable is loaded once in main.tsx
-     and inherited everywhere; weight/size/tracking carry hierarchy. */
+  /* Single-face mono UI. Commit Mono is loaded once in main.tsx and
+     inherited everywhere; weight/size/tracking carry hierarchy. */
   font-family:
-    'JetBrains Mono Variable',
-    'JetBrains Mono',
+    'Commit Mono',
     ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
   /* tnum: tabular figures so numbers align across tables, badges, counters.
-     liga/calt off: kill JetBrains Mono's programming ligatures (==>, !==, &&)
-     in UI text — they belong in the editor terminal, not in chrome. */
+     liga/calt off: ensure UI chrome reads as plain mono (no programming
+     ligatures sneaking into labels and counts). */
   font-feature-settings: 'tnum' 1, 'liga' 0, 'calt' 0;
   font-variant-numeric: tabular-nums;
   /* Mono letterforms are slightly wider than proportional sans; a touch of
@@ -92,7 +95,7 @@ body {
 }
 
 /* Re-enable ligatures + contextual alternates inside the embedded terminal
-   surface — that's where users want ==>, fi, etc. to render naturally. */
+   surface so user shells/editors can render their own preferences. */
 .xterm,
 .xterm * {
   font-feature-settings: 'tnum' 1, 'liga' 1, 'calt' 1 !important;

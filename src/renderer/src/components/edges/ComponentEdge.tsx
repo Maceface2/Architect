@@ -164,7 +164,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
         <EdgeLabelRenderer>
           <button
             type="button"
-            className="nodrag nopan absolute -translate-x-1/2 -translate-y-1/2 rounded border border-white/10 bg-[#1e1e1e] px-2 py-0.5 text-[10px] font-medium text-fg shadow-lg"
+            className="nodrag nopan absolute -translate-x-1/2 -translate-y-1/2 rounded border border-white/10 bg-component px-2 py-0.5 text-[10px] font-medium text-fg shadow-lg"
             style={{ transform: `translate(-50%, -50%) translate(${labelX}px, ${labelY}px)` }}
             onDoubleClick={event => {
               event.stopPropagation()

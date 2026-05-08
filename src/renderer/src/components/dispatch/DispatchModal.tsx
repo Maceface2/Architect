@@ -142,7 +142,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
       onClick={onClose}
     >
       <div
-        className="bg-surface border border-white/10 rounded-xl shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
+        className="bg-surface border border-white/10 rounded-md shadow-2xl w-full max-w-2xl max-h-[85vh] overflow-hidden flex flex-col"
         onClick={e => e.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
