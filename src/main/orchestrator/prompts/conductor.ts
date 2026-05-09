@@ -49,7 +49,7 @@ function renderConductorComponent(c: ConductorComponentContext): string {
 // before the weakened prompt ships.
 const REQUIRED_CONDUCTOR_PHRASES = [
   'coordinator only',
-  'do NOT use Edit, Write, or Bash',
+  'Do NOT use Edit, Write, or Bash',
 ] as const
 
 export function buildConductorPrompt(input: ConductorPromptInput): string {
