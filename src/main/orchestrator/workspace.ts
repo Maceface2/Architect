@@ -36,6 +36,11 @@ export interface WorkspaceZoneInput {
   enabledTools: string[]
   systemPromptOverride: string
   skills: Array<{ name: string; content: string }>
+  // Workspace folder this zone runs in. Multi-folder dispatches set this
+  // per zone so each PTY spawns with its own folder as cwd; the conductor
+  // continues to anchor at the dispatch-primary `projectDir`. Single-folder
+  // dispatches leave it undefined and inherit `projectDir`.
+  folderPath?: string
 }
 
 export interface WorkspaceInput {
@@ -104,10 +109,17 @@ function writeManifest(input: WorkspaceInput): void {
   const { projectDir, zones } = input
   const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
   const manifest = {
+    // Workspace anchor folder for the dispatch. The conductor reads this to
+    // know its own cwd; zones use it to derive cross-folder file paths.
+    primaryFolder: projectDir,
     zones: zones.map(zone => ({
       participantId: zone.participantId,
       label: zone.label,
       description: zone.description ?? '',
+      // Where this zone's PTY runs. Equal to primaryFolder for single-folder
+      // dispatches; differs for cross-folder dispatches so the conductor can
+      // tell zones their cwds apart when reasoning about file paths.
+      folderPath: zone.folderPath ?? projectDir,
       components: zone.components.map(c => ({
         label: c.label,
         tag: c.tag ?? '',

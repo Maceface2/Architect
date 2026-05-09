@@ -65,9 +65,11 @@ const ARCHITECT_DIRNAME = 'ARCHITECT'
 const IGNORED_PROJECT_ENTRIES = new Set(['.DS_Store'])
 
 let mainWindow: BrowserWindow | null = null
-let canvasWatcher: fs.FSWatcher | null = null
-let canvasWatchTimer: ReturnType<typeof setTimeout> | null = null
-let watchedProjectDir: string | null = null
+interface CanvasWatcherEntry {
+  watcher: fs.FSWatcher
+  timer: ReturnType<typeof setTimeout> | null
+}
+const canvasWatchers = new Map<string, CanvasWatcherEntry>()
 const popouts = new Map<string, BrowserWindow>()
 
 function emitCanvasChanged(projectDir: string) {
@@ -78,34 +80,42 @@ function emitCanvasChanged(projectDir: string) {
   } catch {}
 }
 
-function stopCanvasWatcher() {
-  if (canvasWatchTimer) {
-    clearTimeout(canvasWatchTimer)
-    canvasWatchTimer = null
+function stopCanvasWatcher(projectDir?: string) {
+  if (typeof projectDir === 'string') {
+    const entry = canvasWatchers.get(projectDir)
+    if (!entry) return
+    if (entry.timer) clearTimeout(entry.timer)
+    try { entry.watcher.close() } catch {}
+    canvasWatchers.delete(projectDir)
+    return
   }
-  canvasWatcher?.close()
-  canvasWatcher = null
-  watchedProjectDir = null
+  for (const entry of canvasWatchers.values()) {
+    if (entry.timer) clearTimeout(entry.timer)
+    try { entry.watcher.close() } catch {}
+  }
+  canvasWatchers.clear()
 }
 
 function startCanvasWatcher(projectDir: string) {
-  stopCanvasWatcher()
-  watchedProjectDir = projectDir
-
+  if (canvasWatchers.has(projectDir)) return
   try {
-    canvasWatcher = fs.watch(projectDir, (_eventType, filename) => {
-      if (filename && filename !== CANVAS_FILENAME) return
-      if (canvasWatchTimer) clearTimeout(canvasWatchTimer)
-      canvasWatchTimer = setTimeout(() => {
-        canvasWatchTimer = null
-        if (watchedProjectDir !== projectDir) return
-        emitCanvasChanged(projectDir)
-      }, 120)
-    })
-  } catch {
-    canvasWatcher = null
-    watchedProjectDir = null
-  }
+    const entry: CanvasWatcherEntry = {
+      watcher: fs.watch(projectDir, (_eventType, filename) => {
+        if (filename && filename !== CANVAS_FILENAME) return
+        const current = canvasWatchers.get(projectDir)
+        if (!current) return
+        if (current.timer) clearTimeout(current.timer)
+        current.timer = setTimeout(() => {
+          const live = canvasWatchers.get(projectDir)
+          if (!live) return
+          live.timer = null
+          emitCanvasChanged(projectDir)
+        }, 120)
+      }),
+      timer: null,
+    }
+    canvasWatchers.set(projectDir, entry)
+  } catch {}
 }
 
 function buildMenu(): void {
@@ -282,9 +292,60 @@ ipcMain.handle('watch-canvas', (_event, projectDir: string) => {
   startCanvasWatcher(projectDir)
 })
 
-ipcMain.handle('unwatch-canvas', () => {
-  stopCanvasWatcher()
+ipcMain.handle('unwatch-canvas', (_event, projectDir?: string) => {
+  stopCanvasWatcher(projectDir)
 })
+
+// Workspace persistence: list of additional folders co-loaded with the
+// primary anchor. Stored at <primary>/ARCHITECT/workspace.json. Primary is
+// implicit (the anchor that owns the workspace.json file), so the file
+// only ever holds the *other* folders.
+const WORKSPACE_FILENAME = 'workspace.json'
+
+interface WorkspaceFile {
+  folders: Array<{ path: string }>
+}
+
+ipcMain.handle('workspace:load', (_event, primaryDir: string): WorkspaceFile => {
+  try {
+    const raw = fs.readFileSync(
+      path.join(primaryDir, ARCHITECT_DIRNAME, WORKSPACE_FILENAME),
+      'utf-8',
+    )
+    const parsed = JSON.parse(raw) as Partial<WorkspaceFile>
+    const folders = Array.isArray(parsed.folders)
+      ? parsed.folders
+          .filter((f): f is { path: string } => !!f && typeof f.path === 'string')
+          .map(f => ({ path: f.path }))
+      : []
+    return { folders }
+  } catch {
+    return { folders: [] }
+  }
+})
+
+ipcMain.handle(
+  'workspace:save',
+  (_event, primaryDir: string, folders: Array<{ path: string }>) => {
+    try {
+      const dir = path.join(primaryDir, ARCHITECT_DIRNAME)
+      fs.mkdirSync(dir, { recursive: true })
+      const safe: WorkspaceFile = {
+        folders: (Array.isArray(folders) ? folders : [])
+          .filter((f): f is { path: string } => !!f && typeof f.path === 'string')
+          .map(f => ({ path: f.path })),
+      }
+      fs.writeFileSync(
+        path.join(dir, WORKSPACE_FILENAME),
+        JSON.stringify(safe, null, 2),
+        'utf-8',
+      )
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: String(err) }
+    }
+  },
+)
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
 

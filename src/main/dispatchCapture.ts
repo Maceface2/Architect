@@ -7,6 +7,12 @@ export interface DispatchZoneSession {
   label: string
   runtime: AgentRuntime
   sessionId: string
+  // Multi-folder dispatch: which workspace folder this zone ran in. Used on
+  // resume to validate the folder is still loaded (or auto-load it). Absent
+  // for v1 single-folder dispatches and for older v5 records written before
+  // multi-folder support landed; consumers fall back to the dispatch primary
+  // (record.dispatchPrimaryFolder ?? projectDir).
+  folderPath?: string
 }
 
 // A task that was in-flight at dispatch teardown. Re-delivered to the zone
@@ -63,6 +69,16 @@ export interface DispatchRecord {
   planPath?: string
   workboardPath?: string
   planUpdatedAt?: string
+  // Workspace anchor for the dispatch. Equal to projectDir today (the
+  // workspace primary). When the renderer starts using majority-rule
+  // primary-for-dispatch this will diverge — runtime/manifest/prompts live
+  // under THIS folder's ARCHITECT/, not necessarily the workspace primary.
+  // Optional for backward compat with older v5 records.
+  dispatchPrimaryFolder?: string
+  // Distinct folders that contributed zones to this dispatch. Resume uses
+  // this to validate that all required folders are still loaded (or
+  // auto-load missing ones) before re-spawning. Absent for older records.
+  involvedFolders?: string[]
 }
 
 export const DISPATCH_PROTOCOL_VERSION = 5
@@ -119,6 +135,11 @@ function readDispatch(path: string): DispatchRecord | null {
       planPath: typeof parsed.planPath === 'string' ? parsed.planPath : undefined,
       workboardPath: typeof parsed.workboardPath === 'string' ? parsed.workboardPath : undefined,
       planUpdatedAt: typeof parsed.planUpdatedAt === 'string' ? parsed.planUpdatedAt : undefined,
+      dispatchPrimaryFolder:
+        typeof parsed.dispatchPrimaryFolder === 'string' ? parsed.dispatchPrimaryFolder : undefined,
+      involvedFolders: Array.isArray(parsed.involvedFolders)
+        ? parsed.involvedFolders.filter((s): s is string => typeof s === 'string')
+        : undefined,
     }
   } catch {
     return null

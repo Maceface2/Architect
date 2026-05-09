@@ -186,6 +186,7 @@ function buildWorkspaceZoneInput(
     enabledTools,
     systemPromptOverride: (zone.data.systemPrompt ?? '').trim(),
     skills,
+    ...(zone.data.folderPath ? { folderPath: zone.data.folderPath } : {}),
   }
 }
 
@@ -410,13 +411,21 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
         done()
       }, CAPTURE_SERIAL_TIMEOUT_MS)
 
+      // Multi-folder dispatch: each zone runs with its own folder as cwd
+      // (so file ops, shell commands, and the runtime's session-id capture
+      // operate in the right tree). Conductor keeps `projectDir` so its
+      // ARCHITECT/runtime/* tree stays anchored at the dispatch primary.
+      // OpenCode's session-list capture is GLOBAL (no cwd scoping) — keep
+      // the serializeAgentSpawn wrap; parallel spawns would race the
+      // capture poll. See sessionCapture.ts:585.
+      const zoneCwd = ws.folderPath ?? projectDir
       const zoneInfo = spawnAgentSession({
         win,
         id: zone.id,
         label: ws.label,
         runtime,
         env,
-        cwd: projectDir,
+        cwd: zoneCwd,
         initialPrompt: composed.firstUserPrompt,
         appendSystemPrompt: composed.appendSystemPromptFlag,
         model: ws.model,
@@ -424,6 +433,10 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
         coordinatedMode: true,
         onExit: onZoneExit(ws.participantId),
         capture: {
+          // Session records live at the dispatch primary's ARCHITECT/sessions/
+          // even when the PTY runs in a different folder — keeps resume-history
+          // and ZoneLaunchModal lookups anchored at the workspace primary
+          // regardless of the zone's cwd.
           projectDir,
           zoneKey: zone.id,
           legacyKey: ws.participantId,
@@ -439,6 +452,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
                 label: ws.label,
                 runtime,
                 sessionId: zoneSessionId,
+                ...(ws.folderPath ? { folderPath: ws.folderPath } : {}),
               })
             } catch (err) {
               console.error('[dispatch-v5] failed to upsert zone session', err)
@@ -522,6 +536,13 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       },
       onSessionCaptured: sessionId => {
         architectSessionId = sessionId
+        // Distinct cwds across all selected zones — for single-folder
+        // dispatches this is just `[projectDir]`. Persisted on the
+        // DispatchRecord so resume can validate every involved folder is
+        // still reachable on disk before re-spawning.
+        const involvedFolders = Array.from(
+          new Set(workspaceZones.map(ws => ws.folderPath ?? projectDir)),
+        )
         const record: DispatchRecord = {
           architectSessionId: sessionId,
           architectRuntime: conductorRuntime,
@@ -537,6 +558,8 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
           protocolVersion: DISPATCH_PROTOCOL_VERSION,
           pendingTasks: [],
           conductorDecisions: [],
+          dispatchPrimaryFolder: projectDir,
+          involvedFolders,
         }
         try { saveDispatch(projectDir, record) } catch (err) {
           console.error('[dispatch-v5] failed to save DispatchRecord', err)
@@ -669,6 +692,25 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       continue
     }
 
+    // Resume each zone with the same cwd it was originally spawned at.
+    // Prefer the per-zone folderPath persisted on the DispatchRecord — the
+    // current canvas may have moved the zone or removed the folder since
+    // dispatch time. Fall back to the live canvas state, then projectDir.
+    // Skip zones whose folder is gone from disk so spawn doesn't ENOENT.
+    const zoneCwd = entry.folderPath ?? ws?.folderPath ?? projectDir
+    if (zoneCwd !== projectDir) {
+      try {
+        const stat = fs.statSync(zoneCwd)
+        if (!stat.isDirectory()) throw new Error('not-a-directory')
+      } catch {
+        console.warn(
+          `[resume-v5] zone ${displayLabel} folder ${zoneCwd} no longer exists; skipping`,
+        )
+        skippedParticipantIds.add(participantId)
+        continue
+      }
+    }
+
     const env: Record<string, string> = {
       ARCHITECT_RECORD: recordHelperPath(projectDir, pinnedDispatchId),
       ARCHITECT_PARTICIPANT_ID: participantId,
@@ -683,7 +725,7 @@ export async function resumeDispatchV5(input: ResumeDispatchV5Input): Promise<Re
       label: displayLabel,
       runtime,
       env,
-      cwd: projectDir,
+      cwd: zoneCwd,
       model: ws?.model ?? getZoneModel(zone, runtime),
       resumeSessionId: entry.sessionId,
       effort: settings.dispatchEffort,

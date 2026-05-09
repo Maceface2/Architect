@@ -28,8 +28,15 @@ interface ElectronAPI {
   saveCanvas: (projectDir: string, data: string) => Promise<void>
   loadCanvas: (projectDir: string) => Promise<string | null>
   watchCanvas: (projectDir: string) => Promise<void>
-  unwatchCanvas: () => Promise<void>
+  unwatchCanvas: (projectDir?: string) => Promise<void>
   onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => () => void
+  workspace: {
+    load: (primaryDir: string) => Promise<{ folders: Array<{ path: string }> }>
+    save: (
+      primaryDir: string,
+      folders: Array<{ path: string }>,
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+  }
   auth: {
     getSession: () => Promise<SessionInfo | null>
     login: (email: string, password: string) => Promise<AuthLoginResult>

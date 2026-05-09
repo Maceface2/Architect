@@ -7,6 +7,7 @@ import { getAgentRuntime, type AgentRuntime, type AssistantMode } from '../../..
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useWorkspace } from '../../context/WorkspaceContext'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import type { ProjectSettings } from '../../types'
 import AssistantLaunchModal, { type AssistantRelaunchOpts } from './AssistantLaunchModal'
@@ -369,6 +370,11 @@ export default function AssistantPanel({
   const runtimeMeta = getAgentRuntime(runtime)
   const projectDir = useProjectDir()
   const projectSettings = useProjectSettings() as ProjectSettings
+  // Multi-folder workspace: assistant runs in the active folder's cwd.
+  // Surface the folder name in the header so the user always knows which
+  // folder's canvas the assistant edits.
+  const { activeFolder, loadedFolders } = useWorkspace()
+  const showActiveFolder = loadedFolders.length > 1
   const [modalOpen, setModalOpen] = useState(false)
   const archRef = useRef<AssistantTerminalHandle>(null)
   const generalRef = useRef<AssistantTerminalHandle>(null)
@@ -402,6 +408,24 @@ export default function AssistantPanel({
           >
             {runtimeMeta.shortLabel}
           </span>
+          {showActiveFolder && (
+            <span
+              className="flex items-center gap-1 px-1.5 py-0.5 rounded text-[9px] font-mono flex-shrink-0 border"
+              style={{
+                color: activeFolder.color,
+                borderColor: `${activeFolder.color}55`,
+                backgroundColor: `${activeFolder.color}12`,
+              }}
+              title={`Editing canvas in ${activeFolder.path}`}
+            >
+              <span
+                aria-hidden
+                className="inline-block w-1.5 h-1.5 rounded-sm"
+                style={{ background: activeFolder.color }}
+              />
+              {activeFolder.label}
+            </span>
+          )}
         </div>
         <div className="flex items-center gap-2">
           {/* Settings — model picker + new/resume for the current mode */}

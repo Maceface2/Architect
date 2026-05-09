@@ -254,6 +254,11 @@ export interface ZoneGraphNode {
     behavior: { mode: string; retries: number; onFailure: string; timeoutMs: number }
     permissions: Record<string, boolean>
     envVars: Array<{ key: string; value: string }>
+    // Workspace folder this zone belongs to. Set by the renderer when the
+    // workspace has more than one folder loaded; multi-folder dispatches
+    // spawn each zone with this as its cwd. Single-folder dispatches leave
+    // it undefined and the spawn falls back to the workspace primary.
+    folderPath?: string
   }
 }
 
@@ -1238,6 +1243,10 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   // touches one zone.
   const safe = (zone.data.participantId && zone.data.participantId.trim())
     || sanitize(zone.data.label)
+  // Multi-folder workspace: each zone's PTY runs in its own folder. Session
+  // history records still live at opts.projectDir (= workspace primary) so
+  // the launch modal's lookups stay anchored at one place.
+  const zoneCwd = zone.data.folderPath || opts.projectDir
   const base = join(opts.projectDir, 'ARCHITECT')
   // Solo flow only needs prompts/ (zone prompt below), sessions/ (session
   // capture), and outputs/ (the soft-handoff scratchpad referenced in the
@@ -1312,7 +1321,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       label: zone.data.label,
       runtime,
       env,
-      cwd: opts.projectDir,
+      cwd: zoneCwd,
       model,
       resumeSessionId: rec.sessionId,
       skipPermissions: false,
@@ -1347,7 +1356,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       label: zone.data.label,
       runtime,
       env,
-      cwd: opts.projectDir,
+      cwd: zoneCwd,
       initialPrompt,
       appendSystemPrompt: appendForRuntime,
       model,

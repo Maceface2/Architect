@@ -11,6 +11,16 @@ export type ComponentEdgeDirection = 'source-to-target' | 'bidirectional' | 'non
 export interface ComponentEdgeData extends Record<string, unknown> {
   label?: string
   direction?: ComponentEdgeDirection
+  // Cross-folder edge metadata. When source and target nodes live in
+  // different workspace folders, the edge is owned by the source folder's
+  // canvas file and carries the target's absolute folder path so the merge
+  // loader can resolve the target node id in the other folder's id space.
+  // Persisted on disk under the source folder's edges[i].data.targetFolder.
+  targetFolder?: string
+  // Render hint set at load time when an edge's targetFolder is not
+  // currently loaded into the workspace. Consumers style these muted/
+  // dashed; never persisted (splitMergedForSave strips it on write).
+  dangling?: boolean
 }
 
 export interface NodeSkillFile {
@@ -185,6 +195,10 @@ export interface DispatchZoneSession {
   label: string
   runtime: AgentRuntime
   sessionId: string
+  // Multi-folder dispatch: workspace folder this zone ran in. Used on
+  // resume to auto-load the folder if it's been removed from the workspace
+  // since dispatch time. Optional for back-compat with older v5 records.
+  folderPath?: string
 }
 
 export interface DispatchRecord {
@@ -204,6 +218,14 @@ export interface DispatchRecord {
   planPath?: string
   workboardPath?: string
   planUpdatedAt?: string
+  // Workspace anchor at dispatch time. Equal to the renderer's primary
+  // folder for current dispatches; resumed records pin it so the runtime
+  // tree is rebuilt at the same anchor regardless of where the workspace
+  // is rooted later. Optional for back-compat with older v5 records.
+  dispatchPrimaryFolder?: string
+  // Distinct cwds across all zones at dispatch time. Resume uses this to
+  // auto-load any folders that have been removed from the workspace since.
+  involvedFolders?: string[]
 }
 
 export type DispatchRequest =

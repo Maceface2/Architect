@@ -183,9 +183,14 @@ export function normalizeEdgeDirection(raw: unknown): ComponentEdgeDirection {
 export function normalizeEdgeData(raw: unknown): ComponentEdgeData {
   const rec = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {}
   const label = typeof rec.label === 'string' ? rec.label.trim() : ''
+  const targetFolder =
+    typeof rec.targetFolder === 'string' && rec.targetFolder.length > 0
+      ? rec.targetFolder
+      : undefined
   return {
     direction: normalizeEdgeDirection(rec.direction),
     ...(label ? { label } : {}),
+    ...(targetFolder ? { targetFolder } : {}),
   }
 }
 
@@ -611,4 +616,387 @@ function isCollisionOwner(nodes: CanvasNode[], zoneId: string, participantId: st
     return node.id === zoneId
   }
   return false
+}
+
+// Multi-directory workspace: each loaded folder owns its own
+// architect-canvas.json. They merge into one render-time graph but each
+// node and edge stays addressable to its origin folder for save-time split.
+//
+// The merge keeps node ids stable when possible — primary folder always
+// preserves originals, secondary folders preserve theirs unless they
+// collide with already-loaded ids, in which case the loader mints a fresh
+// in-memory id and remembers the on-disk original via a per-id alias map.
+// We do NOT prefix ids globally; that would cascade through every store
+// keyed by node id (DispatchRecord, ZoneSessionRecord, terminal layout,
+// dispatchedGraph). A single-folder workspace round-trips byte-identical.
+
+export interface FolderCanvasInput {
+  folderPath: string
+  isPrimary: boolean
+  raw: string | null
+}
+
+export interface FolderIdAlias {
+  folderPath: string
+  originalId: string
+}
+
+export interface MergedCanvas {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+  settings: ProjectSettings
+  // The non-primary folders' raw settings as they sat on disk. Round-tripped
+  // verbatim on save so editing primary settings doesn't bleed into other
+  // folders' canvases.
+  perFolderSettings: Map<string, ProjectSettings>
+  // in-memory id → on-disk { folderPath, originalId }. Populated only when a
+  // secondary folder collides with an already-loaded id and has to rename.
+  idAliases: Map<string, FolderIdAlias>
+  // Per-folder canvas-coordinate offset applied at load time so non-primary
+  // folders don't overlap the primary at (0,0). splitMergedForSave subtracts
+  // the same offset so disk positions remain folder-relative — no double-
+  // shifting on subsequent loads. Primary's offset is always {0,0}.
+  folderOffsets: Map<string, FolderOffset>
+}
+
+export interface FolderOffset {
+  dx: number
+  dy: number
+}
+
+const FOLDER_PATH_KEY = 'folderPath'
+
+function tagFolderPath(node: CanvasNode, folderPath: string): CanvasNode {
+  const data = node.data as Record<string, unknown>
+  if (data[FOLDER_PATH_KEY] === folderPath) return node
+  return {
+    ...node,
+    data: { ...data, [FOLDER_PATH_KEY]: folderPath },
+  } as unknown as CanvasNode
+}
+
+export function getNodeFolderPath(node: CanvasNode): string | null {
+  const data = node.data as Record<string, unknown>
+  const v = data[FOLDER_PATH_KEY]
+  return typeof v === 'string' && v.length > 0 ? v : null
+}
+
+function stripFolderPath(node: CanvasNode): CanvasNode {
+  const data = node.data as Record<string, unknown>
+  if (!(FOLDER_PATH_KEY in data)) return node
+  const next = { ...data }
+  delete next[FOLDER_PATH_KEY]
+  return { ...node, data: next } as unknown as CanvasNode
+}
+
+function safeMigrate(raw: string | null): ArchitectCanvasData {
+  if (!raw) {
+    return { nodes: [], edges: [], settings: createDefaultProjectSettings() }
+  }
+  try {
+    return migrateCanvasData(JSON.parse(raw))
+  } catch {
+    return { nodes: [], edges: [], settings: createDefaultProjectSettings() }
+  }
+}
+
+// Mint a fresh id by suffixing a counter — keeps it human-readable. Only
+// used when a secondary folder's id collides with an already-loaded one.
+function mintAliasId(originalId: string, used: Set<string>): string {
+  for (let n = 2; n < 1_000_000; n += 1) {
+    const candidate = `${originalId}#${n}`
+    if (!used.has(candidate)) return candidate
+  }
+  return `${originalId}#${Date.now()}`
+}
+
+interface NodeBounds {
+  left: number
+  top: number
+  right: number
+  bottom: number
+}
+
+const DEFAULT_NODE_W = 280
+const DEFAULT_NODE_H = 200
+// Horizontal gap between adjacent folder regions on the canvas. Wide enough
+// that the dashed FolderRegions chrome around each one breathes.
+const FOLDER_GAP_X = 240
+
+function computeNodeBounds(nodes: CanvasNode[]): NodeBounds | null {
+  if (nodes.length === 0) return null
+  let minX = Infinity
+  let minY = Infinity
+  let maxX = -Infinity
+  let maxY = -Infinity
+  for (const n of nodes) {
+    const w = (n.width ?? DEFAULT_NODE_W) as number
+    const h = (n.height ?? DEFAULT_NODE_H) as number
+    const x = n.position?.x ?? 0
+    const y = n.position?.y ?? 0
+    if (x < minX) minX = x
+    if (y < minY) minY = y
+    if (x + w > maxX) maxX = x + w
+    if (y + h > maxY) maxY = y + h
+  }
+  return { left: minX, top: minY, right: maxX, bottom: maxY }
+}
+
+function translateNode(node: CanvasNode, offset: FolderOffset): CanvasNode {
+  if (offset.dx === 0 && offset.dy === 0) return node
+  return {
+    ...node,
+    position: {
+      x: (node.position?.x ?? 0) + offset.dx,
+      y: (node.position?.y ?? 0) + offset.dy,
+    },
+  } as CanvasNode
+}
+
+export function loadMergedCanvas(inputs: FolderCanvasInput[]): MergedCanvas {
+  // Ensure primary is processed first so its ids are guaranteed canonical
+  // and its bounds anchor the running offset for any subsequent folder.
+  const ordered = [...inputs].sort((a, b) => Number(b.isPrimary) - Number(a.isPrimary))
+
+  const mergedNodes: CanvasNode[] = []
+  const mergedEdges: CanvasEdge[] = []
+  const usedNodeIds = new Set<string>()
+  const usedEdgeIds = new Set<string>()
+  const idAliases = new Map<string, FolderIdAlias>()
+  const perFolderSettings = new Map<string, ProjectSettings>()
+  const folderOffsets = new Map<string, FolderOffset>()
+  // Per-folder lookup of on-disk id → in-memory id. Built in pass 1 so
+  // pass 2 can resolve cross-folder edge targets even when targetFolder
+  // appears later in `ordered` than the edge's source folder.
+  const idRemapByFolder = new Map<string, Map<string, string>>()
+  // Cache the migrated canvas data per folder so we don't safeMigrate twice.
+  const dataByFolder = new Map<string, ArchitectCanvasData>()
+
+  let primarySettings: ProjectSettings | null = null
+  let runningRight = 0
+  let primaryTop = 0
+  let primaryAnchored = false
+
+  // Pass 1 — nodes. Compute per-folder offsets, mint final in-memory ids,
+  // tag with folderPath, push into mergedNodes.
+  for (const input of ordered) {
+    const data = safeMigrate(input.raw)
+    dataByFolder.set(input.folderPath, data)
+    if (input.isPrimary) {
+      primarySettings = data.settings
+    } else {
+      perFolderSettings.set(input.folderPath, data.settings)
+    }
+
+    const rawBounds = computeNodeBounds(data.nodes)
+    let offset: FolderOffset = { dx: 0, dy: 0 }
+    if (input.isPrimary) {
+      if (rawBounds) {
+        runningRight = rawBounds.right
+        primaryTop = rawBounds.top
+        primaryAnchored = true
+      }
+    } else if (rawBounds) {
+      const baseTop = primaryAnchored ? primaryTop : 0
+      const baseRight = primaryAnchored ? runningRight : 0
+      offset = {
+        dx: baseRight - rawBounds.left + FOLDER_GAP_X,
+        dy: baseTop - rawBounds.top,
+      }
+      runningRight = rawBounds.right + offset.dx
+    }
+    folderOffsets.set(input.folderPath, offset)
+
+    const idRemap = new Map<string, string>()
+    for (const node of data.nodes) {
+      let nextId = node.id
+      if (usedNodeIds.has(nextId)) {
+        nextId = mintAliasId(node.id, usedNodeIds)
+        idAliases.set(nextId, { folderPath: input.folderPath, originalId: node.id })
+      }
+      idRemap.set(node.id, nextId)
+      usedNodeIds.add(nextId)
+      const remapped = { ...node, id: nextId } as CanvasNode
+      const shifted = translateNode(remapped, offset)
+      const tagged = tagFolderPath(shifted, input.folderPath)
+      mergedNodes.push(tagged)
+    }
+    idRemapByFolder.set(input.folderPath, idRemap)
+  }
+
+  // Pass 2 — edges. Resolve source through the source folder's remap.
+  // For cross-folder edges (data.targetFolder set), look up target in the
+  // target folder's remap; if that folder isn't loaded, mark the edge
+  // dangling so the renderer can style it muted but the data is preserved
+  // for save round-trip.
+  for (const input of ordered) {
+    const data = dataByFolder.get(input.folderPath)
+    if (!data) continue
+    const sourceRemap = idRemapByFolder.get(input.folderPath)!
+    for (const edge of data.edges) {
+      const edgeData = (edge.data ?? {}) as ComponentEdgeData
+      const targetFolder = edgeData.targetFolder ?? input.folderPath
+      const isCrossFolder = targetFolder !== input.folderPath
+      const targetRemap = idRemapByFolder.get(targetFolder)
+      const sourceInMemory = sourceRemap.get(edge.source) ?? edge.source
+      let targetInMemory: string
+      let dangling = false
+      if (!isCrossFolder) {
+        targetInMemory = sourceRemap.get(edge.target) ?? edge.target
+      } else if (targetRemap) {
+        targetInMemory = targetRemap.get(edge.target) ?? edge.target
+      } else {
+        // Other folder not loaded — keep the on-disk target id so save
+        // round-trips it back; the renderer styles this edge as dangling.
+        targetInMemory = edge.target
+        dangling = true
+      }
+
+      let edgeId = edge.id
+      if (usedEdgeIds.has(edgeId)) {
+        edgeId = mintAliasId(edge.id, usedEdgeIds)
+      }
+      usedEdgeIds.add(edgeId)
+
+      const nextData: ComponentEdgeData = {
+        ...edgeData,
+        ...(isCrossFolder ? { targetFolder } : {}),
+        ...(dangling ? { dangling: true } : {}),
+      }
+      mergedEdges.push({
+        ...edge,
+        id: edgeId,
+        source: sourceInMemory,
+        target: targetInMemory,
+        data: nextData,
+      })
+    }
+  }
+
+  return {
+    nodes: mergedNodes,
+    edges: mergedEdges,
+    settings: primarySettings ?? createDefaultProjectSettings(),
+    perFolderSettings,
+    idAliases,
+    folderOffsets,
+  }
+}
+
+export interface SerializedFolderCanvas {
+  folderPath: string
+  raw: string
+}
+
+// Inverse of loadMergedCanvas. Takes the live merged graph plus the
+// per-folder settings/offsets captured at load time and produces one
+// serialized canvas per folder. Drops the in-memory `folderPath` tag from
+// each node, restores aliased ids back to their on-disk originals, and
+// subtracts each folder's load-time offset so disk positions stay folder-
+// relative — primary-only round-trip stays byte-identical, and adding/
+// removing folders never double-shifts a node.
+export function splitMergedForSave(opts: {
+  nodes: CanvasNode[]
+  edges: CanvasEdge[]
+  primarySettings: ProjectSettings
+  primaryFolderPath: string
+  folderPaths: string[]
+  perFolderSettings: Map<string, ProjectSettings>
+  idAliases: Map<string, FolderIdAlias>
+  folderOffsets?: Map<string, FolderOffset>
+  savedAt?: string
+}): SerializedFolderCanvas[] {
+  const stamp = opts.savedAt ?? new Date().toISOString()
+  // Reverse alias lookup: in-memory id → on-disk original (within its folder).
+  const onDiskIdFor = (node: CanvasNode): string => {
+    const alias = opts.idAliases.get(node.id)
+    return alias ? alias.originalId : node.id
+  }
+  const offsetFor = (folderPath: string): FolderOffset => {
+    return opts.folderOffsets?.get(folderPath) ?? { dx: 0, dy: 0 }
+  }
+
+  // Group nodes by folder. A node tagged with an unknown folder (e.g. one
+  // dropped without a region match yet — Step 4 plumbs that fallback) defaults
+  // to the primary.
+  const nodesByFolder = new Map<string, CanvasNode[]>()
+  for (const folderPath of opts.folderPaths) nodesByFolder.set(folderPath, [])
+  for (const node of opts.nodes) {
+    const tagged = getNodeFolderPath(node)
+    const target =
+      tagged && nodesByFolder.has(tagged) ? tagged : opts.primaryFolderPath
+    const offset = offsetFor(target)
+    const inverse: FolderOffset = { dx: -offset.dx, dy: -offset.dy }
+    const remapped = { ...node, id: onDiskIdFor(node) } as CanvasNode
+    const restored = translateNode(remapped, inverse)
+    const stripped = stripFolderPath(restored)
+    nodesByFolder.get(target)!.push(stripped)
+  }
+
+  // Build a folder-membership index for edge bucketing: folderPath of each
+  // node by its in-memory id.
+  const folderOfNode = new Map<string, string>()
+  for (const node of opts.nodes) {
+    const tagged = getNodeFolderPath(node)
+    folderOfNode.set(node.id, tagged && opts.folderPaths.includes(tagged) ? tagged : opts.primaryFolderPath)
+  }
+
+  const edgesByFolder = new Map<string, CanvasEdge[]>()
+  for (const folderPath of opts.folderPaths) edgesByFolder.set(folderPath, [])
+  for (const edge of opts.edges) {
+    const edgeData = (edge.data ?? {}) as ComponentEdgeData
+    // Honor an explicitly-tagged targetFolder even when the target node
+    // isn't currently loaded (dangling edge — folder removed mid-session).
+    // Falls back to the resolved-folder lookup for normal edges where both
+    // endpoints are loaded.
+    const sourceFolder = folderOfNode.get(edge.source) ?? opts.primaryFolderPath
+    const taggedTargetFolder = edgeData.targetFolder
+    const resolvedTargetFolder = folderOfNode.get(edge.target)
+    const targetFolder =
+      taggedTargetFolder && opts.folderPaths.includes(taggedTargetFolder)
+        ? taggedTargetFolder
+        : resolvedTargetFolder ?? sourceFolder
+    const isCrossFolder = sourceFolder !== targetFolder
+
+    // Edge is owned by its source folder's canvas. Cross-folder edges carry
+    // a targetFolder annotation in their data so the loader can resolve the
+    // target id in the other folder's id space.
+    const bucket = edgesByFolder.get(sourceFolder) ?? edgesByFolder.get(opts.primaryFolderPath)!
+
+    // Restore on-disk endpoints (alias map records secondary-folder renames).
+    const sourceAlias = opts.idAliases.get(edge.source)
+    const targetAlias = opts.idAliases.get(edge.target)
+
+    const persistedData: ComponentEdgeData = { ...edgeData }
+    // dangling is a load-time hint — never persist.
+    delete persistedData.dangling
+    if (isCrossFolder) {
+      persistedData.targetFolder = targetFolder
+    } else {
+      delete persistedData.targetFolder
+    }
+
+    bucket.push({
+      ...edge,
+      source: sourceAlias ? sourceAlias.originalId : edge.source,
+      target: targetAlias ? targetAlias.originalId : edge.target,
+      data: persistedData,
+    })
+  }
+
+  const out: SerializedFolderCanvas[] = []
+  for (const folderPath of opts.folderPaths) {
+    const isPrimary = folderPath === opts.primaryFolderPath
+    const settings = isPrimary
+      ? opts.primarySettings
+      : opts.perFolderSettings.get(folderPath) ?? opts.primarySettings
+    const payload = {
+      nodes: nodesByFolder.get(folderPath) ?? [],
+      edges: edgesByFolder.get(folderPath) ?? [],
+      settings,
+      savedAt: stamp,
+    }
+    out.push({ folderPath, raw: JSON.stringify(payload) })
+  }
+  return out
 }

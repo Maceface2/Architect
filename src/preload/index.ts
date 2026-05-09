@@ -13,7 +13,23 @@ contextBridge.exposeInMainWorld('electron', {
   saveCanvas: (projectDir: string, data: string) => ipcRenderer.invoke('save-canvas', projectDir, data),
   loadCanvas: (projectDir: string) => ipcRenderer.invoke('load-canvas', projectDir),
   watchCanvas: (projectDir: string) => ipcRenderer.invoke('watch-canvas', projectDir),
-  unwatchCanvas: () => ipcRenderer.invoke('unwatch-canvas'),
+  // Pass projectDir to close one specific watcher; omit to close all (used on
+  // app shutdown / window close).
+  unwatchCanvas: (projectDir?: string) => ipcRenderer.invoke('unwatch-canvas', projectDir),
+
+  // Multi-folder workspace persistence. Stored at
+  // <primary>/ARCHITECT/workspace.json — primary is implicit, so the file
+  // only carries the *additional* folders co-loaded with it.
+  workspace: {
+    load: (primaryDir: string) =>
+      ipcRenderer.invoke('workspace:load', primaryDir) as Promise<{
+        folders: Array<{ path: string }>
+      }>,
+    save: (primaryDir: string, folders: Array<{ path: string }>) =>
+      ipcRenderer.invoke('workspace:save', primaryDir, folders) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+  },
 
   // Start a fresh multi-zone (or single-zone) dispatch. Companion is
   // dispatches.resume for replaying a prior DispatchRecord.
