@@ -43,25 +43,43 @@ function basename(p: string): string {
   return idx >= 0 ? trimmed.slice(idx + 1) || trimmed : trimmed
 }
 
-function hashPath(p: string): number {
-  let h = 0
-  for (let i = 0; i < p.length; i++) {
-    h = (h * 31 + p.charCodeAt(i)) >>> 0
-  }
-  return h
+function parentBasename(p: string): string {
+  const trimmed = p.replace(/[\\/]+$/, '')
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
+  if (idx <= 0) return ''
+  const parent = trimmed.slice(0, idx)
+  return basename(parent)
 }
 
-function colorFor(p: string): string {
-  return FOLDER_PALETTE[hashPath(p) % FOLDER_PALETTE.length]
+// Derive display labels for the full folder set: when basenames collide
+// (e.g. two folders both named "client"), append the parent segment so
+// the user can tell them apart in the picker / region chrome.
+function labelsForPaths(paths: string[]): string[] {
+  const bases = paths.map(basename)
+  const counts = new Map<string, number>()
+  for (const b of bases) counts.set(b, (counts.get(b) ?? 0) + 1)
+  return paths.map((p, i) => {
+    const b = bases[i]
+    if ((counts.get(b) ?? 0) <= 1) return b
+    const parent = parentBasename(p)
+    return parent ? `${parent}/${b}` : b
+  })
 }
 
-function makeFolder(path: string, isPrimary: boolean): LoadedFolder {
-  return {
-    path,
-    label: basename(path),
-    color: colorFor(path),
-    isPrimary,
-  }
+// Assign palette colors by index. Folders 0..PALETTE.length-1 each get a
+// unique color in load order; any beyond that wrap around (rare — the user
+// would need 9+ folders loaded). Stable per index, so adding/removing
+// trailing folders doesn't reshuffle the existing folders' colors.
+function colorForIndex(i: number): string {
+  return FOLDER_PALETTE[i % FOLDER_PALETTE.length]
+}
+
+// State stores just paths + isPrimary. Labels and colors are derived in
+// the value memo so disambiguation runs over the *current* set — adding a
+// second "client" folder retroactively rewrites the first one's label too.
+interface FolderEntry {
+  path: string
+  isPrimary: boolean
 }
 
 export function WorkspaceProvider({
@@ -71,15 +89,15 @@ export function WorkspaceProvider({
   primaryDir: string
   children: React.ReactNode
 }) {
-  const [folders, setFolders] = useState<LoadedFolder[]>(() => [
-    makeFolder(primaryDir, true),
+  const [folders, setFolders] = useState<FolderEntry[]>(() => [
+    { path: primaryDir, isPrimary: true },
   ])
   const [activePath, setActivePath] = useState<string>(primaryDir)
 
   // Reset state when the primary folder changes (e.g. user picks a new
   // workspace via DirectoryGate or "Change folder" in TopNav).
   useEffect(() => {
-    setFolders([makeFolder(primaryDir, true)])
+    setFolders([{ path: primaryDir, isPrimary: true }])
     setActivePath(primaryDir)
   }, [primaryDir])
 
@@ -99,7 +117,7 @@ export function WorkspaceProvider({
         const next = [...prev]
         for (const p of extras) {
           if (seen.has(p)) continue
-          next.push(makeFolder(p, false))
+          next.push({ path: p, isPrimary: false })
           seen.add(p)
         }
         return next
@@ -109,7 +127,7 @@ export function WorkspaceProvider({
   }, [primaryDir])
 
   const persist = useCallback(
-    async (next: LoadedFolder[]) => {
+    async (next: FolderEntry[]) => {
       const extras = next.filter(f => !f.isPrimary).map(f => ({ path: f.path }))
       await window.electron.workspace.save(primaryDir, extras)
     },
@@ -119,13 +137,13 @@ export function WorkspaceProvider({
   const addFolder = useCallback(
     async (path: string) => {
       if (!path || path === primaryDir) return
-      let next: LoadedFolder[] | null = null
+      let next: FolderEntry[] | null = null
       setFolders(prev => {
         if (prev.some(f => f.path === path)) {
           next = null
           return prev
         }
-        next = [...prev, makeFolder(path, false)]
+        next = [...prev, { path, isPrimary: false }]
         return next
       })
       if (next) await persist(next)
@@ -136,7 +154,7 @@ export function WorkspaceProvider({
   const removeFolder = useCallback(
     async (path: string) => {
       if (path === primaryDir) return
-      let next: LoadedFolder[] | null = null
+      let next: FolderEntry[] | null = null
       setFolders(prev => {
         const filtered = prev.filter(f => f.path !== path)
         if (filtered.length === prev.length) {
@@ -160,12 +178,20 @@ export function WorkspaceProvider({
   )
 
   const value = useMemo<WorkspaceContextValue>(() => {
-    const primary = folders.find(f => f.isPrimary) ?? makeFolder(primaryDir, true)
-    const active =
-      folders.find(f => f.path === activePath) ?? primary
-    const byPath = new Map(folders.map(f => [f.path, f]))
+    const labels = labelsForPaths(folders.map(f => f.path))
+    const loaded: LoadedFolder[] = folders.map((f, i) => ({
+      path: f.path,
+      label: labels[i],
+      color: colorForIndex(i),
+      isPrimary: f.isPrimary,
+    }))
+    const primary =
+      loaded.find(f => f.isPrimary) ??
+      { path: primaryDir, label: basename(primaryDir), color: colorForIndex(0), isPrimary: true }
+    const active = loaded.find(f => f.path === activePath) ?? primary
+    const byPath = new Map(loaded.map(f => [f.path, f]))
     return {
-      loadedFolders: folders,
+      loadedFolders: loaded,
       primaryFolder: primary,
       activeFolder: active,
       setActiveFolderPath,

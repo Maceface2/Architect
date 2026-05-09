@@ -151,12 +151,21 @@ export function registerAuthIpc(): void {
       }
       // Best-effort login telemetry. Failure here must never block sign-in
       // (table missing, RLS misconfig, network blip on the post-auth call).
-      void client
-        .from('user_logins')
-        .insert({ user_id: info.userId, email: info.email || null })
-        .then(({ error: logError }) => {
-          if (logError) console.warn('[auth] failed to record login event', logError.message)
-        })
+      // The .catch traps any rejection (network error, builder bug) — the
+      // .then-only form would surface it as an unhandled rejection.
+      try {
+        void client
+          .from('user_logins')
+          .insert({ user_id: info.userId, email: info.email || null })
+          .then(({ error: logError }) => {
+            if (logError) console.warn('[auth] failed to record login event', logError.message)
+          })
+          .catch(err => {
+            console.warn('[auth] login telemetry threw', err)
+          })
+      } catch (err) {
+        console.warn('[auth] login telemetry threw synchronously', err)
+      }
       return { ok: true, session: info }
     },
   )

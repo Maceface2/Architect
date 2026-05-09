@@ -652,6 +652,11 @@ export interface MergedCanvas {
   // in-memory id → on-disk { folderPath, originalId }. Populated only when a
   // secondary folder collides with an already-loaded id and has to rename.
   idAliases: Map<string, FolderIdAlias>
+  // Same shape as idAliases but for edge ids. Edge ids rarely collide
+  // across folders (they're typically uuid-ish), but when they do the
+  // loader has to rename one and we need to remember the original so save
+  // can restore byte-identical disk content.
+  edgeAliases: Map<string, FolderIdAlias>
   // Per-folder canvas-coordinate offset applied at load time so non-primary
   // folders don't overlap the primary at (0,0). splitMergedForSave subtracts
   // the same offset so disk positions remain folder-relative — no double-
@@ -763,6 +768,7 @@ export function loadMergedCanvas(inputs: FolderCanvasInput[]): MergedCanvas {
   const usedNodeIds = new Set<string>()
   const usedEdgeIds = new Set<string>()
   const idAliases = new Map<string, FolderIdAlias>()
+  const edgeAliases = new Map<string, FolderIdAlias>()
   const perFolderSettings = new Map<string, ProjectSettings>()
   const folderOffsets = new Map<string, FolderOffset>()
   // Per-folder lookup of on-disk id → in-memory id. Built in pass 1 so
@@ -855,6 +861,7 @@ export function loadMergedCanvas(inputs: FolderCanvasInput[]): MergedCanvas {
       let edgeId = edge.id
       if (usedEdgeIds.has(edgeId)) {
         edgeId = mintAliasId(edge.id, usedEdgeIds)
+        edgeAliases.set(edgeId, { folderPath: input.folderPath, originalId: edge.id })
       }
       usedEdgeIds.add(edgeId)
 
@@ -879,6 +886,7 @@ export function loadMergedCanvas(inputs: FolderCanvasInput[]): MergedCanvas {
     settings: primarySettings ?? createDefaultProjectSettings(),
     perFolderSettings,
     idAliases,
+    edgeAliases,
     folderOffsets,
   }
 }
@@ -903,6 +911,7 @@ export function splitMergedForSave(opts: {
   folderPaths: string[]
   perFolderSettings: Map<string, ProjectSettings>
   idAliases: Map<string, FolderIdAlias>
+  edgeAliases?: Map<string, FolderIdAlias>
   folderOffsets?: Map<string, FolderOffset>
   savedAt?: string
 }): SerializedFolderCanvas[] {
@@ -976,8 +985,10 @@ export function splitMergedForSave(opts: {
       delete persistedData.targetFolder
     }
 
+    const edgeAlias = opts.edgeAliases?.get(edge.id)
     bucket.push({
       ...edge,
+      id: edgeAlias ? edgeAlias.originalId : edge.id,
       source: sourceAlias ? sourceAlias.originalId : edge.source,
       target: targetAlias ? targetAlias.originalId : edge.target,
       data: persistedData,

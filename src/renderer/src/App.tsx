@@ -339,6 +339,77 @@ function CanvasConflictModal({
   )
 }
 
+function MissingFoldersPrompt({
+  missing,
+  onContinue,
+  onCancel,
+}: {
+  missing: string[]
+  onContinue: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-fg">Some folders aren&apos;t loaded</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
+            This dispatch ran across folders that aren&apos;t currently in the workspace. Resume will skip those zones unless you add the folders first.
+          </p>
+        </div>
+        <div className="px-5 py-3 space-y-1">
+          {missing.map(p => (
+            <div key={p} className="text-[11px] font-mono text-fg-muted truncate" title={p}>
+              {p}
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onContinue}
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+          >
+            Resume anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DispatchErrorModal({
+  message,
+  onClose,
+}: {
+  message: string
+  onClose: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-fg">Dispatch error</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">{message}</p>
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+          >
+            Dismiss
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
 function AutoCanvasOnboardingModal({
   starting,
   onGenerate,
@@ -443,6 +514,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
   const [bugReportOpen, setBugReportOpen] = useState(false)
+  // Resume gating: surfaced when a dispatch's involvedFolders aren't all
+  // currently loaded. Promise-based so the resume flow can await the user's
+  // continue/cancel decision the same way `window.alert` blocked before.
+  const [missingFoldersPrompt, setMissingFoldersPrompt] = useState<
+    { missing: string[]; resolve: (cont: boolean) => void } | null
+  >(null)
+  // Fatal-error surface for the dispatch flow (legacy protocol, missing
+  // record, etc.). Replaces the second window.alert in handleDispatchSubmit.
+  const [dispatchErrorMessage, setDispatchErrorMessage] = useState<string | null>(null)
   // True while the terminal page is rendering in a detached BrowserWindow.
   // The docked panel hides itself and shows a "popped out" placeholder; all
   // session/layout/theme updates flow over the terminalPage IPC bus until
@@ -473,6 +553,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   // adds cross-folder edge ownership tracking on top.
   const perFolderSettingsRef = useRef<Map<string, ProjectSettings>>(new Map())
   const idAliasesRef = useRef<Map<string, FolderIdAlias>>(new Map())
+  const edgeAliasesRef = useRef<Map<string, FolderIdAlias>>(new Map())
   // Load-time offset applied per folder so non-primary folders' raw
   // positions don't visually overlap the primary's region. Splitting on
   // save subtracts the same offset, so disk positions stay folder-relative.
@@ -691,6 +772,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       folderPaths: loadedFolders.map(f => f.path),
       perFolderSettings: perFolderSettingsRef.current,
       idAliases: idAliasesRef.current,
+      edgeAliases: edgeAliasesRef.current,
       folderOffsets: folderOffsetsRef.current,
     })
     const primaryEntry = split.find(s => s.folderPath === primaryFolder.path)
@@ -758,6 +840,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         folderPaths: loadedFolders.map(f => f.path),
         perFolderSettings: perFolderSettingsRef.current,
         idAliases: idAliasesRef.current,
+        edgeAliases: edgeAliasesRef.current,
         folderOffsets: folderOffsetsRef.current,
       })
       const inputs: FolderCanvasInput[] = loadedFolders.map(f => {
@@ -779,6 +862,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setProjectSettings(merged.settings)
       perFolderSettingsRef.current = merged.perFolderSettings
       idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
       folderOffsetsRef.current = merged.folderOffsets
       setIsDirty(!clearDirty)
       setDispatchedGraph(null)
@@ -839,6 +923,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       setProjectSettings(merged.settings)
       perFolderSettingsRef.current = merged.perFolderSettings
       idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
       folderOffsetsRef.current = merged.folderOffsets
       // Cache each folder's last-observed raw for echo-suppression. Use the
       // raw read from disk (not splitMergedForSave's output) since we want
@@ -883,6 +968,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         folderPaths: watchedFolders,
         perFolderSettings: perFolderSettingsRef.current,
         idAliases: idAliasesRef.current,
+        edgeAliases: edgeAliasesRef.current,
         folderOffsets: folderOffsetsRef.current,
       })
       const ourCurrentRaw = split.find(s => s.folderPath === changedDir)?.raw
@@ -1204,10 +1290,14 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           const loadedSet = new Set(loadedFolders.map(f => f.path))
           const missing = involved.filter(p => p && !loadedSet.has(p))
           if (missing.length > 0) {
-            const list = missing.map(p => `  • ${p}`).join('\n')
-            window.alert(
-              `This dispatch involves folders that aren't currently loaded:\n\n${list}\n\nResume will skip those zones. Click "Add Folder" in the Files panel to load them, then retry.`,
-            )
+            const proceed = await new Promise<boolean>(resolve => {
+              setMissingFoldersPrompt({ missing, resolve })
+            })
+            setMissingFoldersPrompt(null)
+            if (!proceed) {
+              setDispatching(false)
+              return
+            }
           }
         } catch {
           // Best-effort guard — never block resume on a list-fetch failure.
@@ -1241,7 +1331,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           const msg = result.error === 'legacy-protocol'
             ? 'This dispatch was created with the legacy protocol and can\'t be resumed under the current build. Start a new dispatch instead.'
             : 'Dispatch record not found.'
-          window.alert(msg)
+          setDispatchErrorMessage(msg)
           return
         }
         setTerminalSessions(result.info)
@@ -1385,13 +1475,18 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
   const applyCanvasUpdate = useCallback((update: CanvasUpdate) => {
     snapshotHistory()
     const activeFolderPath = activeFolder.path
+    const primaryFolderPath = primaryFolder.path
     // Multi-folder workspaces: the assistant only touches the active
     // folder's slice. Preserve nodes/edges from other folders by filtering
     // them out of the rebuild and re-appending after the assistant's
-    // changes are applied.
+    // changes are applied. Untagged nodes (no folderPath) are treated as
+    // primary-folder residents — otherwise a workspace that flips from
+    // single-folder to multi-folder mid-session would silently drop any
+    // pre-existing nodes from primary whenever the assistant runs in a
+    // non-primary active folder.
     const otherFolderNodes = nodesRef.current.filter(n => {
-      const fp = (n.data as { folderPath?: string }).folderPath
-      return fp !== undefined && fp !== activeFolderPath
+      const fp = (n.data as { folderPath?: string }).folderPath ?? primaryFolderPath
+      return fp !== activeFolderPath
     })
     const otherFolderNodeIds = new Set(otherFolderNodes.map(n => n.id))
     const otherFolderEdges = edgesRef.current.filter(e =>
@@ -1584,7 +1679,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     setActiveTab('Canvas')
     queueFitView()
     void persistCanvasRaw(rawCanvas, true)
-  }, [activeFolder.path, persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
+  }, [activeFolder.path, primaryFolder.path, persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
 
   // Per-mode effective CLI for the side-panel assistant. Architecture and
   // General maintain independent runtime choices, fully decoupled from the
@@ -2193,6 +2288,19 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             projectDir={projectDir}
             activeDispatchId={activeDispatchId}
             onClose={() => setBugReportOpen(false)}
+          />
+        )}
+        {missingFoldersPrompt && (
+          <MissingFoldersPrompt
+            missing={missingFoldersPrompt.missing}
+            onContinue={() => missingFoldersPrompt.resolve(true)}
+            onCancel={() => missingFoldersPrompt.resolve(false)}
+          />
+        )}
+        {dispatchErrorMessage && (
+          <DispatchErrorModal
+            message={dispatchErrorMessage}
+            onClose={() => setDispatchErrorMessage(null)}
           />
         )}
       </div>

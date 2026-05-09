@@ -49,17 +49,19 @@ function computePrimaryForDispatch(opts: {
     counts.set(folderPath, (counts.get(folderPath) ?? 0) + 1)
   }
   if (counts.size === 0) return null
-  let best: string | null = null
+  // First pass: find the highest contribution count.
   let bestCount = -1
-  for (const [folderPath, count] of counts) {
-    if (count > bestCount) {
-      best = folderPath
-      bestCount = count
-    } else if (count === bestCount && folderPath === opts.primaryPath) {
-      best = folderPath
-    }
+  for (const count of counts.values()) {
+    if (count > bestCount) bestCount = count
   }
-  return best
+  // Second pass: among folders tied at bestCount, prefer the workspace
+  // primary; otherwise return the first one we see (Map iteration order
+  // matches insertion order, which mirrors zone declaration order).
+  if ((counts.get(opts.primaryPath) ?? -1) === bestCount) return opts.primaryPath
+  for (const [folderPath, count] of counts) {
+    if (count === bestCount) return folderPath
+  }
+  return null
 }
 
 export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit }: Props) {
