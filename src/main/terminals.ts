@@ -268,6 +268,7 @@ export interface ComponentGraphNode {
     specs?: string
     category?: string
     tag?: string
+    fields?: Array<{ id?: string; key: string; value: string }>
   }
 }
 
@@ -1272,6 +1273,9 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       category: c.data.category,
       description: c.data.description,
       specs: c.data.specs,
+      fields: (c.data.fields ?? [])
+        .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
+        .map(f => ({ key: f.key, value: f.value })),
     })),
     componentEdges,
     toolNames: enabledTools,

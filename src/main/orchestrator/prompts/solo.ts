@@ -5,6 +5,11 @@ import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 // No conductor, no scheduler, no activity log — the agent works directly
 // with the user.
 
+export interface ZoneComponentField {
+  key: string
+  value: string
+}
+
 export interface ZoneComponentSpec {
   id: string
   label: string
@@ -12,6 +17,7 @@ export interface ZoneComponentSpec {
   category?: string
   description?: string
   specs?: string
+  fields?: ZoneComponentField[]
 }
 
 export interface SoloZonePromptInput {
@@ -31,7 +37,10 @@ function renderComponents(components: ZoneComponentSpec[]): string {
   return components.map(c => {
     const head = `- **${c.label}** (\`${c.id}\`)${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
     const specs = (c.specs ?? '').trim()
-    return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
+    const fieldsBlock = (c.fields ?? []).length
+      ? `\n\n  Fields:\n${(c.fields ?? []).map(f => `    - \`${f.key}\` : \`${f.value}\``).join('\n')}`
+      : ''
+    return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}${fieldsBlock}` : `${head}${fieldsBlock}`
   }).join('\n\n')
 }
 

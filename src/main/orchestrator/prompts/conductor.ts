@@ -8,11 +8,17 @@ import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 // Conductor sees the *what* (components, specs, edge labels). Zone
 // systemPrompts (the *how*) are deliberately not exposed.
 
+export interface ConductorComponentField {
+  key: string
+  value: string
+}
+
 export interface ConductorComponentContext {
   label: string
   tag?: string
   description?: string
   specs?: string
+  fields?: ConductorComponentField[]
 }
 
 export interface ConductorZoneContext {
@@ -39,7 +45,10 @@ export type ConductorDecisionType = 'plan' | 'assign' | 'answer' | 'cancel' | 'f
 function renderConductorComponent(c: ConductorComponentContext): string {
   const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`
   const specs = (c.specs ?? '').trim()
-  return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}` : head
+  const fieldsBlock = (c.fields ?? []).length
+    ? `\n\n  Fields:\n${(c.fields ?? []).map(f => `    - \`${f.key}\` : \`${f.value}\``).join('\n')}`
+    : ''
+  return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}${fieldsBlock}` : `${head}${fieldsBlock}`
 }
 
 // Phrases that must appear in every conductor prompt. The coordinator-only

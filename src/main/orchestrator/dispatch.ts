@@ -163,6 +163,9 @@ function buildWorkspaceZoneInput(
     category: c.data.category,
     description: c.data.description,
     specs: c.data.specs,
+    fields: (c.data.fields ?? [])
+      .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
+      .map(f => ({ key: f.key, value: f.value })),
   }))
   const touchingEdges = componentEdges.filter(edge =>
     ownedComponentIds.has(edge.sourceId) || ownedComponentIds.has(edge.targetId)
@@ -224,6 +227,9 @@ function buildWorkspaceInput(
         category: c.data.category,
         description: c.data.description,
         specs: c.data.specs,
+        fields: (c.data.fields ?? [])
+          .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
+          .map(f => ({ key: f.key, value: f.value })),
       })),
     },
     zones,

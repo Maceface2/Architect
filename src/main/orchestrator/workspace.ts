@@ -52,6 +52,7 @@ export interface WorkspaceInput {
     category?: string
     description?: string
     specs?: string
+    fields?: Array<{ key: string; value: string }>
   }>
 }
 
@@ -113,6 +114,7 @@ function writeManifest(input: WorkspaceInput): void {
         tag: c.tag ?? '',
         description: c.description ?? '',
         specs: c.specs ?? '',
+        fields: c.fields ?? [],
       })),
     })),
     unassignedComponents: input.unassignedComponents.map(c => ({
@@ -120,6 +122,7 @@ function writeManifest(input: WorkspaceInput): void {
       tag: c.tag ?? '',
       description: c.description ?? '',
       specs: c.specs ?? '',
+      fields: c.fields ?? [],
     })),
     componentEdges: input.componentEdges,
   }
@@ -142,6 +145,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
       tag: c.tag,
       description: c.description,
       specs: c.specs,
+      fields: c.fields,
     })),
   }))
 
@@ -156,6 +160,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
       tag: c.tag,
       description: c.description,
       specs: c.specs,
+      fields: c.fields,
     })),
   })
   fs.writeFileSync(join(promptsDir, 'conductor.md'), conductorPrompt)
