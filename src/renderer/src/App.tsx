@@ -1183,6 +1183,12 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (zones.length === 0) return
     setDispatchModalOpen(false)
     setDispatching(true)
+    // Clear the prior dispatch's tabs + active id immediately. The main
+    // process kills every non-shell PTY at the top of startDispatch /
+    // resumeDispatch; this mirrors that on the renderer so stale tabs
+    // don't linger during the spawn await window.
+    setTerminalSessions([])
+    setActiveDispatchId(null)
     try {
       if (req.mode === 'resume') {
         // Multi-folder dispatch resume: validate all involved folders are

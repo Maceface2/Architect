@@ -149,6 +149,14 @@ export function registerAuthIpc(): void {
       if (!info) {
         return { ok: false, error: 'Sign-in succeeded but no session was returned' }
       }
+      // Best-effort login telemetry. Failure here must never block sign-in
+      // (table missing, RLS misconfig, network blip on the post-auth call).
+      void client
+        .from('user_logins')
+        .insert({ user_id: info.userId, email: info.email || null })
+        .then(({ error: logError }) => {
+          if (logError) console.warn('[auth] failed to record login event', logError.message)
+        })
       return { ok: true, session: info }
     },
   )
