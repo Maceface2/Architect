@@ -76,7 +76,7 @@ import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext'
 import PageTabs from './components/canvas/PageTabs'
-import FolderRegions, { computeFolderRegions, folderForPoint } from './components/canvas/FolderRegions'
+import FolderRegions, { computeFolderRegions, nearestFolderForPoint, applyEmptyAdjustments, type EmptyOffset, type EmptyBase } from './components/canvas/FolderRegions'
 import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
@@ -532,6 +532,13 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [updateReady, setUpdateReady] = useState(false)
 
   const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, ready: workspaceReady } = useWorkspace()
+
+  // Empty-region placement offsets — lifted out of FolderRegions so the
+  // pane-click drop targeting and the visual rendering stay aligned after a
+  // user drags an empty placeholder. Bases are seeded the first time a
+  // folder appears empty and forgotten when it fills.
+  const [emptyFolderOffsets, setEmptyFolderOffsets] = useState<Record<string, EmptyOffset>>({})
+  const emptyFolderBasesRef = useRef<Record<string, EmptyBase>>({})
 
   // Resolve which pageId belongs to each loaded folder: the host folder uses
   // the workspace's activePageId; every linked folder uses the pageId stored
@@ -1104,11 +1111,13 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
 
     // Geometric drop targeting: snap the new node to the folder whose
-    // bounding region contains the drop point. Outside every region (e.g.
-    // dropping into empty canvas) falls back to the primary folder so the
-    // node is never orphaned without a cwd.
-    const regions = computeFolderRegions(nodesRef.current, loadedFolders)
-    const targetRegion = folderForPoint(regions, flowPoint)
+    // region contains the drop point; if the click lands outside every
+    // region, fall back to the nearest one (Euclidean distance to the rect
+    // edge). Empty placeholders are offset by user drags, so apply those
+    // adjustments before testing so the click target matches the visual.
+    const rawRegions = computeFolderRegions(nodesRef.current, loadedFolders)
+    const regions = applyEmptyAdjustments(rawRegions, emptyFolderOffsets, emptyFolderBasesRef.current)
+    const targetRegion = nearestFolderForPoint(regions, flowPoint)
     const folderPath = targetRegion?.folderPath ?? primaryFolder.path
 
     snapshotHistory()
@@ -1170,7 +1179,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
     setPendingCreate(null)
     setIsDirty(true)
-  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory, loadedFolders, primaryFolder.path])
+  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory, loadedFolders, primaryFolder.path, emptyFolderOffsets])
 
   const onSave = useCallback(async () => {
     const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
@@ -2087,7 +2096,12 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                     : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
                 }
               />
-              <FolderRegions nodes={nodes} />
+              <FolderRegions
+                nodes={nodes}
+                emptyOffsets={emptyFolderOffsets}
+                setEmptyOffsets={setEmptyFolderOffsets}
+                emptyBasesRef={emptyFolderBasesRef}
+              />
               <Controls />
               <MiniMap
                 position="bottom-right"

@@ -105,7 +105,7 @@ export function computeFolderRegions(
 // Geometric drop targeting: which folder's region contains a given canvas
 // point? Walks regions in load order so the primary wins ties (it's at
 // index 0). Returns null when the point sits outside every region — caller
-// is expected to fall back to the primary folder path.
+// is expected to use `nearestFolderForPoint` or fall back to the primary.
 export function folderForPoint(
   regions: FolderRegion[],
   point: { x: number; y: number },
@@ -123,6 +123,39 @@ export function folderForPoint(
   return null
 }
 
+// Squared distance from a point to a region's nearest edge. Returns 0 when
+// the point is inside the region. Squared so callers can compare without
+// taking a square root.
+function squaredDistanceToRegion(
+  region: FolderRegion,
+  point: { x: number; y: number },
+): number {
+  const dx = Math.max(region.x - point.x, 0, point.x - (region.x + region.width))
+  const dy = Math.max(region.y - point.y, 0, point.y - (region.y + region.height))
+  return dx * dx + dy * dy
+}
+
+// Closest folder region to a point. Inside hits return distance 0 and
+// short-circuit the comparison loop, so this is a drop-in replacement for
+// the contains-only `folderForPoint` when callers want a "snap to nearest"
+// fallback for clicks outside every region.
+export function nearestFolderForPoint(
+  regions: FolderRegion[],
+  point: { x: number; y: number },
+): FolderRegion | null {
+  let best: FolderRegion | null = null
+  let bestDist = Infinity
+  for (const region of regions) {
+    const d = squaredDistanceToRegion(region, point)
+    if (d < bestDist) {
+      best = region
+      bestDist = d
+      if (d === 0) break
+    }
+  }
+  return best
+}
+
 export function useFolderRegions(nodes: CanvasNode[]): FolderRegion[] {
   const { loadedFolders } = useWorkspace()
   return useMemo(() => computeFolderRegions(nodes, loadedFolders), [nodes, loadedFolders])
@@ -132,45 +165,61 @@ export function useFolderRegions(nodes: CanvasNode[]): FolderRegion[] {
 // wraps content in the transformed viewport so the frames pan and zoom in
 // lockstep with the canvas. Single-folder workspaces render nothing — the
 // extra frame would just clutter the existing single-project UX.
-export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
+export interface EmptyOffset { dx: number; dy: number }
+export interface EmptyBase { x: number; y: number }
+
+export interface FolderRegionsProps {
+  nodes: CanvasNode[]
+  emptyOffsets: Record<string, EmptyOffset>
+  setEmptyOffsets: React.Dispatch<React.SetStateAction<Record<string, EmptyOffset>>>
+  emptyBasesRef: React.MutableRefObject<Record<string, EmptyBase>>
+}
+
+// Apply the lifted empty-region offsets + pinned base positions to the raw
+// regions produced by computeFolderRegions. App.tsx uses the same helper
+// before geometric drop targeting so a moved placeholder is hittable in
+// its visual location.
+export function applyEmptyAdjustments(
+  regions: FolderRegion[],
+  emptyOffsets: Record<string, EmptyOffset>,
+  emptyBases: Record<string, EmptyBase>,
+): FolderRegion[] {
+  return regions.map(r => {
+    if (!r.isEmpty) return r
+    const base = emptyBases[r.folderPath]
+    const off = emptyOffsets[r.folderPath]
+    if (!base && !off) return r
+    return {
+      ...r,
+      x: (base?.x ?? r.x) + (off?.dx ?? 0),
+      y: (base?.y ?? r.y) + (off?.dy ?? 0),
+    }
+  })
+}
+
+export default function FolderRegions({ nodes, emptyOffsets, setEmptyOffsets, emptyBasesRef }: FolderRegionsProps) {
   const { loadedFolders, activePage } = useWorkspace()
   const regions = useFolderRegions(nodes)
   const { setNodes, getViewport } = useReactFlow<CanvasNode>()
   const hostPath = loadedFolders[0]?.path
-
-  // Per-folder offsets for empty placeholder regions. Drag accumulates here
-  // in canvas-space units. Cleared when the folder transitions from empty
-  // to filled (the node-bounds-driven layout takes over). Not persisted.
-  const [emptyOffsetByFolder, setEmptyOffsetByFolder] = useState<Record<string, { dx: number; dy: number }>>({})
-
-  // First-observed base position for each empty region. computeFolderRegions
-  // re-anchors empties to `maxRight + GAP` of all filled regions on every
-  // render — which means a primary-folder drag would visually drag empty
-  // siblings along with it. Pinning the base the first time we see it makes
-  // an empty placeholder independent of the host's movement.
-  const emptyBaseRef = useRef<Record<string, { x: number; y: number }>>({})
 
   useEffect(() => {
     const currentEmptyPaths = new Set(regions.filter(r => r.isEmpty).map(r => r.folderPath))
 
     // Seed bases for newly-empty folders and forget bases that filled or
     // were unloaded.
-    let baseChanged = false
     for (const r of regions) {
-      if (r.isEmpty && !(r.folderPath in emptyBaseRef.current)) {
-        emptyBaseRef.current[r.folderPath] = { x: r.x, y: r.y }
-        baseChanged = true
+      if (r.isEmpty && !(r.folderPath in emptyBasesRef.current)) {
+        emptyBasesRef.current[r.folderPath] = { x: r.x, y: r.y }
       }
     }
-    for (const k of Object.keys(emptyBaseRef.current)) {
+    for (const k of Object.keys(emptyBasesRef.current)) {
       if (!currentEmptyPaths.has(k)) {
-        delete emptyBaseRef.current[k]
-        baseChanged = true
+        delete emptyBasesRef.current[k]
       }
     }
-    void baseChanged
 
-    setEmptyOffsetByFolder(prev => {
+    setEmptyOffsets(prev => {
       let changed = false
       const next: typeof prev = {}
       for (const r of regions) {
@@ -185,7 +234,7 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
       }
       return changed ? next : prev
     })
-  }, [regions])
+  }, [regions, setEmptyOffsets, emptyBasesRef])
 
   // Drag the folder chip to move every node tagged with that folder by the
   // same canvas-space delta. Region rectangles are derived from node bounds,
@@ -207,7 +256,7 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
         lastX = ev.clientX
         lastY = ev.clientY
         if (isEmpty) {
-          setEmptyOffsetByFolder(prev => {
+          setEmptyOffsets(prev => {
             const cur = prev[folderPath] ?? { dx: 0, dy: 0 }
             return { ...prev, [folderPath]: { dx: cur.dx + dx, dy: cur.dy + dy } }
           })
@@ -230,7 +279,7 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
       window.addEventListener('mouseup', onUp)
       document.body.style.cursor = 'grabbing'
     },
-    [setNodes, getViewport, hostPath],
+    [setNodes, getViewport, hostPath, setEmptyOffsets],
   )
 
   // pageId -> name for every linked folder. Fetched once per active-page
@@ -266,15 +315,15 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
         const pageName = region.isPrimary
           ? activePage.name
           : linkedPageNameByFolder[region.folderPath]
-        const offset = region.isEmpty ? emptyOffsetByFolder[region.folderPath] : undefined
+        const offset = region.isEmpty ? emptyOffsets[region.folderPath] : undefined
         // For empty regions, anchor to the first-observed base so the host's
         // movement doesn't carry the placeholder along. For filled regions
         // the bounds already track their own nodes.
         const baseX = region.isEmpty
-          ? emptyBaseRef.current[region.folderPath]?.x ?? region.x
+          ? emptyBasesRef.current[region.folderPath]?.x ?? region.x
           : region.x
         const baseY = region.isEmpty
-          ? emptyBaseRef.current[region.folderPath]?.y ?? region.y
+          ? emptyBasesRef.current[region.folderPath]?.y ?? region.y
           : region.y
         const renderX = baseX + (offset?.dx ?? 0)
         const renderY = baseY + (offset?.dy ?? 0)
