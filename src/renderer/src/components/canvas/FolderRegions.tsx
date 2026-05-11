@@ -6,12 +6,16 @@ import { useWorkspace } from '../../context/WorkspaceContext'
 import { getNodeFolderPath } from '../../lib/canvas'
 
 const REGION_PADDING = 36
+const PLACEHOLDER_WIDTH = 520
+const PLACEHOLDER_HEIGHT = 360
+const PLACEHOLDER_GAP = 80
 
 export interface FolderRegion {
   folderPath: string
   label: string
   color: string
   isPrimary: boolean
+  isEmpty: boolean
   x: number
   y: number
   width: number
@@ -19,8 +23,12 @@ export interface FolderRegion {
 }
 
 // Compute one bounding rectangle per loaded folder using the nodes tagged
-// with that folder. Empty folders (no nodes) are skipped — a zero-size
-// frame would be visual noise. The hook variant just memoizes the helper.
+// with that folder. Empty folders get a placeholder rect so the user has
+// (a) a visible drop target and (b) a region that `folderForPoint` can
+// resolve to — without it, dropping into a freshly-added folder always
+// falls back to the primary folder. Placeholders stack horizontally to the
+// right of the rightmost filled region (or at the canvas origin if every
+// folder is empty).
 export function computeFolderRegions(
   nodes: CanvasNode[],
   loadedFolders: LoadedFolder[],
@@ -34,21 +42,62 @@ export function computeFolderRegions(
     if (!target) continue
     byFolder.get(target)!.push(node)
   }
-  const regions: FolderRegion[] = []
+
+  const filledRects = new Map<string, { x: number; y: number; width: number; height: number }>()
+  let maxRight = 0
+  let minTop = 0
+  let hasFilled = false
   for (const folder of loadedFolders) {
     const members = byFolder.get(folder.path) ?? []
     if (members.length === 0) continue
     const bounds = getNodesBounds(members)
-    regions.push({
-      folderPath: folder.path,
-      label: folder.label,
-      color: folder.color,
-      isPrimary: folder.isPrimary,
+    const rect = {
       x: bounds.x - REGION_PADDING,
       y: bounds.y - REGION_PADDING,
       width: bounds.width + REGION_PADDING * 2,
       height: bounds.height + REGION_PADDING * 2,
-    })
+    }
+    filledRects.set(folder.path, rect)
+    const right = rect.x + rect.width
+    if (!hasFilled) {
+      maxRight = right
+      minTop = rect.y
+      hasFilled = true
+    } else {
+      if (right > maxRight) maxRight = right
+      if (rect.y < minTop) minTop = rect.y
+    }
+  }
+
+  let cursorX = hasFilled ? maxRight + PLACEHOLDER_GAP : 0
+  const cursorY = hasFilled ? minTop : 0
+
+  const regions: FolderRegion[] = []
+  for (const folder of loadedFolders) {
+    const filled = filledRects.get(folder.path)
+    if (filled) {
+      regions.push({
+        folderPath: folder.path,
+        label: folder.label,
+        color: folder.color,
+        isPrimary: folder.isPrimary,
+        isEmpty: false,
+        ...filled,
+      })
+    } else {
+      regions.push({
+        folderPath: folder.path,
+        label: folder.label,
+        color: folder.color,
+        isPrimary: folder.isPrimary,
+        isEmpty: true,
+        x: cursorX,
+        y: cursorY,
+        width: PLACEHOLDER_WIDTH,
+        height: PLACEHOLDER_HEIGHT,
+      })
+      cursorX += PLACEHOLDER_WIDTH + PLACEHOLDER_GAP
+    }
   }
   return regions
 }
@@ -87,7 +136,6 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
   const { loadedFolders } = useWorkspace()
   const regions = useFolderRegions(nodes)
   if (loadedFolders.length < 2) return null
-  if (regions.length === 0) return null
   return (
     <ViewportPortal>
       {regions.map(region => (
@@ -102,8 +150,6 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
             pointerEvents: 'none',
             border: `1.5px dashed ${region.color}`,
             borderRadius: 12,
-            // Keep the chrome subtly washed-out so it sits behind nodes without
-            // dominating the canvas.
             background: `${region.color}0A`,
             zIndex: 0,
           }}
@@ -127,6 +173,25 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
             {region.label}
             {region.isPrimary ? ' · primary' : ''}
           </div>
+          {region.isEmpty ? (
+            <div
+              style={{
+                position: 'absolute',
+                inset: 0,
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                fontSize: 12,
+                fontFamily: 'monospace',
+                color: `${region.color}99`,
+                letterSpacing: 0.4,
+                textAlign: 'center',
+                padding: 24,
+              }}
+            >
+              empty · drop a zone or component here
+            </div>
+          ) : null}
         </div>
       ))}
     </ViewportPortal>
