@@ -1,51 +1,25 @@
 import { join } from 'path'
-import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
+import type { CanvasProjection } from '../../../shared/canvas/projection'
+import { renderProjectionMarkdown } from '../../../shared/canvas/render'
 
 // Solo-mode zone prompt for runZone (Play button or single-zone dispatch).
 // No conductor, no scheduler, no activity log — the agent works directly
-// with the user.
-
-export interface ZoneComponentField {
-  key: string
-  value: string
-}
-
-export interface ZoneComponentSpec {
-  id: string
-  label: string
-  tag?: string
-  category?: string
-  description?: string
-  specs?: string
-  fields?: ZoneComponentField[]
-}
+// with the user. Canvas context is rendered from a focused CanvasProjection
+// so the same shared formatter drives every prompt site.
 
 export interface SoloZonePromptInput {
   projectDir: string
   participantId: string
   label: string
   description?: string
-  components: ZoneComponentSpec[]
-  componentEdges: ComponentEdgeSpec[]
+  projection: CanvasProjection
   toolNames: string[]
   skills: Array<{ name: string; content: string }>
   userSystemPrompt: string
 }
 
-function renderComponents(components: ZoneComponentSpec[]): string {
-  if (!components.length) return '_(no components were drawn — work from the user goal alone)_'
-  return components.map(c => {
-    const head = `- **${c.label}** (\`${c.id}\`)${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
-    const specs = (c.specs ?? '').trim()
-    const fieldsBlock = (c.fields ?? []).length
-      ? `\n\n  Fields:\n${(c.fields ?? []).map(f => `    - \`${f.key}\` : \`${f.value}\``).join('\n')}`
-      : ''
-    return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}${fieldsBlock}` : `${head}${fieldsBlock}`
-  }).join('\n\n')
-}
-
 export function buildSoloZonePrompt(input: SoloZonePromptInput): string {
-  const { projectDir, participantId, label, description, components, componentEdges, toolNames, skills, userSystemPrompt } = input
+  const { projectDir, participantId, label, description, projection, toolNames, skills, userSystemPrompt } = input
   const architectDir = join(projectDir, 'ARCHITECT')
   const outputLog = join(architectDir, 'outputs', `${participantId}.md`)
 
@@ -55,19 +29,26 @@ export function buildSoloZonePrompt(input: SoloZonePromptInput): string {
     : ''
   const behaviorBlock = userSystemPrompt ? `## Behavior\n\n${userSystemPrompt}\n\n` : ''
 
+  const canvasBlock = renderProjectionMarkdown(projection, {
+    scope: {
+      kind: 'focus',
+      focusZoneParticipantId: participantId,
+      includeSiblingRoster: false,
+      includeManifestPointer: false,
+    },
+    showCrossZoneSection: true,
+    showUnassignedSection: false,
+  })
+
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
 ${toolsLine}Launched standalone — no conductor. You work directly with the user: they prompt, you respond and do the work.
 
-## What you own (reference)
+## Canvas context
 
-Canvas components in your zone — context, not a build list.
+Components and edges in your zone are reference, not a build list — work from the user's request.
 
-${renderComponents(components)}
-
-## Component edges (reference)
-
-${renderComponentEdges(componentEdges)}
+${canvasBlock}
 
 ${skillsBlock}${behaviorBlock}## Files
 

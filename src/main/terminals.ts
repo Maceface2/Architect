@@ -33,9 +33,8 @@ import {
   upsertDispatchZoneSession,
   type DispatchRecord,
 } from './dispatchCapture'
-import { buildComponentEdgeSpecs } from './orchestrator/componentEdges'
 import { buildSoloZonePrompt } from './orchestrator/prompts/solo'
-import type { ComponentEdgeDirection } from './orchestrator/prompts/componentEdges'
+import { buildCanvasProjection, type ComponentEdgeDirection } from '../shared/canvas/projection'
 
 let shellEnvPromise: Promise<NodeJS.ProcessEnv> | undefined
 
@@ -1229,7 +1228,7 @@ export interface RunZoneResult {
 // used by startDispatch's single-zone branch so the two paths can't drift.
 export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise<RunZoneResult> {
   const settings = normalizeProjectSettings(opts.settings)
-  const { zones, componentsByZone } = indexGraph(opts.nodes)
+  const { zones } = indexGraph(opts.nodes)
   const zone = zones.find(z => z.id === opts.zoneId)
   if (!zone) return { ok: false, reason: 'zone-not-found' }
 
@@ -1251,33 +1250,25 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   // Solo launch — no Conductor, no scheduler, no activity log. Compact
   // prompt that just tells the agent its role and wiring; the agent talks
   // directly with the user.
-  const comps = componentsByZone.get(zone.id) ?? []
-  const compIds = new Set(comps.map(c => c.id))
-  const componentEdges = buildComponentEdgeSpecs(opts.nodes, opts.edges)
-    .filter(edge => compIds.has(edge.sourceId) || compIds.has(edge.targetId))
   const enabledTools = Object.entries(zone.data.tools ?? {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key)
   const skills = (zone.data.skills ?? [])
     .map(skill => ({ name: skill.name, content: readSkillContent(skill.path) }))
     .filter(s => !!s.content)
+  // Single-zone projection so the focused render only sees this zone's
+  // components and the cross-zone touchpoints it has with siblings on the
+  // canvas. Solo prompt asks for `includeSiblingRoster: false` — we just
+  // need the focused-zone slice.
+  const projection = buildCanvasProjection(opts.nodes, opts.edges, {
+    includeZoneIds: new Set([zone.id]),
+  })
   const systemPrompt = buildSoloZonePrompt({
     projectDir: opts.projectDir,
     participantId: safe,
     label: zone.data.label,
     description: zone.data.description,
-    components: comps.map(c => ({
-      id: c.id,
-      label: c.data.label,
-      tag: c.data.tag,
-      category: c.data.category,
-      description: c.data.description,
-      specs: c.data.specs,
-      fields: (c.data.fields ?? [])
-        .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
-        .map(f => ({ key: f.key, value: f.value })),
-    })),
-    componentEdges,
+    projection,
     toolNames: enabledTools,
     skills,
     userSystemPrompt: (zone.data.systemPrompt ?? '').trim(),

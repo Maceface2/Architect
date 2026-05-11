@@ -69,9 +69,10 @@ export function ensureClaudeProjectTrusted(cwd: string): void {
 }
 
 // Claude Code stores per-project sessions at ~/.claude/projects/<sanitized-cwd>/<uuid>.jsonl.
-// Claude replaces any character outside [A-Za-z0-9_-] (slashes, spaces, dots, etc.) with a dash.
+// Claude replaces any character outside [A-Za-z0-9-] (slashes, spaces, dots, underscores,
+// etc.) with a dash — confirmed empirically: /Users/x/flappy_bird → -Users-x-flappy-bird.
 function sanitizeCwdForClaude(cwd: string): string {
-  return cwd.replace(/[^A-Za-z0-9_-]/g, '-')
+  return cwd.replace(/[^A-Za-z0-9-]/g, '-')
 }
 
 function listClaudeSessionUuids(cwd: string): Set<string> {

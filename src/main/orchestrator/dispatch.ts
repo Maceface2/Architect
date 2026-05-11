@@ -44,9 +44,6 @@ import { activityLogPath } from './activity'
 import { appendOrchestration, orchestrationLogPath, type OrchestrationEvent } from './orchestrationLog'
 import { recordHelperPath } from './recordHelper'
 import { setupWorkspaceV5, type WorkspaceInput, type WorkspaceZoneInput } from './workspace'
-import { buildComponentEdgeSpecs } from './componentEdges'
-import type { ComponentEdgeSpec } from './prompts/componentEdges'
-import type { ZoneComponentSpec } from './prompts/zone'
 
 // Minimal bootstrap prompt delivered to every fresh-spawned zone as its
 // first user turn. Purpose: force the CLI to create an on-disk session
@@ -147,29 +144,11 @@ function assignZoneIdentities(zones: ZoneGraphNode[]): Map<string, ZoneIdentity>
 function buildWorkspaceZoneInput(
   zone: ZoneGraphNode,
   identities: Map<string, ZoneIdentity>,
-  componentsByZone: Map<string, ComponentGraphNode[]>,
-  componentEdges: ComponentEdgeSpec[],
   runtime: AgentRuntime,
   model: string,
 ): WorkspaceZoneInput {
   const identity = identities.get(zone.id)
   if (!identity) throw new Error(`buildWorkspaceZoneInput: missing identity for zone ${zone.id}`)
-  const zoneComponents = componentsByZone.get(zone.id) ?? []
-  const ownedComponentIds = new Set(zoneComponents.map(c => c.id))
-  const components: ZoneComponentSpec[] = zoneComponents.map(c => ({
-    id: c.id,
-    label: c.data.label,
-    tag: c.data.tag,
-    category: c.data.category,
-    description: c.data.description,
-    specs: c.data.specs,
-    fields: (c.data.fields ?? [])
-      .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
-      .map(f => ({ key: f.key, value: f.value })),
-  }))
-  const touchingEdges = componentEdges.filter(edge =>
-    ownedComponentIds.has(edge.sourceId) || ownedComponentIds.has(edge.targetId)
-  )
   const enabledTools = Object.entries(zone.data.tools ?? {})
     .filter(([, enabled]) => enabled)
     .map(([key]) => key)
@@ -184,8 +163,6 @@ function buildWorkspaceZoneInput(
     description: zone.data.description,
     runtime,
     model,
-    components,
-    componentEdges: touchingEdges,
     enabledTools,
     systemPromptOverride: (zone.data.systemPrompt ?? '').trim(),
     skills,
@@ -202,14 +179,12 @@ function buildWorkspaceInput(
   dispatchRuntime: AgentRuntime,
   rawSettings: unknown,
 ): { input: WorkspaceInput; zones: WorkspaceZoneInput[] } {
-  const { componentsByZone, unassignedComponents } = indexGraph(nodes)
-  const componentEdges = buildComponentEdgeSpecs(nodes, edges)
   const identities = assignZoneIdentities(filteredZones)
 
   const zones: WorkspaceZoneInput[] = filteredZones.map(zone => {
     const runtime = getZoneRuntime(zone, normalizeProjectSettings(rawSettings))
     const model = getZoneModel(zone, runtime)
-    return buildWorkspaceZoneInput(zone, identities, componentsByZone, componentEdges, runtime, model)
+    return buildWorkspaceZoneInput(zone, identities, runtime, model)
   })
 
   return {
@@ -218,19 +193,9 @@ function buildWorkspaceInput(
       dispatchId,
       dispatchRuntime,
       userPrompt,
+      nodes,
+      edges,
       zones,
-      componentEdges,
-      unassignedComponents: unassignedComponents.map(c => ({
-        id: c.id,
-        label: c.data.label,
-        tag: c.data.tag,
-        category: c.data.category,
-        description: c.data.description,
-        specs: c.data.specs,
-        fields: (c.data.fields ?? [])
-          .filter(f => (f.key ?? '').trim().length > 0 || (f.value ?? '').trim().length > 0)
-          .map(f => ({ key: f.key, value: f.value })),
-      })),
     },
     zones,
   }

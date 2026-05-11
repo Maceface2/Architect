@@ -65,6 +65,8 @@ import {
   mintParticipantId,
   normalizeEdgeData,
 } from './lib/canvas'
+import { buildCanvasProjection } from '../../shared/canvas/projection'
+import { renderProjectionMarkdown } from '../../shared/canvas/render'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
@@ -1079,6 +1081,33 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')
     const compList = currentNodes.filter((n): n is ComponentNodeType => n.type === 'component')
 
+    if (mode === 'general') {
+      // General-mode reads the canvas as reference and never edits it, so
+      // hand it the same semantic markdown projection the dispatch prompts
+      // use — strips positions/colors/sizes, surfaces cross-zone touchpoints
+      // explicitly. Identical formatter as orchestrator/prompts/conductor.ts
+      // so what the assistant sees mirrors what coordinated agents see.
+      const canvasBlock = zoneList.length === 0 && compList.length === 0
+        ? '(empty canvas)'
+        : renderProjectionMarkdown(buildCanvasProjection(currentNodes, currentEdges), {
+            scope: { kind: 'full' },
+            showCrossZoneSection: true,
+            showUnassignedSection: true,
+          })
+
+      return `You are a general-purpose coding assistant working inside this project directory. Help the user with any coding, debugging, refactoring, research, or shell task they ask about.
+
+The block below is a read-only snapshot of the project's architecture canvas, provided only as reference so you understand the system being built — do not treat it as something to edit. Do NOT modify \`architect-canvas.json\` under any circumstances, and do not emit \`ARCHITECT_CANVAS_UPDATE\` blocks. If the user asks to change the canvas, tell them to switch the assistant to Architecture mode.
+
+## Canvas reference
+
+${canvasBlock}`
+    }
+
+    // Architecture mode is the canvas editor — it round-trips
+    // ARCHITECT_CANVAS_UPDATE blocks via AssistantPanel's parser, which
+    // requires positions, sizes, colors, iconNames, etc. Keep emitting the
+    // editable JSON here.
     const componentZones = new Map<string, string | null>()
     for (const c of compList) {
       const center = {
@@ -1129,15 +1158,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const canvasBlock = zoneList.length === 0 && compList.length === 0
       ? '(empty canvas)'
       : `\`\`\`json\n${canvasJson}\n\`\`\``
-
-    if (mode === 'general') {
-      return `You are a general-purpose coding assistant working inside this project directory. Help the user with any coding, debugging, refactoring, research, or shell task they ask about.
-
-The JSON block below is a read-only snapshot of the project's architecture canvas, provided only as reference so you understand the system being built — do not treat it as something to edit. Do NOT modify \`architect-canvas.json\` under any circumstances, and do not emit \`ARCHITECT_CANVAS_UPDATE\` blocks. If the user asks to change the canvas, tell them to switch the assistant to Architecture mode.
-
-## Canvas reference
-${canvasBlock}`
-    }
 
     return `You are an architecture assistant embedded in Architect. The user designs multi-agent systems by drawing **zones** (agent overlays) over **components** (subsystems) on a canvas; the canvas is reference context, not a build manifest.
 

@@ -1,20 +1,26 @@
 import fs from 'fs'
 import { join } from 'path'
 import type { AgentRuntime } from '../../shared/agentRuntimes'
+import {
+  buildCanvasProjection,
+  type CanvasProjection,
+  type ProjectionEdgeLike,
+  type ProjectionNodeLike,
+  type ProjectionZoneNodeLike,
+} from '../../shared/canvas/projection'
+import { renderProjectionJson } from '../../shared/canvas/render'
 import { activityDir, activityLogPath, ensureActivityLog } from './activity'
 import { ensureOrchestrationLog, orchestrationLogPath } from './orchestrationLog'
 import { ensureRecordHelper } from './recordHelper'
 import { initialState, stateDir, stateFilePath, writeState } from './state'
-import { buildConductorPrompt, type ConductorZoneContext } from './prompts/conductor'
-import { buildZonePrompt, type ZoneComponentSpec } from './prompts/zone'
-import type { ComponentEdgeSpec } from './prompts/componentEdges'
+import { buildConductorPrompt } from './prompts/conductor'
+import { buildZonePrompt } from './prompts/zone'
 
 // v5 workspace setup. Writes everything the dispatch needs on disk before
 // any PTY is spawned:
 //   - ARCHITECT/manifest.json — slim canvas projection (zones, components
-//     with full specs, unassigned components, edges). Read on demand by
-//     the conductor and zones for cross-zone context. No dispatch metadata,
-//     no runtime/model wiring, no file paths, no zone systemPrompts.
+//     with full specs, unassigned components, edges) — pretty-printed JSON
+//     that mirrors the same projection embedded in every prompt.
 //   - ARCHITECT/prompts/conductor.md + <participantId>.md — system prompts
 //     consumed at PTY spawn.
 //   - per-participant state skeletons + empty activity-log files so the
@@ -31,8 +37,6 @@ export interface WorkspaceZoneInput {
   description?: string
   runtime: AgentRuntime
   model: string
-  components: ZoneComponentSpec[]
-  componentEdges: ComponentEdgeSpec[]
   enabledTools: string[]
   systemPromptOverride: string
   skills: Array<{ name: string; content: string }>
@@ -43,17 +47,14 @@ export interface WorkspaceInput {
   dispatchId: string
   dispatchRuntime: AgentRuntime
   userPrompt?: string
+  // Raw canvas inputs — workspace builds the canonical CanvasProjection
+  // internally so manifest.json and every prompt embed share one source of
+  // truth.
+  nodes: ProjectionNodeLike[]
+  edges: ProjectionEdgeLike[]
+  // Per-zone wiring (dispatch-time choices). Limited to the zones included
+  // in this dispatch (after onlyZoneIds filtering).
   zones: WorkspaceZoneInput[]
-  componentEdges: ComponentEdgeSpec[]
-  unassignedComponents: Array<{
-    id: string
-    label: string
-    tag?: string
-    category?: string
-    description?: string
-    specs?: string
-    fields?: Array<{ key: string; value: string }>
-  }>
 }
 
 export interface WorkspaceOutput {
@@ -94,74 +95,32 @@ function ensureDispatchDirs(projectDir: string, dispatchId: string): void {
   ensureRecordHelper(projectDir, dispatchId)
 }
 
-// Slim canvas projection. Read on demand by the conductor + zones for
-// cross-zone context. Strips dispatch metadata, runtime/model wiring,
-// file paths, agent-private fields (systemPrompt, enabledTools), and
-// canvas-only visuals (positions, colors, ids). Same shape the conductor
-// renders inline — having it on disk gives agents a redundancy path if
-// the inline embed gets truncated and gives zones cross-zone awareness
-// without bloating each zone prompt with the full canvas.
-function writeManifest(input: WorkspaceInput): void {
-  const { projectDir, zones } = input
-  const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
-  const manifest = {
-    zones: zones.map(zone => ({
-      participantId: zone.participantId,
-      label: zone.label,
-      description: zone.description ?? '',
-      components: zone.components.map(c => ({
-        label: c.label,
-        tag: c.tag ?? '',
-        description: c.description ?? '',
-        specs: c.specs ?? '',
-        fields: c.fields ?? [],
-      })),
-    })),
-    unassignedComponents: input.unassignedComponents.map(c => ({
-      label: c.label,
-      tag: c.tag ?? '',
-      description: c.description ?? '',
-      specs: c.specs ?? '',
-      fields: c.fields ?? [],
-    })),
-    componentEdges: input.componentEdges,
-  }
-  fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2))
+// Build the shared CanvasProjection used for both the manifest and every
+// prompt embed. The runtimeFor callback maps each included zone's React Flow
+// node id to the dispatch-time runtime resolved by the caller.
+function buildProjectionForDispatch(input: WorkspaceInput): CanvasProjection {
+  const includeZoneIds = new Set(input.zones.map(z => z.zoneId))
+  const runtimeByZoneId = new Map(input.zones.map(z => [z.zoneId, z.runtime]))
+  return buildCanvasProjection(input.nodes, input.edges, {
+    includeZoneIds,
+    runtimeFor: (zoneNode: ProjectionZoneNodeLike) => runtimeByZoneId.get(zoneNode.id),
+  })
 }
 
-function writePrompts(input: WorkspaceInput): WorkspaceOutput {
-  const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
-  const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
+function writeManifest(projectDir: string, projection: CanvasProjection): void {
+  const manifestPath = join(projectDir, 'ARCHITECT', 'manifest.json')
+  fs.writeFileSync(manifestPath, renderProjectionJson(projection))
+}
 
-  const conductorContext: ConductorZoneContext[] = zones.map(zone => ({
-    zoneId: zone.zoneId,
-    participantId: zone.participantId,
-    label: zone.label,
-    description: zone.description,
-    runtime: zone.runtime,
-    model: zone.model,
-    components: zone.components.map(c => ({
-      label: c.label,
-      tag: c.tag,
-      description: c.description,
-      specs: c.specs,
-      fields: c.fields,
-    })),
-  }))
+function writePrompts(input: WorkspaceInput, projection: CanvasProjection): WorkspaceOutput {
+  const { projectDir, dispatchId, userPrompt, zones } = input
+  const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
 
   const conductorPrompt = buildConductorPrompt({
     projectDir,
     dispatchId,
     userPrompt,
-    zones: conductorContext,
-    componentEdges,
-    unassignedComponents: unassignedComponents.map(c => ({
-      label: c.label,
-      tag: c.tag,
-      description: c.description,
-      specs: c.specs,
-      fields: c.fields,
-    })),
+    projection,
   })
   fs.writeFileSync(join(promptsDir, 'conductor.md'), conductorPrompt)
 
@@ -173,8 +132,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
       participantId: zone.participantId,
       label: zone.label,
       description: zone.description,
-      components: zone.components,
-      componentEdges: zone.componentEdges,
+      projection,
       toolNames: zone.enabledTools,
       skills: zone.skills,
       userSystemPrompt: zone.systemPromptOverride,
@@ -217,8 +175,9 @@ export function setupWorkspaceV5(input: WorkspaceInput): WorkspaceOutput {
   wipeLegacyArtifacts(input.projectDir)
   wipeDispatchRuntime(input.projectDir, input.dispatchId)
   ensureDispatchDirs(input.projectDir, input.dispatchId)
-  writeManifest(input)
-  const output = writePrompts(input)
+  const projection = buildProjectionForDispatch(input)
+  writeManifest(input.projectDir, projection)
+  const output = writePrompts(input, projection)
   writeStateSkeletons(input)
   touchActivityLogs(input)
   return output

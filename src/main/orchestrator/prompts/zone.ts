@@ -1,25 +1,13 @@
 import { join } from 'path'
+import type { CanvasProjection } from '../../../shared/canvas/projection'
+import { renderProjectionMarkdown } from '../../../shared/canvas/render'
 import { activityLogPath } from '../activity'
-import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
 // v5 zone prompt. Compact, runtime-uniform contract: zones receive task
 // prompts as normal user turns and write exactly one activity-log line per
-// task. No mailbox, no jq, no polling.
-
-export interface ZoneComponentField {
-  key: string
-  value: string
-}
-
-export interface ZoneComponentSpec {
-  id: string
-  label: string
-  tag?: string
-  category?: string
-  description?: string
-  specs?: string
-  fields?: ZoneComponentField[]
-}
+// task. Canvas context is rendered from a shared CanvasProjection focused
+// on this zone — components owned by the zone, cross-zone touchpoints, and
+// a sibling-zone roster.
 
 export interface ZonePromptInput {
   projectDir: string
@@ -27,23 +15,10 @@ export interface ZonePromptInput {
   participantId: string
   label: string
   description?: string
-  components: ZoneComponentSpec[]
-  componentEdges: ComponentEdgeSpec[]
+  projection: CanvasProjection
   toolNames: string[]
   skills: Array<{ name: string; content: string }>
   userSystemPrompt: string
-}
-
-function renderComponents(components: ZoneComponentSpec[]): string {
-  if (!components.length) return '_(no components were drawn — work from the task alone)_'
-  return components.map(c => {
-    const head = `- **${c.label}** (\`${c.id}\`)${c.tag ? ` [${c.tag}]` : ''}${c.category ? ` (${c.category})` : ''}${c.description ? ` — ${c.description}` : ''}`
-    const specs = (c.specs ?? '').trim()
-    const fieldsBlock = (c.fields ?? []).length
-      ? `\n\n  Fields:\n${(c.fields ?? []).map(f => `    - \`${f.key}\` : \`${f.value}\``).join('\n')}`
-      : ''
-    return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}${fieldsBlock}` : `${head}${fieldsBlock}`
-  }).join('\n\n')
 }
 
 export function buildZonePrompt(input: ZonePromptInput): string {
@@ -53,8 +28,7 @@ export function buildZonePrompt(input: ZonePromptInput): string {
     participantId,
     label,
     description,
-    components,
-    componentEdges,
+    projection,
     toolNames,
     skills,
     userSystemPrompt,
@@ -65,7 +39,6 @@ export function buildZonePrompt(input: ZonePromptInput): string {
   const architectDir = join(projectDir, 'ARCHITECT')
   const sharedPlan = join(architectDir, 'dispatches', dispatchId, 'plan.md')
   const sharedWorkboard = join(architectDir, 'dispatches', dispatchId, 'workboard.md')
-  const manifestPath = join(architectDir, 'manifest.json')
 
   const toolsLine = toolNames.length ? `**Enabled tools:** ${toolNames.join(', ')}` : ''
   const skillsBlock = skills.length
@@ -73,23 +46,28 @@ export function buildZonePrompt(input: ZonePromptInput): string {
     : ''
   const behaviorBlock = userSystemPrompt ? `## Behavior\n\n${userSystemPrompt}\n\n` : ''
 
+  const canvasBlock = renderProjectionMarkdown(projection, {
+    scope: {
+      kind: 'focus',
+      focusZoneParticipantId: participantId,
+      includeSiblingRoster: true,
+      includeManifestPointer: true,
+    },
+    showCrossZoneSection: true,
+    showUnassignedSection: false,
+  })
+
   return `You are the **${label}** zone-agent. Your participant id is \`${participantId}\`.${description ? `\nZone description: ${description}` : ''}
 
 You own *how* the work gets done inside this zone. The conductor decides *what* and *when* via TASK prompts; you do not run a planning loop or assign work to other zones.
 
 ${toolsLine}
 
-## What you own (reference)
+## Canvas context
 
-Components on the canvas in your zone — context, not a build list. A task may touch any, all, or none.
+Components in your zone are reference, not a build list — a task may touch any, all, or none. Cross-zone touchpoints below tell you which sibling zones to coordinate with on shared seams.
 
-${renderComponents(components)}
-
-## Component edges (reference)
-
-Component-level links touching your zone. Context only; the conductor decides ordering.
-
-${renderComponentEdges(componentEdges)}
+${canvasBlock}
 
 ## Coordination docs
 
@@ -97,7 +75,6 @@ Before starting any \`TASK\`, read:
 
 - \`${sharedPlan}\` — big-picture plan (goal, engaged zones, contracts, acceptance, constraints).
 - \`${sharedWorkboard}\` — live workboard (who's doing what right now).
-- \`${manifestPath}\` — full canvas projection for cross-zone detail.
 - \`ARCHITECT/outputs/<zone>.md\` — concrete contracts published by other zones.
 
 \`${outputLog}\` is your own scratchpad and the file downstream zones read for your contract.

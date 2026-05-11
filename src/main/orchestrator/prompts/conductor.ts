@@ -1,55 +1,23 @@
 import type { AgentRuntime } from '../../../shared/agentRuntimes'
-import { getAgentRuntime } from '../../../shared/agentRuntimes'
+import type { CanvasProjection } from '../../../shared/canvas/projection'
+import { renderProjectionMarkdown } from '../../../shared/canvas/render'
 import { activityLogPath } from '../activity'
-import { renderComponentEdges, type ComponentEdgeSpec } from './componentEdges'
 
 // v5 Conductor prompt builder. Compact, runtime-uniform contract.
 //
 // Conductor sees the *what* (components, specs, edge labels). Zone
-// systemPrompts (the *how*) are deliberately not exposed.
-
-export interface ConductorComponentField {
-  key: string
-  value: string
-}
-
-export interface ConductorComponentContext {
-  label: string
-  tag?: string
-  description?: string
-  specs?: string
-  fields?: ConductorComponentField[]
-}
-
-export interface ConductorZoneContext {
-  zoneId: string
-  participantId: string
-  label: string
-  description?: string
-  runtime: AgentRuntime
-  model: string
-  components: ConductorComponentContext[]
-}
+// systemPrompts (the *how*) are deliberately not exposed. Canvas context is
+// rendered from a shared CanvasProjection so the conductor sees the same
+// view as ARCHITECT/manifest.json (modulo format).
 
 export interface ConductorPromptInput {
   projectDir: string
   dispatchId: string
   userPrompt?: string
-  zones: ConductorZoneContext[]
-  componentEdges: ComponentEdgeSpec[]
-  unassignedComponents: ConductorComponentContext[]
+  projection: CanvasProjection
 }
 
 export type ConductorDecisionType = 'plan' | 'assign' | 'answer' | 'cancel' | 'final' | 'noop'
-
-function renderConductorComponent(c: ConductorComponentContext): string {
-  const head = `- **${c.label}**${c.tag ? ` [${c.tag}]` : ''}${c.description ? ` — ${c.description}` : ''}`
-  const specs = (c.specs ?? '').trim()
-  const fieldsBlock = (c.fields ?? []).length
-    ? `\n\n  Fields:\n${(c.fields ?? []).map(f => `    - \`${f.key}\` : \`${f.value}\``).join('\n')}`
-    : ''
-  return specs ? `${head}\n\n  ${specs.split('\n').join('\n  ')}${fieldsBlock}` : `${head}${fieldsBlock}`
-}
 
 // Phrases that must appear in every conductor prompt. The coordinator-only
 // rule is the single biggest behavioral guard against the conductor
@@ -62,26 +30,18 @@ const REQUIRED_CONDUCTOR_PHRASES = [
 ] as const
 
 export function buildConductorPrompt(input: ConductorPromptInput): string {
-  const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
+  const { projectDir, dispatchId, userPrompt, projection } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
-
-  const zoneBlocks = zones.map(zone => {
-    const head = `### ${zone.label} (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})`
-    const desc = zone.description ? `\n${zone.description}` : ''
-    const components = zone.components.length
-      ? `\n\n**Components:**\n${zone.components.map(renderConductorComponent).join('\n')}`
-      : '\n\n_(no components drawn in this zone)_'
-    return `${head}${desc}${components}`
-  }).join('\n\n')
-
-  const unassigned = unassignedComponents.length
-    ? `\n\n## Unassigned components (reference only)\n\n${unassignedComponents.map(renderConductorComponent).join('\n')}`
-    : ''
 
   const task = userPrompt?.trim()
     ? `## Task (from user)\n${userPrompt.trim()}`
     : `## Task (from user)\n(No task yet. The harness will pty-write one when the user provides it.)`
-  const edgeLines = renderComponentEdges(componentEdges, '_(no component edges on the canvas)_')
+
+  const canvasBlock = renderProjectionMarkdown(projection, {
+    scope: { kind: 'full' },
+    showCrossZoneSection: true,
+    showUnassignedSection: true,
+  })
 
   const prompt = `You are the **Conductor** for a multi-agent dispatch. Your participant id is \`conductor\`. Zones are listed below — each is already spawned and waiting for work.
 
@@ -153,17 +113,11 @@ ${task}
 
 ## Canvas
 
-Full projection at \`${projectDir}/ARCHITECT/manifest.json\` (zones, full component specs, unassigned components, edges). The blocks below mirror it — \`cat\` the file if your context truncated.
+Full projection at \`${projectDir}/ARCHITECT/manifest.json\` (zones, full component specs, unassigned components, edges). The block below mirrors it — \`cat\` the file if your context truncated.
 
 **Specs are planning context for YOU.** Do not paste them into task bodies — zones already know what they own.
 
-### Zones
-
-${zoneBlocks}${unassigned}
-
-### Component edges (reference only)
-
-${edgeLines}
+${canvasBlock}
 
 ## Task body shape
 
@@ -222,3 +176,4 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
   }
   return prompt
 }
+
