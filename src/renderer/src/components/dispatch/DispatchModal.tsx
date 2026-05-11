@@ -115,16 +115,24 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
     setModel(projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime] ?? '')
   }, [conductorRuntime, projectSettings.dispatchModels])
 
+  const { activePageId } = useWorkspace()
+
   const reload = useCallback(async () => {
     if (!projectDir) return
     setLoading(true)
     try {
       const records = await window.electron.dispatches.list(projectDir)
-      setPriorSessions(records ?? [])
+      // Scope resume history to the active canvas page. Records written
+      // before per-page scoping landed have no pageId — surface them so a
+      // user's older dispatches don't disappear silently.
+      const filtered = (records ?? []).filter(
+        r => r.pageId === undefined || r.pageId === activePageId,
+      )
+      setPriorSessions(filtered)
     } finally {
       setLoading(false)
     }
-  }, [projectDir])
+  }, [projectDir, activePageId])
 
   useEffect(() => { void reload() }, [reload])
 

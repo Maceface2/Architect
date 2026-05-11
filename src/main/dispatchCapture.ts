@@ -79,6 +79,10 @@ export interface DispatchRecord {
   // this to validate that all required folders are still loaded (or
   // auto-load missing ones) before re-spawning. Absent for older records.
   involvedFolders?: string[]
+  // Multi-page: the canvas page this dispatch was launched from. Lets the
+  // resume modal filter by active page (`activePageId === pageId`). Optional
+  // for backward compat with single-page records.
+  pageId?: string
 }
 
 export const DISPATCH_PROTOCOL_VERSION = 5
@@ -140,6 +144,7 @@ function readDispatch(path: string): DispatchRecord | null {
       involvedFolders: Array.isArray(parsed.involvedFolders)
         ? parsed.involvedFolders.filter((s): s is string => typeof s === 'string')
         : undefined,
+      pageId: typeof parsed.pageId === 'string' ? parsed.pageId : undefined,
     }
   } catch {
     return null

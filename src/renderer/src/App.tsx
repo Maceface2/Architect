@@ -75,6 +75,7 @@ import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext'
+import PageTabs from './components/canvas/PageTabs'
 import FolderRegions, { computeFolderRegions, folderForPoint } from './components/canvas/FolderRegions'
 import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
@@ -530,7 +531,19 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
 
-  const { loadedFolders, primaryFolder, activeFolder } = useWorkspace()
+  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, ready: workspaceReady } = useWorkspace()
+
+  // Resolve which pageId belongs to each loaded folder: the host folder uses
+  // the workspace's activePageId; every linked folder uses the pageId stored
+  // on the active page's outgoing link to that folder.
+  const pageIdForFolder = useCallback(
+    (folderPath: string): string => {
+      if (folderPath === primaryFolder.path) return activePageId
+      const link = activePage.links.find(l => l.folderPath === folderPath)
+      return link?.pageId ?? activePageId
+    },
+    [activePage.links, activePageId, primaryFolder.path],
+  )
 
   useEffect(() => {
     const off = window.electron.update.onDownloaded(() => setUpdateReady(true))
@@ -781,11 +794,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     dismissedExternalCanvasRef.current = null
     setPendingExternalCanvasRaw(null)
     for (const file of split) {
-      await window.electron.saveCanvas(file.folderPath, file.raw)
+      await window.electron.saveCanvas(file.folderPath, pageIdForFolder(file.folderPath), file.raw)
       lastRawByFolderRef.current.set(file.folderPath, file.raw)
     }
     if (clearDirty) setIsDirty(false)
-  }, [primaryFolder.path, loadedFolders])
+  }, [primaryFolder.path, loadedFolders, pageIdForFolder])
 
   // Track the last (runtime, sessionId) actually used per assistant mode so
   // the next app start auto-resumes it. Fresh-spawn captures fire this event;
@@ -884,6 +897,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   )
 
   useEffect(() => {
+    if (!workspaceReady) return
     let disposed = false
     lastAppliedCanvasRef.current = ''
     dismissedExternalCanvasRef.current = null
@@ -894,7 +908,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
     const watchedFolders = loadedFolders.map(f => f.path)
     for (const path of watchedFolders) {
-      void window.electron.watchCanvas(path)
+      void window.electron.watchCanvas(path, pageIdForFolder(path))
     }
 
     // Re-merge from disk for ALL loaded folders, replacing in-memory state.
@@ -905,7 +919,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const reloadAll = async (): Promise<string | null> => {
       const folders = loadedFolders
       const rawArr = await Promise.all(
-        folders.map(f => window.electron.loadCanvas(f.path)),
+        folders.map(f => window.electron.loadCanvas(f.path, pageIdForFolder(f.path))),
       )
       if (disposed) return null
       const inputs: FolderCanvasInput[] = folders.map((f, i) => ({
@@ -943,9 +957,12 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       return primaryRaw
     }
 
-    const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedDir, raw }) => {
+    const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedDir, pageId: changedPageId, raw }) => {
       if (disposed) return
       if (!loadedFolders.some(f => f.path === changedDir)) return
+      // Ignore stale events whose pageId no longer matches what we have
+      // loaded for that folder (e.g. fired after a page switch + re-watch).
+      if (changedPageId !== pageIdForFolder(changedDir)) return
       if (!raw) return
       if (raw === lastRawByFolderRef.current.get(changedDir)) return
       // Primary-only dismissal channel — cross-folder external dismissal is
@@ -1030,15 +1047,14 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       disposed = true
       unsubscribe()
       for (const path of watchedFolders) {
-        void window.electron.unwatchCanvas(path)
+        void window.electron.unwatchCanvas(path, pageIdForFolder(path))
       }
     }
-    // applyRawCanvas is not used here anymore — multi-folder paths go through
-    // reloadAll() which re-runs loadMergedCanvas directly. We deliberately key
-    // on loadedFolderPathsKey instead of `loadedFolders` to dedupe identical
-    // re-renders from the WorkspaceContext value.
+    // Re-runs on folder set OR active page changes — the watchers, the load,
+    // and the merge all key off pageIdForFolder, which changes when the user
+    // switches active page.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [loadedFolderPathsKey, primaryFolder.path])
+  }, [workspaceReady, loadedFolderPathsKey, primaryFolder.path, activePageId, activePage.links.map(l => `${l.folderPath}:${l.pageId}`).join('\n')])
 
   const cancelCanvasTool = useCallback(() => {
     setPendingCreate(null)
@@ -1365,6 +1381,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           planMode: req.planMode,
           onlyZoneIds: req.onlyZoneIds,
           conductorRuntime: req.conductorRuntime,
+          pageId: activePageId,
         },
       )
       setTerminalSessions(sessions)
@@ -2041,6 +2058,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             <div className="flex-1 flex overflow-hidden">
 
           <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
+            <PageTabs />
             <ReactFlow
               nodes={nodes}
               edges={edges}

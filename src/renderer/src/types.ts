@@ -226,6 +226,9 @@ export interface DispatchRecord {
   // Distinct cwds across all zones at dispatch time. Resume uses this to
   // auto-load any folders that have been removed from the workspace since.
   involvedFolders?: string[]
+  // Multi-page: the canvas page this dispatch was launched from. Resume
+  // modal filters by activePageId so each page sees only its own history.
+  pageId?: string
 }
 
 export type DispatchRequest =

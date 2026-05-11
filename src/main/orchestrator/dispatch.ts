@@ -82,6 +82,9 @@ export interface StartDispatchV5Input {
     // When absent, falls back to settings.dispatchRuntime. Zone CLIs are
     // unaffected — each zone keeps its own agentRuntime.
     conductorRuntime?: AgentRuntime
+    // Canvas page this dispatch was launched from. Persisted on the
+    // DispatchRecord so the resume modal can filter by active page.
+    pageId?: string
   }
 }
 
@@ -560,6 +563,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
           conductorDecisions: [],
           dispatchPrimaryFolder: projectDir,
           involvedFolders,
+          ...(dispatch.pageId ? { pageId: dispatch.pageId } : {}),
         }
         try { saveDispatch(projectDir, record) } catch (err) {
           console.error('[dispatch-v5] failed to save DispatchRecord', err)

@@ -904,6 +904,10 @@ export interface StartDispatchOptions {
   model?: string
   planMode?: boolean
   onlyZoneIds?: string[]
+  conductorRuntime?: AgentRuntime
+  // Canvas page this dispatch was launched from. Persisted on the
+  // DispatchRecord so the resume modal can filter by active page.
+  pageId?: string
 }
 
 // startDispatch / resumeDispatch are thin forwarders to the v5 orchestrator.

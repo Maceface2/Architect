@@ -9,25 +9,68 @@ contextBridge.exposeInMainWorld('electron', {
   openDirectory: () => ipcRenderer.invoke('open-directory'),
   inspectProject: (projectDir: string) => ipcRenderer.invoke('inspect-project', projectDir),
 
-  // Canvas persistence
-  saveCanvas: (projectDir: string, data: string) => ipcRenderer.invoke('save-canvas', projectDir, data),
-  loadCanvas: (projectDir: string) => ipcRenderer.invoke('load-canvas', projectDir),
-  watchCanvas: (projectDir: string) => ipcRenderer.invoke('watch-canvas', projectDir),
-  // Pass projectDir to close one specific watcher; omit to close all (used on
-  // app shutdown / window close).
-  unwatchCanvas: (projectDir?: string) => ipcRenderer.invoke('unwatch-canvas', projectDir),
+  // Per-page canvas persistence. Each folder owns its own pages list under
+  // ARCHITECT/pages/<pageId>.json. The activePageId is part of the
+  // workspace contract (see workspace.* below).
+  saveCanvas: (projectDir: string, pageId: string, data: string) =>
+    ipcRenderer.invoke('save-canvas', projectDir, pageId, data),
+  loadCanvas: (projectDir: string, pageId: string) =>
+    ipcRenderer.invoke('load-canvas', projectDir, pageId),
+  watchCanvas: (projectDir: string, pageId: string) =>
+    ipcRenderer.invoke('watch-canvas', projectDir, pageId),
+  // Pass (projectDir, pageId) to close one specific watcher; pass just
+  // projectDir to close every watcher in that folder; omit both to close all
+  // (used on app shutdown / window close).
+  unwatchCanvas: (projectDir?: string, pageId?: string) =>
+    ipcRenderer.invoke('unwatch-canvas', projectDir, pageId),
 
-  // Multi-folder workspace persistence. Stored at
-  // <primary>/ARCHITECT/workspace.json — primary is implicit, so the file
-  // only carries the *additional* folders co-loaded with it.
+  // Workspace v2: pages + mutual links across folders. Each folder owns its
+  // own ARCHITECT/workspace.json. Migration from v1 (folders[]) is one-shot
+  // and runs on the first load.
   workspace: {
-    load: (primaryDir: string) =>
-      ipcRenderer.invoke('workspace:load', primaryDir) as Promise<{
-        folders: Array<{ path: string }>
+    load: (hostDir: string) =>
+      ipcRenderer.invoke('workspace:load', hostDir) as Promise<{
+        pages: Array<{ id: string; name: string; createdAt: string; links: Array<{ folderPath: string; pageId: string }> }>
+        activePageId: string
       }>,
-    save: (primaryDir: string, folders: Array<{ path: string }>) =>
-      ipcRenderer.invoke('workspace:save', primaryDir, folders) as Promise<
+    save: (hostDir: string, file: {
+      pages: Array<{ id: string; name: string; createdAt: string; links: Array<{ folderPath: string; pageId: string }> }>
+      activePageId: string
+    }) =>
+      ipcRenderer.invoke('workspace:save', hostDir, file) as Promise<
         { ok: true } | { ok: false; error: string }
+      >,
+    setActivePage: (hostDir: string, pageId: string) =>
+      ipcRenderer.invoke('workspace:set-active-page', hostDir, pageId) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    createPage: (hostDir: string, name?: string) =>
+      ipcRenderer.invoke('workspace:create-page', hostDir, name) as Promise<
+        | { ok: true; page: { id: string; name: string; createdAt: string; links: Array<{ folderPath: string; pageId: string }> } }
+        | { ok: false; error: string }
+      >,
+    renamePage: (hostDir: string, pageId: string, name: string) =>
+      ipcRenderer.invoke('workspace:rename-page', hostDir, pageId, name) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    deletePage: (hostDir: string, pageId: string) =>
+      ipcRenderer.invoke('workspace:delete-page', hostDir, pageId) as Promise<
+        | { ok: true; workspace: { pages: Array<{ id: string; name: string; createdAt: string; links: Array<{ folderPath: string; pageId: string }> }>; activePageId: string } }
+        | { ok: false; error: string }
+      >,
+    addLink: (hostDir: string, hostPageId: string, otherDir: string, otherPageId?: string) =>
+      ipcRenderer.invoke('workspace:add-link', hostDir, hostPageId, otherDir, otherPageId) as Promise<
+        | { ok: true; hostPageId: string; otherPageId: string }
+        | { ok: false; error: string }
+      >,
+    removeLink: (hostDir: string, hostPageId: string, otherDir: string, otherPageId?: string) =>
+      ipcRenderer.invoke('workspace:remove-link', hostDir, hostPageId, otherDir, otherPageId) as Promise<
+        { ok: true } | { ok: false; error: string }
+      >,
+    listPagesInFolder: (folderDir: string) =>
+      ipcRenderer.invoke('workspace:list-pages-in-folder', folderDir) as Promise<
+        | { ok: true; pages: Array<{ id: string; name: string; createdAt: string; links: Array<{ folderPath: string; pageId: string }> }> }
+        | { ok: false; error: string }
       >,
   },
 
@@ -38,7 +81,7 @@ contextBridge.exposeInMainWorld('electron', {
     edges: unknown[],
     cwd: string,
     settings: unknown,
-    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: string },
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: string; pageId?: string },
   ) =>
     ipcRenderer.invoke('dispatch:start', nodes, edges, cwd, settings, dispatch),
 
@@ -92,8 +135,8 @@ contextBridge.exposeInMainWorld('electron', {
       ipcRenderer.invoke('assistant:update-session-summary', projectDir, mode, sessionId, summary),
   },
 
-  onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => {
-    const handler = (_: unknown, event: { projectDir: string; raw: string }) => cb(event)
+  onCanvasChanged: (cb: (event: { projectDir: string; pageId: string; raw: string }) => void) => {
+    const handler = (_: unknown, event: { projectDir: string; pageId: string; raw: string }) => cb(event)
     ipcRenderer.on('canvas:changed', handler)
     return () => ipcRenderer.removeListener('canvas:changed', handler)
   },

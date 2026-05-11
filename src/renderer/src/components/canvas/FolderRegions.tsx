@@ -1,4 +1,4 @@
-import { useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { ViewportPortal, getNodesBounds } from '@xyflow/react'
 import type { CanvasNode } from '../../types'
 import type { LoadedFolder } from '../../context/WorkspaceContext'
@@ -133,67 +133,104 @@ export function useFolderRegions(nodes: CanvasNode[]): FolderRegion[] {
 // lockstep with the canvas. Single-folder workspaces render nothing — the
 // extra frame would just clutter the existing single-project UX.
 export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
-  const { loadedFolders } = useWorkspace()
+  const { loadedFolders, activePage } = useWorkspace()
   const regions = useFolderRegions(nodes)
+
+  // pageId -> name for every linked folder. Fetched once per active-page
+  // change so the region chrome can show "<folder> · <linked page name>"
+  // without baking the name into the PageLink schema.
+  const [linkedPageNameByFolder, setLinkedPageNameByFolder] = useState<Record<string, string>>({})
+  useEffect(() => {
+    let cancelled = false
+    const links = activePage.links
+    if (links.length === 0) {
+      setLinkedPageNameByFolder({})
+      return
+    }
+    void Promise.all(
+      links.map(async link => {
+        const res = await window.electron.workspace.listPagesInFolder(link.folderPath)
+        const name = res.ok ? res.pages.find(p => p.id === link.pageId)?.name : undefined
+        return { folderPath: link.folderPath, name: name ?? '' }
+      }),
+    ).then(results => {
+      if (cancelled) return
+      const next: Record<string, string> = {}
+      for (const r of results) if (r.name) next[r.folderPath] = r.name
+      setLinkedPageNameByFolder(next)
+    })
+    return () => { cancelled = true }
+  }, [activePage])
+
   if (loadedFolders.length < 2) return null
   return (
     <ViewportPortal>
-      {regions.map(region => (
-        <div
-          key={region.folderPath}
-          style={{
-            position: 'absolute',
-            left: region.x,
-            top: region.y,
-            width: region.width,
-            height: region.height,
-            pointerEvents: 'none',
-            border: `1.5px dashed ${region.color}`,
-            borderRadius: 12,
-            background: `${region.color}0A`,
-            zIndex: 0,
-          }}
-        >
+      {regions.map(region => {
+        const pageName = region.isPrimary
+          ? activePage.name
+          : linkedPageNameByFolder[region.folderPath]
+        return (
           <div
+            key={region.folderPath}
             style={{
               position: 'absolute',
-              top: -22,
-              left: 8,
-              padding: '2px 8px',
-              fontSize: 11,
-              fontFamily: 'monospace',
-              color: region.color,
-              background: '#111111',
-              border: `1px solid ${region.color}`,
-              borderRadius: 4,
-              letterSpacing: 0.5,
-              whiteSpace: 'nowrap',
+              left: region.x,
+              top: region.y,
+              width: region.width,
+              height: region.height,
+              pointerEvents: 'none',
+              border: `1.5px dashed ${region.color}`,
+              borderRadius: 12,
+              background: `${region.color}0A`,
+              zIndex: 0,
             }}
           >
-            {region.label}
-            {region.isPrimary ? ' · primary' : ''}
-          </div>
-          {region.isEmpty ? (
             <div
               style={{
                 position: 'absolute',
-                inset: 0,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                fontSize: 12,
+                top: -22,
+                left: 8,
+                padding: '2px 8px',
+                fontSize: 11,
                 fontFamily: 'monospace',
-                color: `${region.color}99`,
-                letterSpacing: 0.4,
-                textAlign: 'center',
-                padding: 24,
+                color: region.color,
+                background: '#111111',
+                border: `1px solid ${region.color}`,
+                borderRadius: 4,
+                letterSpacing: 0.5,
+                whiteSpace: 'nowrap',
               }}
             >
-              empty · drop a zone or component here
+              {region.label}
+              {region.isPrimary ? ' · primary' : ''}
+              {pageName ? (
+                <span style={{ marginLeft: 6, opacity: 0.7 }}>
+                  · /{pageName}
+                </span>
+              ) : null}
             </div>
-          ) : null}
-        </div>
-      ))}
+            {region.isEmpty ? (
+              <div
+                style={{
+                  position: 'absolute',
+                  inset: 0,
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  fontSize: 12,
+                  fontFamily: 'monospace',
+                  color: `${region.color}99`,
+                  letterSpacing: 0.4,
+                  textAlign: 'center',
+                  padding: 24,
+                }}
+              >
+                empty · drop a zone or component here
+              </div>
+            ) : null}
+          </div>
+        )
+      })}
     </ViewportPortal>
   )
 }
