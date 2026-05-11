@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useState } from 'react'
-import { ViewportPortal, getNodesBounds } from '@xyflow/react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { ViewportPortal, getNodesBounds, useReactFlow } from '@xyflow/react'
 import type { CanvasNode } from '../../types'
 import type { LoadedFolder } from '../../context/WorkspaceContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
@@ -135,6 +135,103 @@ export function useFolderRegions(nodes: CanvasNode[]): FolderRegion[] {
 export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
   const { loadedFolders, activePage } = useWorkspace()
   const regions = useFolderRegions(nodes)
+  const { setNodes, getViewport } = useReactFlow<CanvasNode>()
+  const hostPath = loadedFolders[0]?.path
+
+  // Per-folder offsets for empty placeholder regions. Drag accumulates here
+  // in canvas-space units. Cleared when the folder transitions from empty
+  // to filled (the node-bounds-driven layout takes over). Not persisted.
+  const [emptyOffsetByFolder, setEmptyOffsetByFolder] = useState<Record<string, { dx: number; dy: number }>>({})
+
+  // First-observed base position for each empty region. computeFolderRegions
+  // re-anchors empties to `maxRight + GAP` of all filled regions on every
+  // render — which means a primary-folder drag would visually drag empty
+  // siblings along with it. Pinning the base the first time we see it makes
+  // an empty placeholder independent of the host's movement.
+  const emptyBaseRef = useRef<Record<string, { x: number; y: number }>>({})
+
+  useEffect(() => {
+    const currentEmptyPaths = new Set(regions.filter(r => r.isEmpty).map(r => r.folderPath))
+
+    // Seed bases for newly-empty folders and forget bases that filled or
+    // were unloaded.
+    let baseChanged = false
+    for (const r of regions) {
+      if (r.isEmpty && !(r.folderPath in emptyBaseRef.current)) {
+        emptyBaseRef.current[r.folderPath] = { x: r.x, y: r.y }
+        baseChanged = true
+      }
+    }
+    for (const k of Object.keys(emptyBaseRef.current)) {
+      if (!currentEmptyPaths.has(k)) {
+        delete emptyBaseRef.current[k]
+        baseChanged = true
+      }
+    }
+    void baseChanged
+
+    setEmptyOffsetByFolder(prev => {
+      let changed = false
+      const next: typeof prev = {}
+      for (const r of regions) {
+        if (r.isEmpty && prev[r.folderPath]) {
+          next[r.folderPath] = prev[r.folderPath]
+        } else if (!r.isEmpty && prev[r.folderPath]) {
+          changed = true
+        }
+      }
+      for (const k of Object.keys(prev)) {
+        if (!(k in next)) changed = true
+      }
+      return changed ? next : prev
+    })
+  }, [regions])
+
+  // Drag the folder chip to move every node tagged with that folder by the
+  // same canvas-space delta. Region rectangles are derived from node bounds,
+  // so they follow automatically. Empty regions ride along too — their
+  // placeholder origin shifts because the next render recomputes from the
+  // (still-empty) set, so we ALSO bump every other folder's stack cursor by
+  // letting react re-derive; for now empty regions stay where they are
+  // since they own no nodes to translate.
+  const beginDragRegion = useCallback(
+    (e: React.MouseEvent, folderPath: string, isEmpty: boolean) => {
+      e.preventDefault()
+      e.stopPropagation()
+      let lastX = e.clientX
+      let lastY = e.clientY
+      const onMove = (ev: MouseEvent) => {
+        const { zoom } = getViewport()
+        const dx = (ev.clientX - lastX) / zoom
+        const dy = (ev.clientY - lastY) / zoom
+        lastX = ev.clientX
+        lastY = ev.clientY
+        if (isEmpty) {
+          setEmptyOffsetByFolder(prev => {
+            const cur = prev[folderPath] ?? { dx: 0, dy: 0 }
+            return { ...prev, [folderPath]: { dx: cur.dx + dx, dy: cur.dy + dy } }
+          })
+          return
+        }
+        setNodes(prev =>
+          prev.map(n => {
+            const tag = getNodeFolderPath(n) ?? hostPath
+            if (tag !== folderPath) return n
+            return { ...n, position: { x: n.position.x + dx, y: n.position.y + dy } }
+          }),
+        )
+      }
+      const onUp = () => {
+        window.removeEventListener('mousemove', onMove)
+        window.removeEventListener('mouseup', onUp)
+        document.body.style.cursor = ''
+      }
+      window.addEventListener('mousemove', onMove)
+      window.addEventListener('mouseup', onUp)
+      document.body.style.cursor = 'grabbing'
+    },
+    [setNodes, getViewport, hostPath],
+  )
 
   // pageId -> name for every linked folder. Fetched once per active-page
   // change so the region chrome can show "<folder> · <linked page name>"
@@ -169,13 +266,25 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
         const pageName = region.isPrimary
           ? activePage.name
           : linkedPageNameByFolder[region.folderPath]
+        const offset = region.isEmpty ? emptyOffsetByFolder[region.folderPath] : undefined
+        // For empty regions, anchor to the first-observed base so the host's
+        // movement doesn't carry the placeholder along. For filled regions
+        // the bounds already track their own nodes.
+        const baseX = region.isEmpty
+          ? emptyBaseRef.current[region.folderPath]?.x ?? region.x
+          : region.x
+        const baseY = region.isEmpty
+          ? emptyBaseRef.current[region.folderPath]?.y ?? region.y
+          : region.y
+        const renderX = baseX + (offset?.dx ?? 0)
+        const renderY = baseY + (offset?.dy ?? 0)
         return (
           <div
             key={region.folderPath}
             style={{
               position: 'absolute',
-              left: region.x,
-              top: region.y,
+              left: renderX,
+              top: renderY,
               width: region.width,
               height: region.height,
               pointerEvents: 'none',
@@ -186,6 +295,7 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
             }}
           >
             <div
+              onMouseDown={e => beginDragRegion(e, region.folderPath, region.isEmpty)}
               style={{
                 position: 'absolute',
                 top: -22,
@@ -199,7 +309,11 @@ export default function FolderRegions({ nodes }: { nodes: CanvasNode[] }) {
                 borderRadius: 4,
                 letterSpacing: 0.5,
                 whiteSpace: 'nowrap',
+                pointerEvents: 'auto',
+                cursor: 'grab',
+                userSelect: 'none',
               }}
+              title="Drag to move every node tagged with this folder"
             >
               {region.label}
               {region.isPrimary ? ' · primary' : ''}
