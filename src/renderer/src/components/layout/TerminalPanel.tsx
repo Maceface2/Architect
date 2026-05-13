@@ -8,6 +8,7 @@ import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRunt
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import type { TerminalInfo } from '../../../../shared/electronTypes'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
+import { useWorkspaceOptional } from '../../context/WorkspaceContext'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
   emptyLayout,
@@ -740,6 +741,8 @@ function collectActiveTabs(node: LayoutNode): string[] {
 }
 
 export default function TerminalPanel({ sessions, isVisible, projectDir, layout, onLayoutChange, onRemoveSession, getCanvasSnapshot, onPanelPopout, popoutMode }: Props) {
+  const workspace = useWorkspaceOptional()
+  const pageId = workspace?.ready ? workspace.activePageId : undefined
   const [shellSessions, setShellSessions] = useState<TerminalInfo[]>([])
   const [exitedIds, setExitedIds] = useState<Set<string>>(new Set())
   const [resumableIds, setResumableIds] = useState<Map<string, string>>(new Map())
@@ -814,7 +817,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       sessions
         .filter(s => s.runtime !== 'shell')
         .map(s =>
-          window.electron.zone.listSessions(projectDir, s.id, s.label).then(records => ({
+          window.electron.zone.listSessions(projectDir, s.id, s.label, pageId).then(records => ({
             id: s.id,
             sessionId: records?.[0]?.sessionId ?? null,
           })),
@@ -830,7 +833,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
       })
     })
     return () => { cancelled = true }
-  }, [projectDir, sessions.map(s => s.id).join('|')])
+  }, [projectDir, pageId, sessions.map(s => s.id).join('|')])
 
   // Sync layout with the live session list.
   useEffect(() => {
@@ -913,6 +916,7 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
         mode: 'resume',
         sessionId,
         settings: snap.settings as import('../../types').ProjectSettings,
+        pageId,
       })
       if (result?.ok) {
         termInstances.get(info.id)?.term.clear()

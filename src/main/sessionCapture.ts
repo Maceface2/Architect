@@ -608,22 +608,37 @@ export async function captureNewOpencodeSession(
   return null
 }
 
-function sessionsDir(projectDir: string): string {
+// Per-page scoping: when pageId is omitted (legacy callers mid-migration),
+// records bucket under DEFAULT_PAGE_BUCKET. Once every caller threads its
+// active pageId through, this fallback can be deleted.
+const DEFAULT_PAGE_BUCKET = '_default'
+
+function sessionsRoot(projectDir: string): string {
   return join(projectDir, 'ARCHITECT', SESSIONS_SUBDIR)
 }
 
-function zoneDir(projectDir: string, zoneKey: string): string {
-  return join(sessionsDir(projectDir), zoneKey)
+function pageSessionsDir(projectDir: string, pageId: string): string {
+  return join(sessionsRoot(projectDir), pageId)
 }
 
-function sessionRecordFile(projectDir: string, zoneKey: string, sessionId: string): string {
-  return join(zoneDir(projectDir, zoneKey), `${sessionId}.json`)
+function zoneDir(projectDir: string, pageId: string, zoneKey: string): string {
+  return join(pageSessionsDir(projectDir, pageId), zoneKey)
 }
 
-// Legacy layout: ARCHITECT/sessions/<zoneKey>.json as a flat file. On first
-// read under the new layout we migrate to ARCHITECT/sessions/<zoneKey>/<id>.json.
-function legacyZoneFile(projectDir: string, zoneKey: string): string {
-  return join(sessionsDir(projectDir), `${zoneKey}.json`)
+function sessionRecordFile(projectDir: string, pageId: string, zoneKey: string, sessionId: string): string {
+  return join(zoneDir(projectDir, pageId, zoneKey), `${sessionId}.json`)
+}
+
+// Pre-multi-page layout: ARCHITECT/sessions/<zoneKey>/<sessionId>.json (no
+// pageId in the path). Plus a still-older flat layout where the entire zone
+// was a single file: ARCHITECT/sessions/<zoneKey>.json. On first read after
+// migration we promote either form into the per-page directory.
+function preMultiPageZoneDir(projectDir: string, zoneKey: string): string {
+  return join(sessionsRoot(projectDir), zoneKey)
+}
+
+function flatLegacyZoneFile(projectDir: string, zoneKey: string): string {
+  return join(sessionsRoot(projectDir), `${zoneKey}.json`)
 }
 
 function readRecord(path: string): ZoneSessionRecord | null {
@@ -643,38 +658,79 @@ function readRecord(path: string): ZoneSessionRecord | null {
   return null
 }
 
-function migrateLegacyIfPresent(projectDir: string, zoneKey: string, legacyKey?: string): void {
-  const candidates = new Set<string>()
-  candidates.add(legacyZoneFile(projectDir, zoneKey))
-  if (legacyKey && legacyKey !== zoneKey) candidates.add(legacyZoneFile(projectDir, legacyKey))
-
-  for (const path of candidates) {
-    if (!fs.existsSync(path)) continue
-    // If a directory with the same name already exists we've already migrated.
+function migrateLegacyIfPresent(
+  projectDir: string,
+  pageId: string,
+  zoneKey: string,
+  legacyKey?: string,
+): void {
+  // Step 1: flat <zoneKey>.json under sessions/ → sessions/<pageId>/<zoneKey>/<id>.json
+  const flatCandidates = new Set<string>()
+  flatCandidates.add(flatLegacyZoneFile(projectDir, zoneKey))
+  if (legacyKey && legacyKey !== zoneKey) {
+    flatCandidates.add(flatLegacyZoneFile(projectDir, legacyKey))
+  }
+  for (const flatPath of flatCandidates) {
+    if (!fs.existsSync(flatPath)) continue
     try {
-      const stat = fs.statSync(path)
-      if (!stat.isFile()) continue
+      if (!fs.statSync(flatPath).isFile()) continue
     } catch { continue }
-
-    const rec = readRecord(path)
+    const rec = readRecord(flatPath)
     if (!rec) {
-      try { fs.unlinkSync(path) } catch {}
+      try { fs.unlinkSync(flatPath) } catch {}
       continue
     }
-
     try {
-      fs.mkdirSync(zoneDir(projectDir, zoneKey), { recursive: true })
-      const target = sessionRecordFile(projectDir, zoneKey, rec.sessionId)
+      fs.mkdirSync(zoneDir(projectDir, pageId, zoneKey), { recursive: true })
+      const target = sessionRecordFile(projectDir, pageId, zoneKey, rec.sessionId)
       if (!fs.existsSync(target)) {
         fs.writeFileSync(target, JSON.stringify({ ...rec, summary: rec.summary || 'Imported session' }, null, 2))
       }
-      fs.unlinkSync(path)
+      fs.unlinkSync(flatPath)
     } catch {}
+  }
+
+  // Step 2: sessions/<zoneKey>/ (no pageId) → sessions/<pageId>/<zoneKey>/. We
+  // move every record into the active page's bucket on the assumption that
+  // existing histories belong to the default page. If a different page later
+  // wants its own history, it starts fresh.
+  const dirCandidates = new Set<string>()
+  dirCandidates.add(preMultiPageZoneDir(projectDir, zoneKey))
+  if (legacyKey && legacyKey !== zoneKey) {
+    dirCandidates.add(preMultiPageZoneDir(projectDir, legacyKey))
+  }
+  for (const srcDir of dirCandidates) {
+    let stat: fs.Stats
+    try { stat = fs.statSync(srcDir) } catch { continue }
+    if (!stat.isDirectory()) continue
+    // Skip if this is already the per-page bucket for this zoneKey.
+    if (srcDir === zoneDir(projectDir, pageId, zoneKey)) continue
+    let entries: string[]
+    try {
+      entries = fs.readdirSync(srcDir).filter(n => n.endsWith('.json'))
+    } catch { continue }
+    if (entries.length === 0) {
+      try { fs.rmdirSync(srcDir) } catch {}
+      continue
+    }
+    try { fs.mkdirSync(zoneDir(projectDir, pageId, zoneKey), { recursive: true }) } catch {}
+    for (const name of entries) {
+      const src = join(srcDir, name)
+      const dst = join(zoneDir(projectDir, pageId, zoneKey), name)
+      try {
+        if (fs.existsSync(dst)) {
+          fs.unlinkSync(src)
+        } else {
+          fs.renameSync(src, dst)
+        }
+      } catch {}
+    }
+    try { fs.rmdirSync(srcDir) } catch {}
   }
 }
 
-function pruneToMax(projectDir: string, zoneKey: string): void {
-  const dir = zoneDir(projectDir, zoneKey)
+function pruneToMax(projectDir: string, pageId: string, zoneKey: string): void {
+  const dir = zoneDir(projectDir, pageId, zoneKey)
   let entries: string[]
   try {
     entries = fs.readdirSync(dir).filter(n => n.endsWith('.json'))
@@ -687,7 +743,7 @@ function pruneToMax(projectDir: string, zoneKey: string): void {
       return rec ? { name, capturedAt: rec.capturedAt } : null
     })
     .filter((x): x is { name: string; capturedAt: string } => x !== null)
-    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt)) // oldest first
+    .sort((a, b) => a.capturedAt.localeCompare(b.capturedAt))
 
   const toDrop = withMeta.slice(0, Math.max(0, withMeta.length - MAX_ZONE_SESSIONS))
   for (const { name } of toDrop) {
@@ -695,27 +751,34 @@ function pruneToMax(projectDir: string, zoneKey: string): void {
   }
 }
 
+function resolvePageBucket(pageId: string | undefined): string {
+  return pageId && pageId.length > 0 ? pageId : DEFAULT_PAGE_BUCKET
+}
+
 export function appendZoneSession(
   projectDir: string,
   zoneKey: string,
   record: ZoneSessionRecord,
+  pageId?: string,
 ): void {
-  fs.mkdirSync(zoneDir(projectDir, zoneKey), { recursive: true })
+  const bucket = resolvePageBucket(pageId)
+  fs.mkdirSync(zoneDir(projectDir, bucket, zoneKey), { recursive: true })
   fs.writeFileSync(
-    sessionRecordFile(projectDir, zoneKey, record.sessionId),
+    sessionRecordFile(projectDir, bucket, zoneKey, record.sessionId),
     JSON.stringify(record, null, 2),
   )
-  pruneToMax(projectDir, zoneKey)
+  pruneToMax(projectDir, bucket, zoneKey)
 }
 
-// Newest-first list of a zone's recorded sessions. Migrates legacy layout on demand.
 export function listZoneSessions(
   projectDir: string,
   zoneKey: string,
   legacyKey?: string,
+  pageId?: string,
 ): ZoneSessionRecord[] {
-  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
-  const dir = zoneDir(projectDir, zoneKey)
+  const bucket = resolvePageBucket(pageId)
+  migrateLegacyIfPresent(projectDir, bucket, zoneKey, legacyKey)
+  const dir = zoneDir(projectDir, bucket, zoneKey)
   let entries: string[]
   try {
     entries = fs.readdirSync(dir).filter(n => n.endsWith('.json'))
@@ -735,24 +798,26 @@ export function getZoneSessionRecord(
   zoneKey: string,
   sessionId: string,
   legacyKey?: string,
+  pageId?: string,
 ): ZoneSessionRecord | null {
-  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
-  return readRecord(sessionRecordFile(projectDir, zoneKey, sessionId))
+  const bucket = resolvePageBucket(pageId)
+  migrateLegacyIfPresent(projectDir, bucket, zoneKey, legacyKey)
+  return readRecord(sessionRecordFile(projectDir, bucket, zoneKey, sessionId))
 }
 
-// When sessionId is provided, deletes that one record. Otherwise wipes all
-// history for the zone (used by "clear history" or by a full reset).
 export function deleteZoneSession(
   projectDir: string,
   zoneKey: string,
   sessionId?: string,
   legacyKey?: string,
+  pageId?: string,
 ): boolean {
-  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
-  const dir = zoneDir(projectDir, zoneKey)
+  const bucket = resolvePageBucket(pageId)
+  migrateLegacyIfPresent(projectDir, bucket, zoneKey, legacyKey)
+  const dir = zoneDir(projectDir, bucket, zoneKey)
 
   if (sessionId) {
-    const path = sessionRecordFile(projectDir, zoneKey, sessionId)
+    const path = sessionRecordFile(projectDir, bucket, zoneKey, sessionId)
     if (fs.existsSync(path)) {
       try { fs.unlinkSync(path); return true } catch {}
     }
@@ -775,9 +840,11 @@ export function updateZoneSessionSummary(
   sessionId: string,
   summary: string,
   legacyKey?: string,
+  pageId?: string,
 ): boolean {
-  migrateLegacyIfPresent(projectDir, zoneKey, legacyKey)
-  const path = sessionRecordFile(projectDir, zoneKey, sessionId)
+  const bucket = resolvePageBucket(pageId)
+  migrateLegacyIfPresent(projectDir, bucket, zoneKey, legacyKey)
+  const path = sessionRecordFile(projectDir, bucket, zoneKey, sessionId)
   const rec = readRecord(path)
   if (!rec) return false
   try {

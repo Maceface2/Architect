@@ -3,6 +3,7 @@ import { Check, History, Pencil, Play, Rocket, Trash2, X } from 'lucide-react'
 import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRuntimes'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
+import { useWorkspaceOptional } from '../../context/WorkspaceContext'
 import type { ProjectSettings, ZoneSessionRecord } from '../../types'
 
 interface Props {
@@ -29,6 +30,11 @@ export default function ZoneLaunchModal({
   const projectDir = useProjectDir()
   const projectSettings = useProjectSettings() as ProjectSettings
   const runtimeMeta = getAgentRuntime(effectiveRuntime)
+  // Optional: this modal renders before the workspace context has loaded in
+  // some early-mount paths. Falling back to undefined just leaves the legacy
+  // _default bucket in play for that one render.
+  const workspace = useWorkspaceOptional()
+  const pageId = workspace?.ready ? workspace.activePageId : undefined
 
   const [sessions, setSessions] = useState<ZoneSessionRecord[]>([])
   const [loading, setLoading] = useState(true)
@@ -42,12 +48,12 @@ export default function ZoneLaunchModal({
     if (!projectDir) return
     setLoading(true)
     try {
-      const recs = await window.electron.zone.listSessions(projectDir, zoneId, zoneLabel)
+      const recs = await window.electron.zone.listSessions(projectDir, zoneId, zoneLabel, pageId)
       setSessions(recs ?? [])
     } finally {
       setLoading(false)
     }
-  }, [projectDir, zoneId, zoneLabel])
+  }, [projectDir, zoneId, zoneLabel, pageId])
 
   useEffect(() => { void reload() }, [reload])
 
@@ -80,6 +86,7 @@ export default function ZoneLaunchModal({
         userPrompt: trimmedPrompt,
         summary: derivedSummary,
         settings: projectSettings,
+        pageId,
       })
       if (!result?.ok) {
         setError(result?.reason ?? 'Failed to launch')
@@ -105,6 +112,7 @@ export default function ZoneLaunchModal({
         mode: 'resume',
         sessionId: record.sessionId,
         settings: projectSettings,
+        pageId,
       })
       if (!result?.ok) {
         setError(result?.reason ?? 'Failed to resume')
@@ -119,7 +127,7 @@ export default function ZoneLaunchModal({
 
   const remove = async (record: ZoneSessionRecord) => {
     if (!projectDir) return
-    await window.electron.zone.deleteSession(projectDir, zoneId, record.sessionId, zoneLabel)
+    await window.electron.zone.deleteSession(projectDir, zoneId, record.sessionId, zoneLabel, pageId)
     void reload()
   }
 
@@ -127,7 +135,7 @@ export default function ZoneLaunchModal({
     if (!projectDir || !editing) return
     const trimmed = editing.draft.trim()
     if (!trimmed) { setEditing(null); return }
-    await window.electron.zone.updateSessionSummary(projectDir, zoneId, editing.sessionId, trimmed, zoneLabel)
+    await window.electron.zone.updateSessionSummary(projectDir, zoneId, editing.sessionId, trimmed, zoneLabel, pageId)
     setEditing(null)
     void reload()
   }

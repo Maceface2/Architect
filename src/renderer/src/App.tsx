@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Activity, FileStack, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -40,7 +40,7 @@ import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { nodeTypes } from './components/nodes/nodeTypes'
-import ComponentEdge from './components/edges/ComponentEdge'
+import { edgeTypes } from './components/edges/edgeTypes'
 import CompactCanvasPalette, {
   type CanvasPaletteTool,
   type ComponentCreateConfig,
@@ -51,6 +51,7 @@ import type {
   AssistantMode,
   CanvasEdge,
   CanvasNode,
+  ComponentEdgeData,
   ComponentEdgeDirection,
   ComponentNodeType,
   ProjectSettings,
@@ -64,12 +65,20 @@ import {
   migrateCanvasData,
   mintParticipantId,
   normalizeEdgeData,
+  loadMergedCanvas,
+  splitMergedForSave,
+  type FolderCanvasInput,
+  type FolderIdAlias,
+  type FolderOffset,
 } from './lib/canvas'
 import { buildCanvasProjection } from '../../shared/canvas/projection'
 import { renderProjectionMarkdown } from '../../shared/canvas/render'
 import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
+import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext'
+import PagesPanel from './components/canvas/PagesPanel'
+import FolderRegions, { computeFolderRegions, nearestFolderForPoint, applyEmptyAdjustments, type EmptyOffset, type EmptyBase } from './components/canvas/FolderRegions'
 import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
@@ -153,10 +162,6 @@ Do a deep architecture discovery pass over this existing codebase and generate a
 # Scope
 
 Do not modify source code. Only write \`architect-canvas.json\`.`
-const edgeTypes = {
-  'component-edge': ComponentEdge,
-}
-
 function createEdgeId(): string {
   const uuid = globalThis.crypto?.randomUUID?.()
   return uuid ? `edge-${uuid}` : `edge-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -167,13 +172,54 @@ function createNodeId(prefix: string): string {
   return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+// Re-mint colliding ids on an assistant-supplied patch so it can't clobber
+// nodes that live in other (currently-loaded) workspace folders. Returns a
+// rename map (oldId -> newId) the caller applies to incoming edge endpoints.
+function dedupeAgainstReserved(
+  nodes: Array<{ id: string }>,
+  reservedIds: Set<string>,
+): Map<string, string> {
+  const rename = new Map<string, string>()
+  const seen = new Set<string>(reservedIds)
+  for (const n of nodes) {
+    if (!seen.has(n.id)) {
+      seen.add(n.id)
+      continue
+    }
+    let suffix = 2
+    let candidate = `${n.id}#${suffix}`
+    while (seen.has(candidate)) {
+      suffix += 1
+      candidate = `${n.id}#${suffix}`
+    }
+    seen.add(candidate)
+    rename.set(n.id, candidate)
+    n.id = candidate
+  }
+  return rename
+}
+
+// Strip in-memory workspace tags from each node's data before serializing.
+// `folderPath` is added by loadMergedCanvas at load time; it must not bleed
+// into the on-disk canvas file or single-folder round-trip drifts.
+function stripWorkspaceTags(node: CanvasNode): CanvasNode {
+  const data = node.data as Record<string, unknown>
+  if (!('folderPath' in data)) return node
+  const next: Record<string, unknown> = {}
+  for (const k of Object.keys(data)) {
+    if (k === 'folderPath') continue
+    next[k] = data[k]
+  }
+  return { ...node, data: next } as CanvasNode
+}
+
 function serializeCanvasData(
   nodes: CanvasNode[],
   edges: CanvasEdge[],
   settings: ProjectSettings,
 ): string {
   return JSON.stringify({
-    nodes,
+    nodes: nodes.map(stripWorkspaceTags),
     edges,
     settings,
     savedAt: new Date().toISOString(),
@@ -284,9 +330,13 @@ function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
 }
 
 function CanvasConflictModal({
+  changedFolders,
   onLoadIncoming,
   onKeepLocal,
 }: {
+  // Non-primary folder paths whose on-disk canvas changed while we're dirty.
+  // Empty when only the primary folder's canvas changed.
+  changedFolders: string[]
   onLoadIncoming: () => void
   onKeepLocal: () => void
 }) {
@@ -296,10 +346,20 @@ function CanvasConflictModal({
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
+            {changedFolders.length === 0
+              ? 'The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.'
+              : 'Linked folders’ canvases changed on disk, but you still have unsaved canvas edits in memory.'}
           </p>
         </div>
-
+        {changedFolders.length > 0 && (
+          <div className="px-5 py-3 space-y-1">
+            {changedFolders.map(p => (
+              <div key={p} className="text-[11px] font-mono text-fg-muted truncate" title={p}>
+                {p}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
           <button
             onClick={onKeepLocal}
@@ -311,7 +371,78 @@ function CanvasConflictModal({
             onClick={onLoadIncoming}
             className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
           >
-            Load assistant changes
+            Load incoming changes
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function MissingFoldersPrompt({
+  missing,
+  onContinue,
+  onCancel,
+}: {
+  missing: string[]
+  onContinue: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-fg">Some folders aren&apos;t loaded</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">
+            This dispatch ran across folders that aren&apos;t currently in the workspace. Resume will skip those zones unless you add the folders first.
+          </p>
+        </div>
+        <div className="px-5 py-3 space-y-1">
+          {missing.map(p => (
+            <div key={p} className="text-[11px] font-mono text-fg-muted truncate" title={p}>
+              {p}
+            </div>
+          ))}
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onCancel}
+            className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onContinue}
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+          >
+            Resume anyway
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function DispatchErrorModal({
+  message,
+  onClose,
+}: {
+  message: string
+  onClose: () => void
+}) {
+  return (
+    <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
+        <div className="border-b border-white/[0.06] px-5 py-4">
+          <h2 className="text-sm font-semibold text-fg">Dispatch error</h2>
+          <p className="mt-1 text-xs leading-5 text-fg-muted">{message}</p>
+        </div>
+        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+          <button
+            onClick={onClose}
+            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+          >
+            Dismiss
           </button>
         </div>
       </div>
@@ -360,7 +491,12 @@ function AutoCanvasOnboardingModal({
 }
 
 function zoneHash(n: ZoneNodeType): string {
-  const { data: { status: _s, ...data } } = n
+  // Strip volatile fields so the hash only reflects user-visible config.
+  // `status` flips during a dispatch run; `folderPath` is a workspace tag
+  // added by loadMergedCanvas — neither is a "user changed this" signal.
+  const { data: { status: _s, folderPath: _fp, ...data } } = n as ZoneNodeType & {
+    data: { folderPath?: string }
+  }
   return JSON.stringify(data)
 }
 
@@ -415,15 +551,61 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
   const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
+  // Non-primary folders whose canvas changed externally while the user has
+  // unsaved edits. Coexists with `pendingExternalCanvasRaw` (primary's pending
+  // raw); together they drive the conflict modal so cross-folder drifts can't
+  // be clobbered by the next save.
+  const [externalChangedFolders, setExternalChangedFolders] = useState<Set<string>>(
+    () => new Set(),
+  )
+  // Latest pending raw per non-primary folder while we're dirty. Mirrors
+  // pendingExternalCanvasRaw (primary's pending raw) but keyed by folder so
+  // a multi-folder workspace can hold one pending drift per folder.
+  const externalPendingByFolderRef = useRef<Map<string, string>>(new Map())
+  // Dismissal cache, mirrors dismissedExternalCanvasRef but keyed by folder
+  // path. Lets "Keep local edits" silence a specific raw per folder so the
+  // same drift won't re-prompt on every save until the user genuinely picks
+  // it up.
+  const dismissedExternalByFolderRef = useRef<Map<string, string>>(new Map())
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
   const [bugReportOpen, setBugReportOpen] = useState(false)
+  // Resume gating: surfaced when a dispatch's involvedFolders aren't all
+  // currently loaded. Promise-based so the resume flow can await the user's
+  // continue/cancel decision the same way `window.alert` blocked before.
+  const [missingFoldersPrompt, setMissingFoldersPrompt] = useState<
+    { missing: string[]; resolve: (cont: boolean) => void } | null
+  >(null)
+  // Fatal-error surface for the dispatch flow (legacy protocol, missing
+  // record, etc.). Replaces the second window.alert in handleDispatchSubmit.
+  const [dispatchErrorMessage, setDispatchErrorMessage] = useState<string | null>(null)
   // True while the terminal page is rendering in a detached BrowserWindow.
   // The docked panel hides itself and shows a "popped out" placeholder; all
   // session/layout/theme updates flow over the terminalPage IPC bus until
   // the popout window is closed.
   const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
+
+  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, ready: workspaceReady } = useWorkspace()
+
+  // Empty-region placement offsets — lifted out of FolderRegions so the
+  // pane-click drop targeting and the visual rendering stay aligned after a
+  // user drags an empty placeholder. Bases are seeded the first time a
+  // folder appears empty and forgotten when it fills.
+  const [emptyFolderOffsets, setEmptyFolderOffsets] = useState<Record<string, EmptyOffset>>({})
+  const emptyFolderBasesRef = useRef<Record<string, EmptyBase>>({})
+
+  // Resolve which pageId belongs to each loaded folder: the host folder uses
+  // the workspace's activePageId; every linked folder uses the pageId stored
+  // on the active page's outgoing link to that folder.
+  const pageIdForFolder = useCallback(
+    (folderPath: string): string => {
+      if (folderPath === primaryFolder.path) return activePageId
+      const link = activePage.links.find(l => l.folderPath === folderPath)
+      return link?.pageId ?? activePageId
+    },
+    [activePage.links, activePageId, primaryFolder.path],
+  )
 
   useEffect(() => {
     const off = window.electron.update.onDownloaded(() => setUpdateReady(true))
@@ -442,6 +624,20 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const isDirtyRef = useRef(false)
   const lastAppliedCanvasRef = useRef('')
   const dismissedExternalCanvasRef = useRef<string | null>(null)
+  // Multi-folder workspace bookkeeping. Steps 3/5 establish them — Step 6
+  // adds cross-folder edge ownership tracking on top.
+  const perFolderSettingsRef = useRef<Map<string, ProjectSettings>>(new Map())
+  const idAliasesRef = useRef<Map<string, FolderIdAlias>>(new Map())
+  const edgeAliasesRef = useRef<Map<string, FolderIdAlias>>(new Map())
+  // Load-time offset applied per folder so non-primary folders' raw
+  // positions don't visually overlap the primary's region. Splitting on
+  // save subtracts the same offset, so disk positions stay folder-relative.
+  const folderOffsetsRef = useRef<Map<string, FolderOffset>>(new Map())
+  // Per-folder echo-suppression. Last-applied raw written/observed for each
+  // folder; canvas:changed events whose raw matches are skipped (our own
+  // write loop just fired the watcher). Mirrors lastAppliedCanvasRef but
+  // keyed by folder so multi-folder writes don't trip each other.
+  const lastRawByFolderRef = useRef<Map<string, string>>(new Map())
   const { screenToFlowPosition, fitView } = useReactFlow()
 
   // Canvas undo/redo: snapshot {nodes, edges} on structural changes (add,
@@ -638,12 +834,39 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [fitView])
 
   const persistCanvasRaw = useCallback(async (raw: string, clearDirty: boolean) => {
-    lastAppliedCanvasRef.current = raw
+    // `raw` is the caller's serialization of the in-memory state (primary's
+    // slice). Use splitMergedForSave to also write any non-primary folders'
+    // canvases. With only the primary folder loaded this writes one file
+    // and the output is byte-identical to `raw` (modulo savedAt timestamp
+    // — both call new Date()).
+    const split = splitMergedForSave({
+      nodes: nodesRef.current,
+      edges: edgesRef.current,
+      primarySettings: settingsRef.current,
+      primaryFolderPath: primaryFolder.path,
+      folderPaths: loadedFolders.map(f => f.path),
+      perFolderSettings: perFolderSettingsRef.current,
+      idAliases: idAliasesRef.current,
+      edgeAliases: edgeAliasesRef.current,
+      folderOffsets: folderOffsetsRef.current,
+    })
+    const primaryEntry = split.find(s => s.folderPath === primaryFolder.path)
+    const primaryRaw = primaryEntry?.raw ?? raw
+    lastAppliedCanvasRef.current = primaryRaw
     dismissedExternalCanvasRef.current = null
     setPendingExternalCanvasRaw(null)
-    await window.electron.saveCanvas(projectDir, raw)
+    // Cache the raw BEFORE awaiting the write so the canvas:changed event
+    // fired by our own save lands on a hot cache hit and short-circuits the
+    // watcher's drift-detection path — no need for the post-write split
+    // recomputation in the common case.
+    for (const file of split) {
+      lastRawByFolderRef.current.set(file.folderPath, file.raw)
+    }
+    for (const file of split) {
+      await window.electron.saveCanvas(file.folderPath, pageIdForFolder(file.folderPath), file.raw)
+    }
     if (clearDirty) setIsDirty(false)
-  }, [projectDir])
+  }, [primaryFolder.path, loadedFolders, pageIdForFolder])
 
   // Track the last (runtime, sessionId) actually used per assistant mode so
   // the next app start auto-resumes it. Fresh-spawn captures fire this event;
@@ -682,19 +905,46 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     return unsub
   }, [persistCanvasRaw])
 
+  // Apply an external primary-canvas raw (e.g. user accepted a "merge external
+  // edit" prompt). Re-merges with the other loaded folders' current in-memory
+  // state preserved — splitMergedForSave reconstructs each non-primary
+  // folder's raw from current state, then loadMergedCanvas folds in the new
+  // primary raw alongside.
   const applyRawCanvas = useCallback((raw: string, clearDirty: boolean): boolean => {
     try {
-      const migrated = migrateCanvasData(JSON.parse(raw))
+      JSON.parse(raw)
+      const split = splitMergedForSave({
+        nodes: nodesRef.current,
+        edges: edgesRef.current,
+        primarySettings: settingsRef.current,
+        primaryFolderPath: primaryFolder.path,
+        folderPaths: loadedFolders.map(f => f.path),
+        perFolderSettings: perFolderSettingsRef.current,
+        idAliases: idAliasesRef.current,
+        edgeAliases: edgeAliasesRef.current,
+        folderOffsets: folderOffsetsRef.current,
+      })
+      const inputs: FolderCanvasInput[] = loadedFolders.map(f => {
+        if (f.isPrimary) return { folderPath: f.path, isPrimary: true, raw }
+        const entry = split.find(s => s.folderPath === f.path)
+        return { folderPath: f.path, isPrimary: false, raw: entry?.raw ?? null }
+      })
+      const merged = loadMergedCanvas(inputs)
       if (autoSaveTimerRef.current) {
         clearTimeout(autoSaveTimerRef.current)
         autoSaveTimerRef.current = null
       }
       lastAppliedCanvasRef.current = raw
+      lastRawByFolderRef.current.set(primaryFolder.path, raw)
       dismissedExternalCanvasRef.current = null
       setPendingExternalCanvasRaw(null)
-      setNodes(migrated.nodes)
-      setEdges(migrated.edges)
-      setProjectSettings(migrated.settings)
+      setNodes(merged.nodes)
+      setEdges(merged.edges)
+      setProjectSettings(merged.settings)
+      perFolderSettingsRef.current = merged.perFolderSettings
+      idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
+      folderOffsetsRef.current = merged.folderOffsets
       setIsDirty(!clearDirty)
       setDispatchedGraph(null)
       setActiveTab('Canvas')
@@ -704,69 +954,153 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     } catch {
       return false
     }
-  }, [queueFitView, setEdges, setNodes, resetHistory])
+  }, [primaryFolder.path, loadedFolders, queueFitView, setEdges, setNodes, resetHistory])
+
+  // Stable key for the loaded folder set so this effect doesn't re-fire on
+  // every WorkspaceContext value-identity change (only when the actual paths
+  // change). Keeps watchers from churning.
+  const loadedFolderPathsKey = useMemo(
+    () => loadedFolders.map(f => f.path).join('\n'),
+    [loadedFolders],
+  )
 
   useEffect(() => {
+    if (!workspaceReady) return
     let disposed = false
     lastAppliedCanvasRef.current = ''
     dismissedExternalCanvasRef.current = null
+    dismissedExternalByFolderRef.current = new Map()
+    externalPendingByFolderRef.current = new Map()
+    lastRawByFolderRef.current = new Map()
     setPendingExternalCanvasRaw(null)
+    setExternalChangedFolders(new Set())
     setAutoCanvasOfferOpen(false)
     setAutoCanvasStarting(false)
-    void window.electron.watchCanvas(projectDir)
 
-    const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedProjectDir, raw }) => {
-      if (changedProjectDir !== projectDir) return
+    const watchedFolders = loadedFolders.map(f => f.path)
+    for (const path of watchedFolders) {
+      void window.electron.watchCanvas(path, pageIdForFolder(path))
+    }
+
+    // Re-merge from disk for ALL loaded folders, replacing in-memory state.
+    // Called on initial mount and whenever the loaded folder set changes
+    // (Add Folder / Remove Folder). Adopting a new folder set is treated as
+    // a workspace reload — any unsaved edits to the merged graph are lost,
+    // matching the "explicit reshape" mental model the user invokes.
+    const reloadAll = async (): Promise<string | null> => {
+      const folders = loadedFolders
+      const rawArr = await Promise.all(
+        folders.map(f => window.electron.loadCanvas(f.path, pageIdForFolder(f.path))),
+      )
+      if (disposed) return null
+      const inputs: FolderCanvasInput[] = folders.map((f, i) => ({
+        folderPath: f.path,
+        isPrimary: f.isPrimary,
+        raw: rawArr[i],
+      }))
+      const merged = loadMergedCanvas(inputs)
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      setNodes(merged.nodes)
+      setEdges(merged.edges)
+      setProjectSettings(merged.settings)
+      perFolderSettingsRef.current = merged.perFolderSettings
+      idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
+      folderOffsetsRef.current = merged.folderOffsets
+      // Cache each folder's last-observed raw for echo-suppression. Use the
+      // raw read from disk (not splitMergedForSave's output) since we want
+      // to ignore exactly the bytes the watcher will report next.
+      lastRawByFolderRef.current = new Map()
+      for (let i = 0; i < folders.length; i += 1) {
+        const r = rawArr[i]
+        if (r != null) lastRawByFolderRef.current.set(folders[i].path, r)
+      }
+      const primaryRaw = rawArr[folders.findIndex(f => f.isPrimary)] ?? null
+      if (primaryRaw != null) lastAppliedCanvasRef.current = primaryRaw
+      setIsDirty(false)
+      setDispatchedGraph(null)
+      setActiveTab('Canvas')
+      resetHistory()
+      queueFitView()
+      return primaryRaw
+    }
+
+    const unsubscribe = window.electron.onCanvasChanged(({ projectDir: changedDir, pageId: changedPageId, raw }) => {
+      if (disposed) return
+      if (!loadedFolders.some(f => f.path === changedDir)) return
+      // Ignore stale events whose pageId no longer matches what we have
+      // loaded for that folder (e.g. fired after a page switch + re-watch).
+      if (changedPageId !== pageIdForFolder(changedDir)) return
       if (!raw) return
-      if (raw === lastAppliedCanvasRef.current || raw === dismissedExternalCanvasRef.current) return
+      if (raw === lastRawByFolderRef.current.get(changedDir)) return
+      // Primary-only dismissal channel — cross-folder external dismissal is
+      // out of scope for v1.
+      if (changedDir === primaryFolder.path && raw === dismissedExternalCanvasRef.current) return
       try {
         migrateCanvasData(JSON.parse(raw))
       } catch {
         return
       }
 
-      const currentRaw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
-      if (raw === currentRaw) {
-        lastAppliedCanvasRef.current = raw
-        dismissedExternalCanvasRef.current = null
-        return
-      }
+      // Echo-suppression is now driven entirely by lastRawByFolderRef, which
+      // persistCanvasRaw pre-sets before its saveCanvas await. If we got here
+      // with raw !== lastRaw, it really is an external edit — no need for a
+      // splitMergedForSave fallback comparison on every watcher tick.
 
       if (isDirtyRef.current) {
         if (autoSaveTimerRef.current) {
           clearTimeout(autoSaveTimerRef.current)
           autoSaveTimerRef.current = null
         }
-        setPendingExternalCanvasRaw(raw)
+        if (changedDir === primaryFolder.path) {
+          setPendingExternalCanvasRaw(raw)
+        } else {
+          // Skip if the user already dismissed exactly this raw for this
+          // folder — matches the primary "remember dismiss" behavior so the
+          // modal doesn't reappear on every save.
+          if (dismissedExternalByFolderRef.current.get(changedDir) === raw) return
+          externalPendingByFolderRef.current.set(changedDir, raw)
+          setExternalChangedFolders(prev => {
+            if (prev.has(changedDir)) return prev
+            const next = new Set(prev)
+            next.add(changedDir)
+            return next
+          })
+        }
         return
       }
 
-      applyRawCanvas(raw, true)
+      // Not dirty: re-merge from disk so the change is reflected. Other
+      // folders' on-disk content is re-read too, since they may have been
+      // edited by a sibling tool while we sat idle.
+      void reloadAll()
     })
 
-    Promise.all([
-      window.electron.loadCanvas(projectDir),
-      window.electron.inspectProject(projectDir).catch(() => ({
+    void Promise.all([
+      reloadAll(),
+      window.electron.inspectProject(primaryFolder.path).catch(() => ({
         projectIsNonEmpty: false,
         hasArchitectDir: false,
         hasCanvasFile: false,
         canvasIsEmpty: false,
       })),
-    ]).then(([raw, projectInfo]) => {
+    ]).then(([primaryRaw, projectInfo]) => {
       if (disposed) return
-      if (raw) {
-        if (!applyRawCanvas(raw, true)) {
-          lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
-        }
-      } else {
-        lastAppliedCanvasRef.current = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
+      if (primaryRaw == null) {
+        lastAppliedCanvasRef.current = serializeCanvasData(
+          nodesRef.current,
+          edgesRef.current,
+          settingsRef.current,
+        )
       }
-
       let dismissed = false
       try {
-        dismissed = localStorage.getItem(`${AUTO_CANVAS_DISMISS_PREFIX}${projectDir}`) === 'true'
+        dismissed =
+          localStorage.getItem(`${AUTO_CANVAS_DISMISS_PREFIX}${primaryFolder.path}`) === 'true'
       } catch {}
-
       const lacksMeaningfulCanvas = !projectInfo.hasCanvasFile || projectInfo.canvasIsEmpty
       setAutoCanvasOfferOpen(projectInfo.projectIsNonEmpty && lacksMeaningfulCanvas && !dismissed)
     })
@@ -774,9 +1108,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     return () => {
       disposed = true
       unsubscribe()
-      void window.electron.unwatchCanvas()
+      for (const path of watchedFolders) {
+        void window.electron.unwatchCanvas(path, pageIdForFolder(path))
+      }
     }
-  }, [projectDir, applyRawCanvas])
+    // Re-runs on folder set OR active page changes — the watchers, the load,
+    // and the merge all key off pageIdForFolder, which changes when the user
+    // switches active page.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [workspaceReady, loadedFolderPathsKey, primaryFolder.path, activePageId, activePage.links.map(l => `${l.folderPath}:${l.pageId}`).join('\n')])
 
   const cancelCanvasTool = useCallback(() => {
     setPendingCreate(null)
@@ -790,8 +1130,20 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
       const target = nodesRef.current.find(node => node.id === connection.target)
       if (source?.type !== 'component' || target?.type !== 'component') return
 
+      // Detect cross-folder edges so the source folder's canvas can
+      // persist the targetFolder annotation. Folder paths come straight
+      // from each node's `data.folderPath` (set by load tagging or
+      // drop-targeting at creation).
+      const sourceFolder = (source.data as { folderPath?: string }).folderPath
+      const targetFolder = (target.data as { folderPath?: string }).folderPath
+      const isCrossFolder =
+        !!sourceFolder && !!targetFolder && sourceFolder !== targetFolder
+
       snapshotHistory()
-      const edgeData = normalizeEdgeData(pendingEdgeDefaults ?? { direction: 'source-to-target' })
+      const baseData = normalizeEdgeData(pendingEdgeDefaults ?? { direction: 'source-to-target' })
+      const edgeData: ComponentEdgeData = isCrossFolder
+        ? { ...baseData, targetFolder: targetFolder! }
+        : baseData
       const edge: CanvasEdge = {
         id: createEdgeId(),
         type: 'component-edge',
@@ -812,6 +1164,16 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     ;(document.activeElement as HTMLElement | null)?.blur()
     if (!pendingCreate) return
     const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+
+    // Geometric drop targeting: snap the new node to the folder whose
+    // region contains the drop point; if the click lands outside every
+    // region, fall back to the nearest one (Euclidean distance to the rect
+    // edge). Empty placeholders are offset by user drags, so apply those
+    // adjustments before testing so the click target matches the visual.
+    const rawRegions = computeFolderRegions(nodesRef.current, loadedFolders)
+    const regions = applyEmptyAdjustments(rawRegions, emptyFolderOffsets, emptyFolderBasesRef.current)
+    const targetRegion = nearestFolderForPoint(regions, flowPoint)
+    const folderPath = targetRegion?.folderPath ?? primaryFolder.path
 
     snapshotHistory()
 
@@ -844,6 +1206,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
               if (!seed) return zoneDefaults.providerModels
               return { ...zoneDefaults.providerModels, [config.runtime]: seed }
             })(),
+            folderPath,
           },
         }
         return [...nds, newZone]
@@ -863,6 +1226,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           iconName: 'Wrench',
           color: config.color,
           tag: config.tag,
+          folderPath,
         },
       }
       setNodes(nds => [...nds, newComp])
@@ -870,7 +1234,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
     setPendingCreate(null)
     setIsDirty(true)
-  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory])
+  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory, loadedFolders, primaryFolder.path, emptyFolderOffsets])
 
   const onSave = useCallback(async () => {
     const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
@@ -985,8 +1349,39 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     if (zones.length === 0) return
     setDispatchModalOpen(false)
     setDispatching(true)
+    // Clear the prior dispatch's tabs + active id immediately. The main
+    // process kills every non-shell PTY at the top of startDispatch /
+    // resumeDispatch; this mirrors that on the renderer so stale tabs
+    // don't linger during the spawn await window.
+    setTerminalSessions([])
+    setActiveDispatchId(null)
     try {
       if (req.mode === 'resume') {
+        // Multi-folder dispatch resume: validate all involved folders are
+        // currently loaded into the workspace. Any folder that's been
+        // removed from the workspace (or moved on disk) gets surfaced so
+        // the user can re-add it before retrying. The main process also
+        // skips the affected zones gracefully — this just makes the loss
+        // visible rather than silent.
+        try {
+          const records = await window.electron.dispatches.list(projectDir)
+          const record = records?.find(r => r.architectSessionId === req.dispatchId)
+          const involved = record?.involvedFolders ?? []
+          const loadedSet = new Set(loadedFolders.map(f => f.path))
+          const missing = involved.filter(p => p && !loadedSet.has(p))
+          if (missing.length > 0) {
+            const proceed = await new Promise<boolean>(resolve => {
+              setMissingFoldersPrompt({ missing, resolve })
+            })
+            setMissingFoldersPrompt(null)
+            if (!proceed) {
+              setDispatching(false)
+              return
+            }
+          }
+        } catch {
+          // Best-effort guard — never block resume on a list-fetch failure.
+        }
         // Capture the persisted activity log BEFORE calling resume — the
         // resume wipes the runtime/<dispatchId>/ subtree, so any history
         // we want in the swimlane has to be read first.
@@ -1016,7 +1411,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           const msg = result.error === 'legacy-protocol'
             ? 'This dispatch was created with the legacy protocol and can\'t be resumed under the current build. Start a new dispatch instead.'
             : 'Dispatch record not found.'
-          window.alert(msg)
+          setDispatchErrorMessage(msg)
           return
         }
         setTerminalSessions(result.info)
@@ -1050,6 +1445,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
           planMode: req.planMode,
           onlyZoneIds: req.onlyZoneIds,
           conductorRuntime: req.conductorRuntime,
+          pageId: activePageId,
         },
       )
       setTerminalSessions(sessions)
@@ -1064,7 +1460,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     } finally {
       setDispatching(false)
     }
-  }, [zones, nodes, edges, projectDir, projectSettings, dispatchedGraph, changedZoneLabels])
+  }, [zones, nodes, edges, projectDir, projectSettings, dispatchedGraph, changedZoneLabels, loadedFolders])
 
   const onDispatch = useCallback(() => {
     if (zones.length === 0) return
@@ -1161,22 +1557,144 @@ ${canvasBlock}`
 
     return `You are an architecture assistant embedded in Architect. The user designs multi-agent systems by drawing **zones** (agent overlays) over **components** (subsystems) on a canvas; the canvas is reference context, not a build manifest.
 
-For canvas generation, design, or update tasks, use the appropriate skill:
+## Model
 
-- **arch-discover** — generate a canvas by discovering an existing codebase.
-- **arch-design** — design a new canvas from a user goal (no code yet).
-- **arch-update** — modify the current canvas (add/remove/rename zones, move components, edit edges).
-
-The skills carry the full canvas JSON shape, field rules, and the \`ARCHITECT_CANVAS_UPDATE\` streaming protocol — read the relevant one before editing.
+- **components** are subsystems/services/modules/UIs/data stores/integrations. Each carries \`label\`, \`specs\` (responsibilities, contracts, schemas), \`tag\`, \`color\`, \`iconName\`. Components do NOT own agent behavior.
+- **zones** are translucent agent-ownership overlays. Each zone is one CLI session with a durable role-style \`systemPrompt\` (NOT a build checklist), plus runtime/model/tools/skills/permissions.
+- Zone ownership is **geometric**: a component belongs to the zone whose bounding box contains its center. Components outside every zone are design artifacts only.
+- **edges** are component-level reference links (dependencies, calls, data flow). Optional \`label\`, \`direction\` (\`source-to-target\` | \`bidirectional\` | \`none\`), and \`sourceHandle\`/\`targetHandle\` connector ids (e.g. \`source-right\`, \`target-left\`).
 
 ## Current Canvas
 ${canvasBlock}
 
-When the user is asking for critique, tradeoffs, or brainstorming, discuss without editing. When they ask to build/generate/update the diagram, edit \`architect-canvas.json\` directly (the app live-reloads it). Preserve existing ids, positions, and \`settings\` unless the user asks otherwise.`
+The snapshot above uses the split projection (\`zones\` + \`components\` + \`edges\`); on disk \`architect-canvas.json\` stores a unified \`nodes\` array with a \`type\` discriminator. Both shapes are accepted when patching.
+
+## Canvas JSON shape (file form — what \`architect-canvas.json\` looks like on disk)
+
+\`\`\`json
+{
+  "nodes": [
+    {
+      "id": "frontend-zone",
+      "type": "zone",
+      "position": { "x": 80, "y": 80 },
+      "width": 620,
+      "height": 360,
+      "zIndex": 0,
+      "data": {
+        "label": "Frontend Agent",
+        "description": "Owns the user-facing app shell",
+        "color": "#58A6FF",
+        "status": "idle",
+        "systemPrompt": "Senior frontend engineer. Idiomatic React, accessible UIs.",
+        "agentRuntime": "codex",
+        "providerModels": { "codex": "gpt-5.2-codex" },
+        "openSections": [],
+        "skills": [],
+        "tools": { "webSearch": false, "codeExec": false, "fileRead": false, "fileWrite": false, "apiCalls": false, "shell": false },
+        "behavior": { "mode": "sequential", "retries": 0, "onFailure": "stop", "timeoutMs": 30000 },
+        "permissions": { "readFiles": false, "writeFiles": false, "network": false, "shell": false },
+        "envVars": []
+      }
+    },
+    {
+      "id": "web-ui",
+      "type": "component",
+      "position": { "x": 120, "y": 170 },
+      "zIndex": 1,
+      "data": {
+        "label": "Frontend",
+        "description": "",
+        "specs": "React app with auth, dashboard, and settings screens.",
+        "category": "custom",
+        "iconName": "Monitor",
+        "color": "#f472b6",
+        "tag": "UI"
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "component-flow",
+      "source": "web-ui",
+      "target": "api-client",
+      "sourceHandle": "source-right",
+      "targetHandle": "target-left",
+      "data": { "label": "uses", "direction": "source-to-target" }
+    }
+  ],
+  "settings": { "dispatchRuntime": "codex" }
+}
+\`\`\`
+
+### Field rules (for new nodes)
+
+- **Zones** require: \`id\`, \`type: "zone"\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` is durable role/style, never a build checklist.
+- **Components** require: \`id\`, \`type: "component"\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`. For new components, set \`description: ""\` and \`category: "custom"\` and put detail in \`specs\`.
+- Allowed \`iconName\` values: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitBranch, Webhook, Settings2, Brain, Layers, Cpu, Clock, Mail, Bell, CreditCard, Search, Activity, BarChart2, ToggleLeft, Database, Zap, Archive, Table, Boxes, Share2, TrendingUp, Wrench.
+
+## Preservation rules (when patching an existing canvas)
+
+- Preserve existing \`id\`, \`position\`, \`width\`/\`height\`, and top-level \`settings\` unless the user is explicitly changing them.
+- Preserve zone \`systemPrompt\`, \`agentRuntime\`, \`providerModels\`, \`tools\`, \`skills\`, \`permissions\`, \`envVars\`, \`behavior\` unless the user is changing those specific fields.
+- Preserve component \`specs\` when only renaming/repositioning. Don't blank out specs you didn't author.
+- When moving a component to a new zone, change its \`position\` so its center falls inside the target zone's bbox; keep its \`id\`.
+- When splitting a zone, keep one half with the original \`id\` (so its participantId survives) and add the other as new.
+- After any patch, every edge \`source\`/\`target\` must still reference an existing component id.
+
+## Editing the canvas
+
+You have two ways to apply changes; pick one per response.
+
+**(A) Stream a patch** — the renderer parses fenced blocks out of stdout and applies them live without touching disk. Emit ONE block containing the COMPLETE canvas projection (not just the diff):
+
+~~~
+ARCHITECT_CANVAS_UPDATE
+{ "zones": [...], "components": [...], "edges": [...] }
+END_ARCHITECT_CANVAS_UPDATE
+~~~
+
+Either the split form (\`zones\` + \`components\` + \`edges\`) or the unified form (\`nodes\` + \`edges\`) is accepted inside the block.
+
+**(B) Write the file** — overwrite \`architect-canvas.json\` at the project root with the full unified shape (\`nodes\` + \`edges\` + \`settings\`), pretty-printed with 2-space indentation. The app live-reloads on save.
+
+## Optional skills (deeper workflow guidance, if loaded)
+
+- **arch-discover** — generate a canvas by crawling an existing codebase.
+- **arch-design** — design a new canvas from a user goal (no code yet).
+- **arch-update** — workflow for editing an existing canvas.
+
+These are optional; the shape, field rules, and protocol above are sufficient on their own.
+
+When the user is asking for critique, tradeoffs, or brainstorming, discuss without editing. When they ask to build/generate/update the diagram, edit \`architect-canvas.json\` (or stream a patch) directly.`
   }, [])
 
   const applyCanvasUpdate = useCallback((update: CanvasUpdate) => {
     snapshotHistory()
+    const activeFolderPath = activeFolder.path
+    const primaryFolderPath = primaryFolder.path
+    // Multi-folder workspaces: the assistant only touches the active
+    // folder's slice. Preserve nodes/edges from other folders by filtering
+    // them out of the rebuild and re-appending after the assistant's
+    // changes are applied. Untagged nodes (no folderPath) are treated as
+    // primary-folder residents — otherwise a workspace that flips from
+    // single-folder to multi-folder mid-session would silently drop any
+    // pre-existing nodes from primary whenever the assistant runs in a
+    // non-primary active folder.
+    const otherFolderNodes = nodesRef.current.filter(n => {
+      const fp = (n.data as { folderPath?: string }).folderPath ?? primaryFolderPath
+      return fp !== activeFolderPath
+    })
+    const otherFolderNodeIds = new Set(otherFolderNodes.map(n => n.id))
+    const otherFolderEdges = edgesRef.current.filter(e =>
+      otherFolderNodeIds.has(e.source) || otherFolderNodeIds.has(e.target),
+    )
+
+    const tagWithActive = <T extends { data: Record<string, unknown> }>(node: T): T => ({
+      ...node,
+      data: { ...node.data, folderPath: activeFolderPath },
+    })
+
     const rawNodePayload = Array.isArray(update.nodes) ? update.nodes : null
     if (rawNodePayload && !Array.isArray(update.zones) && !Array.isArray(update.components)) {
       const migrated = migrateCanvasData({
@@ -1188,9 +1706,28 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
         clearTimeout(autoSaveTimerRef.current)
         autoSaveTimerRef.current = null
       }
-      const rawCanvas = serializeCanvasData(migrated.nodes, migrated.edges, migrated.settings)
-      setNodes(migrated.nodes)
-      setEdges(migrated.edges)
+      // De-collide assistant ids against nodes that already live in OTHER
+      // workspace folders. Same-folder collisions are intentional (a patch
+      // can overwrite an existing node by id), so the reserved set is
+      // strictly the other-folder ids.
+      const reservedIds = new Set(otherFolderNodes.map(n => n.id))
+      const rename = dedupeAgainstReserved(migrated.nodes, reservedIds)
+      if (rename.size > 0) {
+        for (const e of migrated.edges) {
+          const newSource = rename.get(e.source)
+          if (newSource) e.source = newSource
+          const newTarget = rename.get(e.target)
+          if (newTarget) e.target = newTarget
+        }
+      }
+      const taggedAssistantNodes = migrated.nodes.map(n =>
+        tagWithActive(n as unknown as { data: Record<string, unknown> }),
+      ) as typeof migrated.nodes
+      const mergedNodes = [...otherFolderNodes, ...taggedAssistantNodes]
+      const mergedEdges = [...otherFolderEdges, ...migrated.edges]
+      const rawCanvas = serializeCanvasData(mergedNodes, mergedEdges, migrated.settings)
+      setNodes(mergedNodes)
+      setEdges(mergedEdges)
       setProjectSettings(migrated.settings)
       setIsDirty(false)
       setDispatchedGraph(null)
@@ -1265,6 +1802,9 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           status: 'idle',
           systemPrompt: String(raw.systemPrompt ?? raw.prompt ?? ''),
           ...createDefaultZoneAgentConfig(activeSettings),
+          // Tag with the active folder so multi-folder workspaces persist
+          // the assistant's new zones into the right canvas file.
+          folderPath: activeFolderPath,
         },
       }
     })
@@ -1316,35 +1856,53 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           iconName: String(raw.iconName ?? 'Wrench'),
           color: String(raw.color ?? '#60a5fa'),
           tag: String(raw.tag ?? 'NODE'),
+          folderPath: activeFolderPath,
         },
       }
     })
 
-    const newEdges: CanvasEdge[] = rawEdges.map(raw => ({
-      id: raw.id ?? createEdgeId(),
-      type: 'component-edge',
-      source: raw.source,
-      target: raw.target,
-      sourceHandle: raw.sourceHandle ?? null,
-      targetHandle: raw.targetHandle ?? null,
-      data: normalizeEdgeData(raw.data ?? raw),
-    }))
+    // De-collide assistant ids against nodes from OTHER workspace folders
+    // before edges are built — newEdges below reference the (possibly
+    // renamed) zone/component ids.
+    const reservedIds = new Set(otherFolderNodes.map(n => n.id))
+    const renameZones = dedupeAgainstReserved(newZones, reservedIds)
+    const renameComps = dedupeAgainstReserved(newComps, reservedIds)
+    const rename = new Map([...renameZones, ...renameComps])
+
+    const newEdges: CanvasEdge[] = rawEdges.map(raw => {
+      const source = rename.get(raw.source) ?? raw.source
+      const target = rename.get(raw.target) ?? raw.target
+      return {
+        id: raw.id ?? createEdgeId(),
+        type: 'component-edge',
+        source,
+        target,
+        sourceHandle: raw.sourceHandle ?? null,
+        targetHandle: raw.targetHandle ?? null,
+        data: normalizeEdgeData(raw.data ?? raw),
+      }
+    })
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
       autoSaveTimerRef.current = null
     }
 
-    const rawCanvas = serializeCanvasData([...newZones, ...newComps], newEdges, settingsRef.current)
-    setNodes([...newZones, ...newComps])
-    setEdges(newEdges)
+    // Stitch the assistant's edits (active folder) back together with any
+    // other folder's nodes/edges that were filtered out at the top of this
+    // callback. Single-folder workspaces have empty otherFolder* arrays.
+    const mergedNodes = [...otherFolderNodes, ...newZones, ...newComps]
+    const mergedEdges = [...otherFolderEdges, ...newEdges]
+    const rawCanvas = serializeCanvasData(mergedNodes, mergedEdges, settingsRef.current)
+    setNodes(mergedNodes)
+    setEdges(mergedEdges)
     setIsDirty(false)
     setDispatchedGraph(null)
     setPendingExternalCanvasRaw(null)
     setActiveTab('Canvas')
     queueFitView()
     void persistCanvasRaw(rawCanvas, true)
-  }, [persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
+  }, [activeFolder.path, primaryFolder.path, persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
 
   // Per-mode effective CLI for the side-panel assistant. Architecture and
   // General maintain independent runtime choices, fully decoupled from the
@@ -1387,12 +1945,12 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     const { runtime, opts } = startOptsForImplicitOpen(mode)
     const contextMd = buildAssistantContext(mode, nodes, edges)
     const session = await window.electron.assistant.start(
-      projectDir, contextMd, runtime, mode, opts,
+      activeFolder.path, contextMd, runtime, mode, opts,
     )
     const sessionRuntime = session?.runtime
     setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
     setAssistantOpen(true)
-  }, [assistantOpen, nodes, edges, projectDir, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
+  }, [assistantOpen, nodes, edges, activeFolder.path, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
 
   const handleAutoCanvasDismiss = useCallback(() => {
     try {
@@ -1410,7 +1968,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
       const contextMd = buildAssistantContext(mode, nodesRef.current, edgesRef.current)
       setProjectSettings(current => ({ ...current, assistantMode: mode }))
       const session = await window.electron.assistant.start(
-        projectDir,
+        activeFolder.path,
         contextMd,
         runtime,
         mode,
@@ -1428,7 +1986,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     } finally {
       setAutoCanvasStarting(false)
     }
-  }, [autoCanvasStarting, buildAssistantContext, effectiveAssistantRuntime, projectDir])
+  }, [autoCanvasStarting, buildAssistantContext, effectiveAssistantRuntime, activeFolder.path])
 
   const handleAssistantClose = useCallback(() => {
     // Hide only — do not tear down PTYs. See handleAssistantToggle.
@@ -1446,12 +2004,12 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
       const { runtime, opts } = startOptsForImplicitOpen(next)
       const contextMd = buildAssistantContext(next, nodes, edges)
       const session = await window.electron.assistant.start(
-        projectDir, contextMd, runtime, next, opts,
+        activeFolder.path, contextMd, runtime, next, opts,
       )
       const sessionRuntime = session?.runtime
       setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
     }
-  }, [assistantOpen, nodes, edges, projectDir, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
+  }, [assistantOpen, nodes, edges, activeFolder.path, startOptsForImplicitOpen, projectSettings.assistantMode, buildAssistantContext])
 
   const handleAssistantOrientationChange = useCallback((next: AssistantOrientation) => {
     setAssistantOrientation(next)
@@ -1471,7 +2029,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
       force: true as const,
     }
     const session = await window.electron.assistant.start(
-      projectDir, contextMd, runtime, targetMode, ipcOpts,
+      activeFolder.path, contextMd, runtime, targetMode, ipcOpts,
     )
     const sessionRuntime = session?.runtime
     setAssistantRuntime(sessionRuntime && sessionRuntime !== 'shell' ? sessionRuntime : runtime)
@@ -1507,7 +2065,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     setProjectSettings(nextSettings)
     const rawCanvas = serializeCanvasData(nodesRef.current, edgesRef.current, nextSettings)
     void persistCanvasRaw(rawCanvas, false)
-  }, [buildAssistantContext, edges, nodes, projectDir, persistCanvasRaw])
+  }, [buildAssistantContext, edges, nodes, activeFolder.path, persistCanvasRaw])
 
   // Project-dir change = real teardown: old PTYs are pinned to old cwd.
   useEffect(() => {
@@ -1516,16 +2074,108 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     }
   }, [projectDir])
 
-  const handleLoadIncomingCanvas = useCallback(() => {
-    if (!pendingExternalCanvasRaw) return
-    applyRawCanvas(pendingExternalCanvasRaw, true)
-  }, [applyRawCanvas, pendingExternalCanvasRaw])
+  const handleLoadIncomingCanvas = useCallback(async () => {
+    // If non-primary folders also drifted, re-read each one from disk so the
+    // merge picks up THEIR changes too (not just primary's). When only the
+    // primary changed, fall through to the simpler in-memory merge path.
+    if (externalChangedFolders.size > 0) {
+      const inputs = await Promise.all(
+        loadedFolders.map(async f => {
+          if (f.isPrimary) {
+            return {
+              folderPath: f.path,
+              isPrimary: true as const,
+              raw: pendingExternalCanvasRaw ?? (await window.electron.loadCanvas(f.path, pageIdForFolder(f.path))),
+            }
+          }
+          if (externalChangedFolders.has(f.path)) {
+            return {
+              folderPath: f.path,
+              isPrimary: false as const,
+              raw: await window.electron.loadCanvas(f.path, pageIdForFolder(f.path)),
+            }
+          }
+          // Untouched folder: round-trip its current in-memory slice so the
+          // merge result preserves it byte-for-byte.
+          const split = splitMergedForSave({
+            nodes: nodesRef.current,
+            edges: edgesRef.current,
+            primarySettings: settingsRef.current,
+            primaryFolderPath: primaryFolder.path,
+            folderPaths: loadedFolders.map(lf => lf.path),
+            perFolderSettings: perFolderSettingsRef.current,
+            idAliases: idAliasesRef.current,
+            edgeAliases: edgeAliasesRef.current,
+            folderOffsets: folderOffsetsRef.current,
+          })
+          return {
+            folderPath: f.path,
+            isPrimary: false as const,
+            raw: split.find(s => s.folderPath === f.path)?.raw ?? null,
+          }
+        }),
+      )
+      const merged = loadMergedCanvas(inputs)
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      setNodes(merged.nodes)
+      setEdges(merged.edges)
+      setProjectSettings(merged.settings)
+      perFolderSettingsRef.current = merged.perFolderSettings
+      idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
+      folderOffsetsRef.current = merged.folderOffsets
+      for (const input of inputs) {
+        if (input.raw != null) lastRawByFolderRef.current.set(input.folderPath, input.raw)
+      }
+      const primaryInput = inputs.find(i => i.isPrimary)
+      if (primaryInput?.raw != null) lastAppliedCanvasRef.current = primaryInput.raw
+      dismissedExternalCanvasRef.current = null
+      dismissedExternalByFolderRef.current = new Map()
+      externalPendingByFolderRef.current = new Map()
+      setPendingExternalCanvasRaw(null)
+      setExternalChangedFolders(new Set())
+      setIsDirty(false)
+      setDispatchedGraph(null)
+      setActiveTab('Canvas')
+      resetHistory()
+      queueFitView()
+      return
+    }
+    if (pendingExternalCanvasRaw) {
+      applyRawCanvas(pendingExternalCanvasRaw, true)
+    }
+  }, [
+    applyRawCanvas,
+    externalChangedFolders,
+    loadedFolders,
+    pageIdForFolder,
+    pendingExternalCanvasRaw,
+    primaryFolder.path,
+    queueFitView,
+    resetHistory,
+    setEdges,
+    setNodes,
+  ])
 
   const handleKeepLocalCanvas = useCallback(() => {
-    if (!pendingExternalCanvasRaw) return
-    dismissedExternalCanvasRef.current = pendingExternalCanvasRaw
-    setPendingExternalCanvasRaw(null)
-  }, [pendingExternalCanvasRaw])
+    if (pendingExternalCanvasRaw) {
+      dismissedExternalCanvasRef.current = pendingExternalCanvasRaw
+      setPendingExternalCanvasRaw(null)
+    }
+    if (externalChangedFolders.size > 0) {
+      // Snapshot each pending folder's latest external raw into the dismissal
+      // cache so the same drift won't re-prompt. New, different raws will.
+      for (const folderPath of externalChangedFolders) {
+        const pending = externalPendingByFolderRef.current.get(folderPath)
+        if (pending) dismissedExternalByFolderRef.current.set(folderPath, pending)
+      }
+      externalPendingByFolderRef.current = new Map()
+      setExternalChangedFolders(new Set())
+    }
+  }, [externalChangedFolders, pendingExternalCanvasRaw])
 
   // Canvas undo/redo keyboard shortcuts — Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z
   // (or Cmd/Ctrl+Y) redo. Ignored while the user is typing in an input so
@@ -1566,6 +2216,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
   }, [onChangeDir, onSave, undoCanvas, redoCanvas])
 
   const isCanvas = activeTab === 'Canvas'
+  const isPages = activeTab === 'Pages'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
   // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
@@ -1666,6 +2317,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           <nav className="flex flex-col items-stretch w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
             {([
               { id: 'Canvas',   code: 'CAN', icon: <Layers size={14} strokeWidth={1.7} />,      title: 'Canvas'   },
+              { id: 'Pages',    code: 'PAG', icon: <FileStack size={14} strokeWidth={1.7} />,   title: 'Pages'    },
               { id: 'Files',    code: 'FIL', icon: <Files size={14} strokeWidth={1.7} />,       title: 'Files'    },
               { id: 'Terminal', code: 'TRM', icon: <TerminalIcon size={14} strokeWidth={1.7} />, title: 'Terminal' },
               { id: 'Logs',     code: 'LOG', icon: <Activity size={14} strokeWidth={1.7} />,    title: 'Logs'     },
@@ -1705,6 +2357,9 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           >
             <div className="flex-1 flex overflow-hidden">
 
+          <div className={`flex-1 relative ${isPages ? '' : 'hidden'}`}>
+            <PagesPanel onSwitch={() => setActiveTab('Canvas')} />
+          </div>
           <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
             <ReactFlow
               nodes={nodes}
@@ -1733,6 +2388,12 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                     ? (projectSettings.interface.canvasBackground === 'grid' ? '#e2e8f0' : '#cbd5e1')
                     : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
                 }
+              />
+              <FolderRegions
+                nodes={nodes}
+                emptyOffsets={emptyFolderOffsets}
+                setEmptyOffsets={setEmptyFolderOffsets}
+                emptyBasesRef={emptyFolderBasesRef}
               />
               <Controls />
               <MiniMap
@@ -1837,9 +2498,10 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
             )}
 
-            {pendingExternalCanvasRaw && (
+            {(pendingExternalCanvasRaw || externalChangedFolders.size > 0) && (
               <CanvasConflictModal
-                onLoadIncoming={handleLoadIncomingCanvas}
+                changedFolders={Array.from(externalChangedFolders)}
+                onLoadIncoming={() => void handleLoadIncomingCanvas()}
                 onKeepLocal={handleKeepLocalCanvas}
               />
             )}
@@ -1850,6 +2512,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                   id: z.id,
                   label: (z.data.label as string) ?? 'Zone',
                   color: (z.data.color as string) ?? '#58A6FF',
+                  folderPath:
+                    typeof z.data.folderPath === 'string' ? z.data.folderPath : undefined,
                 }))}
                 prefillPrompt={dispatchPrefill}
                 onClose={() => setDispatchModalOpen(false)}
@@ -1860,7 +2524,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
 
           {isFiles && (
             <div className="flex-1 overflow-hidden">
-              <FilesPanel rootDir={projectDir} />
+              <FilesPanel />
             </div>
           )}
 
@@ -1952,6 +2616,19 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             onClose={() => setBugReportOpen(false)}
           />
         )}
+        {missingFoldersPrompt && (
+          <MissingFoldersPrompt
+            missing={missingFoldersPrompt.missing}
+            onContinue={() => missingFoldersPrompt.resolve(true)}
+            onCancel={() => missingFoldersPrompt.resolve(false)}
+          />
+        )}
+        {dispatchErrorMessage && (
+          <DispatchErrorModal
+            message={dispatchErrorMessage}
+            onClose={() => setDispatchErrorMessage(null)}
+          />
+        )}
       </div>
       </ProjectDirProvider>
       </InterfaceSettingsProvider>
@@ -1969,7 +2646,9 @@ function MainApp() {
   return (
     <ReactFlowProvider>
       <ErrorBoundary>
-        <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
+        <WorkspaceProvider primaryDir={projectDir}>
+          <ArchitectFlow projectDir={projectDir} onChangeDir={() => setProjectDir(null)} />
+        </WorkspaceProvider>
       </ErrorBoundary>
     </ReactFlowProvider>
   )

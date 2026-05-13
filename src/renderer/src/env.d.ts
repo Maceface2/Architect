@@ -25,11 +25,105 @@ interface ElectronAPI {
     hasCanvasFile: boolean
     canvasIsEmpty: boolean
   }>
-  saveCanvas: (projectDir: string, data: string) => Promise<void>
-  loadCanvas: (projectDir: string) => Promise<string | null>
-  watchCanvas: (projectDir: string) => Promise<void>
-  unwatchCanvas: () => Promise<void>
-  onCanvasChanged: (cb: (event: { projectDir: string; raw: string }) => void) => () => void
+  saveCanvas: (projectDir: string, pageId: string, data: string) => Promise<void>
+  loadCanvas: (projectDir: string, pageId: string) => Promise<string | null>
+  watchCanvas: (projectDir: string, pageId: string) => Promise<void>
+  unwatchCanvas: (projectDir?: string, pageId?: string) => Promise<void>
+  onCanvasChanged: (
+    cb: (event: { projectDir: string; pageId: string; raw: string }) => void,
+  ) => () => void
+  workspace: {
+    load: (hostDir: string) => Promise<{
+      pages: Array<{
+        id: string
+        name: string
+        createdAt: string
+        links: Array<{ folderPath: string; pageId: string }>
+      }>
+      activePageId: string
+    }>
+    save: (
+      hostDir: string,
+      file: {
+        pages: Array<{
+          id: string
+          name: string
+          createdAt: string
+          links: Array<{ folderPath: string; pageId: string }>
+        }>
+        activePageId: string
+      },
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+    setActivePage: (
+      hostDir: string,
+      pageId: string,
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+    createPage: (
+      hostDir: string,
+      name?: string,
+    ) => Promise<
+      | {
+          ok: true
+          page: {
+            id: string
+            name: string
+            createdAt: string
+            links: Array<{ folderPath: string; pageId: string }>
+          }
+        }
+      | { ok: false; error: string }
+    >
+    renamePage: (
+      hostDir: string,
+      pageId: string,
+      name: string,
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+    deletePage: (
+      hostDir: string,
+      pageId: string,
+    ) => Promise<
+      | {
+          ok: true
+          workspace: {
+            pages: Array<{
+              id: string
+              name: string
+              createdAt: string
+              links: Array<{ folderPath: string; pageId: string }>
+            }>
+            activePageId: string
+          }
+        }
+      | { ok: false; error: string }
+    >
+    addLink: (
+      hostDir: string,
+      hostPageId: string,
+      otherDir: string,
+      otherPageId?: string,
+    ) => Promise<
+      | { ok: true; hostPageId: string; otherPageId: string }
+      | { ok: false; error: string }
+    >
+    removeLink: (
+      hostDir: string,
+      hostPageId: string,
+      otherDir: string,
+      otherPageId?: string,
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+    listPagesInFolder: (folderDir: string) => Promise<
+      | {
+          ok: true
+          pages: Array<{
+            id: string
+            name: string
+            createdAt: string
+            links: Array<{ folderPath: string; pageId: string }>
+          }>
+        }
+      | { ok: false; error: string }
+    >
+  }
   auth: {
     getSession: () => Promise<SessionInfo | null>
     login: (email: string, password: string) => Promise<AuthLoginResult>
@@ -41,7 +135,7 @@ interface ElectronAPI {
     edges: unknown[],
     cwd: string,
     settings: ProjectSettings,
-    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: AgentRuntime },
+    dispatch: { userPrompt: string; model?: string; planMode?: boolean; onlyZoneIds?: string[]; conductorRuntime?: AgentRuntime; pageId?: string },
   ) => Promise<TerminalInfo[]>
   dispatches: {
     list: (projectDir: string) => Promise<DispatchRecord[]>
@@ -157,12 +251,14 @@ interface ElectronAPI {
       projectDir: string,
       zoneId: string,
       label?: string,
+      pageId?: string,
     ) => Promise<ZoneSessionRecord[]>
     deleteSession: (
       projectDir: string,
       zoneId: string,
       sessionId: string,
       label?: string,
+      pageId?: string,
     ) => Promise<boolean>
     updateSessionSummary: (
       projectDir: string,
@@ -170,11 +266,13 @@ interface ElectronAPI {
       sessionId: string,
       summary: string,
       label?: string,
+      pageId?: string,
     ) => Promise<boolean>
     resetSession: (opts: {
       projectDir: string
       zoneId: string
       label?: string
+      pageId?: string
     }) => Promise<boolean>
     launch: (opts: {
       projectDir: string
@@ -188,6 +286,7 @@ interface ElectronAPI {
       model?: string
       planMode?: boolean
       settings: ProjectSettings
+      pageId?: string
     }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo }>
     onSessionCaptured: (
       cb: (event: {

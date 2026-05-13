@@ -8,6 +8,7 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "outDir": ".output/web",
     "baseUrl": ".",
     "paths": {
       "@renderer/*": ["src/renderer/src/*"]

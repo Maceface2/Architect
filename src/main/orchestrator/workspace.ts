@@ -40,6 +40,11 @@ export interface WorkspaceZoneInput {
   enabledTools: string[]
   systemPromptOverride: string
   skills: Array<{ name: string; content: string }>
+  // Workspace folder this zone runs in. Multi-folder dispatches set this
+  // per zone so each PTY spawns with its own folder as cwd; the conductor
+  // continues to anchor at the dispatch-primary `projectDir`. Single-folder
+  // dispatches leave it undefined and inherit `projectDir`.
+  folderPath?: string
 }
 
 export interface WorkspaceInput {
@@ -116,11 +121,20 @@ function writePrompts(input: WorkspaceInput, projection: CanvasProjection): Work
   const { projectDir, dispatchId, userPrompt, zones } = input
   const promptsDir = join(projectDir, 'ARCHITECT', 'prompts')
 
+  // Multi-folder dispatch: surface per-zone cwds to the conductor. Built
+  // from WorkspaceZoneInput (dispatch state), kept off the shared canvas
+  // projection so folderPath doesn't leak into the on-disk manifest schema.
+  const zoneFolderPaths = new Map<string, string>()
+  for (const zone of zones) {
+    if (zone.folderPath) zoneFolderPaths.set(zone.participantId, zone.folderPath)
+  }
+
   const conductorPrompt = buildConductorPrompt({
     projectDir,
     dispatchId,
     userPrompt,
     projection,
+    zoneFolderPaths: zoneFolderPaths.size > 0 ? zoneFolderPaths : undefined,
   })
   fs.writeFileSync(join(promptsDir, 'conductor.md'), conductorPrompt)
 

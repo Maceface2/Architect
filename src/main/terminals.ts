@@ -201,8 +201,9 @@ function latestReachableSession(
   zoneKey: string,
   runtime: AgentRuntime,
   legacyKey?: string,
+  pageId?: string,
 ): ZoneSessionRecord | null {
-  for (const rec of listZoneSessions(projectDir, zoneKey, legacyKey)) {
+  for (const rec of listZoneSessions(projectDir, zoneKey, legacyKey, pageId)) {
     if (rec.runtime !== runtime) continue
     if (!isRecordReachable(projectDir, rec)) continue
     return rec
@@ -215,8 +216,9 @@ function pickSession(
   zoneKey: string,
   sessionId: string,
   legacyKey?: string,
+  pageId?: string,
 ): ZoneSessionRecord | null {
-  const rec = getZoneSessionRecord(projectDir, zoneKey, sessionId, legacyKey)
+  const rec = getZoneSessionRecord(projectDir, zoneKey, sessionId, legacyKey, pageId)
   if (!rec) return null
   if (!isRecordReachable(projectDir, rec)) {
     console.warn(`[session-capture] ${zoneKey}: requested session ${sessionId} no longer reachable on disk`)
@@ -253,6 +255,11 @@ export interface ZoneGraphNode {
     behavior: { mode: string; retries: number; onFailure: string; timeoutMs: number }
     permissions: Record<string, boolean>
     envVars: Array<{ key: string; value: string }>
+    // Workspace folder this zone belongs to. Set by the renderer when the
+    // workspace has more than one folder loaded; multi-folder dispatches
+    // spawn each zone with this as its cwd. Single-folder dispatches leave
+    // it undefined and the spawn falls back to the workspace primary.
+    folderPath?: string
   }
 }
 
@@ -341,6 +348,11 @@ interface SpawnAgentOptions {
     legacyKey?: string
     summary: string
     dispatchId?: string
+    // Active canvas page when this spawn was kicked off. Buckets the session
+    // record under ARCHITECT/sessions/<pageId>/<zoneKey>/. Omitted by callers
+    // that pre-date multi-page (assistant flow); sessionCapture falls back
+    // to a _default bucket so those records stay readable.
+    pageId?: string
   }
   // Defaults to true (preserves zone-agent autonomy). Set false for the
   // interactive assistant so the user gets normal permission prompts.
@@ -571,14 +583,19 @@ export function spawnAgentSession({
 
     const persistAndBroadcast = (sessionId: string): void => {
       try {
-        appendZoneSession(capture.projectDir, capture.zoneKey, {
-          runtime: captureRuntime,
-          sessionId,
-          capturedAt: new Date().toISOString(),
-          summary: capture.summary,
-          model,
-          dispatchId: capture.dispatchId,
-        })
+        appendZoneSession(
+          capture.projectDir,
+          capture.zoneKey,
+          {
+            runtime: captureRuntime,
+            sessionId,
+            capturedAt: new Date().toISOString(),
+            summary: capture.summary,
+            model,
+            dispatchId: capture.dispatchId,
+          },
+          capture.pageId,
+        )
         console.log(`[session-capture] ${capture.zoneKey}: appended ${captureRuntime} session ${sessionId}`)
         broadcast('zone:session-captured', {
           zoneKey: capture.zoneKey,
@@ -899,6 +916,10 @@ export interface StartDispatchOptions {
   model?: string
   planMode?: boolean
   onlyZoneIds?: string[]
+  conductorRuntime?: AgentRuntime
+  // Canvas page this dispatch was launched from. Persisted on the
+  // DispatchRecord so the resume modal can filter by active page.
+  pageId?: string
 }
 
 // startDispatch / resumeDispatch are thin forwarders to the v5 orchestrator.
@@ -1215,6 +1236,9 @@ export interface RunZoneOptions {
   model?: string
   planMode?: boolean
   settings: unknown
+  // Canvas page active at launch. Captured in the zone session bucket so
+  // listZoneSessionsForZone scopes history per page.
+  pageId?: string
 }
 
 export interface RunZoneResult {
@@ -1238,6 +1262,10 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
   // touches one zone.
   const safe = (zone.data.participantId && zone.data.participantId.trim())
     || sanitize(zone.data.label)
+  // Multi-folder workspace: each zone's PTY runs in its own folder. Session
+  // history records still live at opts.projectDir (= workspace primary) so
+  // the launch modal's lookups stay anchored at one place.
+  const zoneCwd = zone.data.folderPath || opts.projectDir
   const base = join(opts.projectDir, 'ARCHITECT')
   // Solo flow only needs prompts/ (zone prompt below), sessions/ (session
   // capture), and outputs/ (the soft-handoff scratchpad referenced in the
@@ -1294,7 +1322,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
 
   if (opts.mode === 'resume') {
     if (!opts.sessionId) return { ok: false, reason: 'missing-session-id' }
-    const rec = pickSession(opts.projectDir, zone.id, opts.sessionId, safe)
+    const rec = pickSession(opts.projectDir, zone.id, opts.sessionId, safe, opts.pageId)
     if (!rec) return { ok: false, reason: 'session-not-found' }
     if (rec.runtime !== runtime) return { ok: false, reason: `session-runtime-mismatch:${rec.runtime}` }
 
@@ -1307,7 +1335,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       label: zone.data.label,
       runtime,
       env,
-      cwd: opts.projectDir,
+      cwd: zoneCwd,
       model,
       resumeSessionId: rec.sessionId,
       skipPermissions: false,
@@ -1342,7 +1370,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
       label: zone.data.label,
       runtime,
       env,
-      cwd: opts.projectDir,
+      cwd: zoneCwd,
       initialPrompt,
       appendSystemPrompt: appendForRuntime,
       model,
@@ -1354,6 +1382,7 @@ export async function runZone(win: BrowserWindow, opts: RunZoneOptions): Promise
         zoneKey: zone.id,
         legacyKey: safe,
         summary,
+        pageId: opts.pageId,
       },
       onCaptureSettled: () => {
         clearTimeout(timer)
@@ -1370,8 +1399,9 @@ export function listZoneSessionsForZone(
   projectDir: string,
   zoneId: string,
   label?: string,
+  pageId?: string,
 ): ZoneSessionRecord[] {
-  return listZoneSessions(projectDir, zoneId, label ? sanitize(label) : undefined)
+  return listZoneSessions(projectDir, zoneId, label ? sanitize(label) : undefined, pageId)
 }
 
 export function deleteZoneSessionEntry(
@@ -1379,8 +1409,9 @@ export function deleteZoneSessionEntry(
   zoneId: string,
   sessionId: string,
   label?: string,
+  pageId?: string,
 ): boolean {
-  return deleteZoneSession(projectDir, zoneId, sessionId, label ? sanitize(label) : undefined)
+  return deleteZoneSession(projectDir, zoneId, sessionId, label ? sanitize(label) : undefined, pageId)
 }
 
 export function renameZoneSessionEntry(
@@ -1389,12 +1420,13 @@ export function renameZoneSessionEntry(
   sessionId: string,
   summary: string,
   label?: string,
+  pageId?: string,
 ): boolean {
-  return updateZoneSessionSummary(projectDir, zoneId, sessionId, summary, label ? sanitize(label) : undefined)
+  return updateZoneSessionSummary(projectDir, zoneId, sessionId, summary, label ? sanitize(label) : undefined, pageId)
 }
 
-export function resetZoneSession(projectDir: string, zoneId: string, label?: string): boolean {
-  return deleteZoneSession(projectDir, zoneId, undefined, label ? sanitize(label) : undefined)
+export function resetZoneSession(projectDir: string, zoneId: string, label?: string, pageId?: string): boolean {
+  return deleteZoneSession(projectDir, zoneId, undefined, label ? sanitize(label) : undefined, pageId)
 }
 
 export interface ResumeDispatchOptions {

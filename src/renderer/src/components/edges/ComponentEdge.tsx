@@ -87,7 +87,19 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const edgeData = normalizeEdgeData(data)
   const direction = edgeData.direction ?? 'source-to-target'
   const label = edgeData.label ?? ''
-  const color = selected ? '#8b8bff' : '#4b5563'
+  const isCrossFolder = !!edgeData.targetFolder
+  // Dangling: persisted edge whose target folder isn't loaded into the
+  // current workspace. We can't draw a real connection (the target node
+  // isn't in the graph), so the renderer just dims the source endpoint
+  // marker via the muted color/dash.
+  const isDangling = (data as { dangling?: boolean } | undefined)?.dangling === true
+  const color = selected
+    ? '#8b8bff'
+    : isDangling
+      ? '#3a3a3a'
+      : isCrossFolder
+        ? '#6b6bd6'
+        : '#4b5563'
   const markerStart = direction === 'bidirectional' ? `url(#${edgeMarkerId(id, 'start')})` : undefined
   const markerEnd = direction === 'source-to-target' || direction === 'bidirectional'
     ? `url(#${edgeMarkerId(id, 'end')})`
@@ -146,7 +158,16 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
         path={edgePath}
         markerStart={markerStart}
         markerEnd={markerEnd}
-        style={{ ...style, stroke: color, strokeWidth: selected ? 2 : 1.5 }}
+        style={{
+          ...style,
+          stroke: color,
+          strokeWidth: selected ? 2 : 1.5,
+          // Dashed style is the cross-folder-edge tell, so users can spot
+          // dependencies that span workspace folders without inspecting
+          // the edge data.
+          ...(isCrossFolder ? { strokeDasharray: '6 4' } : {}),
+          ...(isDangling ? { opacity: 0.5 } : {}),
+        }}
       />
       <path
         d={edgePath}

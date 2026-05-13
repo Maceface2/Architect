@@ -1,4 +1,3 @@
-import type { AgentRuntime } from '../../../shared/agentRuntimes'
 import type { CanvasProjection } from '../../../shared/canvas/projection'
 import { renderProjectionMarkdown } from '../../../shared/canvas/render'
 import { activityLogPath } from '../activity'
@@ -15,6 +14,11 @@ export interface ConductorPromptInput {
   dispatchId: string
   userPrompt?: string
   projection: CanvasProjection
+  // Multi-folder dispatch context. When at least one entry differs from
+  // projectDir, the prompt surfaces a `## Zone cwds` block and a rule
+  // paragraph telling the conductor that zones' relative paths resolve
+  // against their own folder. Single-folder dispatches leave this empty.
+  zoneFolderPaths?: ReadonlyMap<string, string>
 }
 
 export type ConductorDecisionType = 'plan' | 'assign' | 'answer' | 'cancel' | 'final' | 'noop'
@@ -30,8 +34,25 @@ const REQUIRED_CONDUCTOR_PHRASES = [
 ] as const
 
 export function buildConductorPrompt(input: ConductorPromptInput): string {
-  const { projectDir, dispatchId, userPrompt, projection } = input
+  const { projectDir, dispatchId, userPrompt, projection, zoneFolderPaths } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
+
+  // Multi-folder dispatch: zone PTYs run in different cwds. When this is the
+  // case the conductor's task bodies need to reference absolute paths (or
+  // explicitly say "in <folder>") because each zone resolves relative paths
+  // against its own root, not projectDir. Single-folder dispatches collapse
+  // back to the implicit "everything's under projectDir" assumption.
+  const cwdEntries: Array<{ participantId: string; label: string; folderPath: string }> = []
+  if (zoneFolderPaths && zoneFolderPaths.size > 0) {
+    for (const zone of projection.zones) {
+      const folderPath = zoneFolderPaths.get(zone.participantId)
+      if (folderPath) {
+        cwdEntries.push({ participantId: zone.participantId, label: zone.label, folderPath })
+      }
+    }
+  }
+  const distinctFolders = new Set(cwdEntries.map(e => e.folderPath))
+  const isMultiFolder = distinctFolders.size > 1
 
   const task = userPrompt?.trim()
     ? `## Task (from user)\n${userPrompt.trim()}`
@@ -42,6 +63,12 @@ export function buildConductorPrompt(input: ConductorPromptInput): string {
     showCrossZoneSection: true,
     showUnassignedSection: true,
   })
+
+  const cwdBlock = isMultiFolder
+    ? `\n\n## Zone cwds\n\nThis dispatch spans ${distinctFolders.size} workspace folders. Each zone's PTY runs in its own folder; relative paths in task bodies resolve against THAT folder, not \`${projectDir}\`.\n\n${cwdEntries
+        .map(e => `- **${e.label}** (\`${e.participantId}\`) → \`${e.folderPath}\``)
+        .join('\n')}`
+    : ''
 
   const prompt = `You are the **Conductor** for a multi-agent dispatch. Your participant id is \`conductor\`. Zones are listed below — each is already spawned and waiting for work.
 
@@ -117,7 +144,7 @@ Full projection at \`${projectDir}/ARCHITECT/manifest.json\` (zones, full compon
 
 **Specs are planning context for YOU.** Do not paste them into task bodies — zones already know what they own.
 
-${canvasBlock}
+${canvasBlock}${cwdBlock}
 
 ## Task body shape
 
@@ -160,7 +187,8 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
 ## Rules
 
 - Only engage zones the task requires. Idle zones are correct.
-- Project source lives in \`${projectDir}\`; \`ARCHITECT/\` is coordination-only. A zone's output file is \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`.
+- Project source lives in \`${projectDir}\`; \`ARCHITECT/\` is coordination-only. A zone's output file is \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`.${isMultiFolder ? `
+- **Multi-folder dispatch.** Zones run in distinct cwds (see _Zone cwds_ above). The conductor's tree stays anchored at \`${projectDir}/ARCHITECT/\`, but a zone's relative paths resolve against ITS cwd. When a task body mentions a file outside the zone's own folder, use the absolute path or name the folder explicitly.` : ''}
 - **Trust the harness on retries.** When a user turn says "will retry automatically", emit \`{type:"noop"}\`. Only re-assign on "retries exhausted" or when overriding by routing elsewhere.
 - \`{type:"final"}\` is rejected if any zone is still working or queued. Wait for "All engaged zones reported done."
 - Empty bodies/summaries, unknown zones, reused taskIds, and unknown \`dependsOn\` entries are rejected at parse time. Fix and re-emit.
@@ -176,4 +204,3 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
   }
   return prompt
 }
-

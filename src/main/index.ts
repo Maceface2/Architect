@@ -4,6 +4,22 @@ import fs from 'fs'
 import path from 'path'
 import type { ActivityEvent } from './orchestrator/activity'
 import {
+  loadWorkspace,
+  saveWorkspace,
+  createPage,
+  renamePage,
+  deletePage,
+  setActivePage,
+  ensureLink,
+  removeLink,
+  listPagesInFolder,
+  loadPageCanvas,
+  savePageCanvas,
+  pageFile,
+  PAGES_SUBDIR,
+  type LoadedWorkspace,
+} from './workspace'
+import {
   initShellEnv,
   startDispatch,
   runZone,
@@ -65,47 +81,85 @@ const ARCHITECT_DIRNAME = 'ARCHITECT'
 const IGNORED_PROJECT_ENTRIES = new Set(['.DS_Store'])
 
 let mainWindow: BrowserWindow | null = null
-let canvasWatcher: fs.FSWatcher | null = null
-let canvasWatchTimer: ReturnType<typeof setTimeout> | null = null
-let watchedProjectDir: string | null = null
+interface CanvasWatcherEntry {
+  watcher: fs.FSWatcher
+  timer: ReturnType<typeof setTimeout> | null
+  folderPath: string
+  pageId: string
+  pageFilename: string
+}
+// Keyed by `${folderPath}::${pageId}` so multiple pages in the same folder
+// each get their own watcher, and switching pages drops the old one cleanly.
+const canvasWatchers = new Map<string, CanvasWatcherEntry>()
 const popouts = new Map<string, BrowserWindow>()
 
-function emitCanvasChanged(projectDir: string) {
+function watcherKey(folderPath: string, pageId: string): string {
+  return `${folderPath}::${pageId}`
+}
+
+function emitCanvasChanged(folderPath: string, pageId: string) {
   if (!mainWindow || mainWindow.isDestroyed()) return
+  const raw = loadPageCanvas(folderPath, pageId)
+  if (raw === null) return
+  mainWindow.webContents.send('canvas:changed', { projectDir: folderPath, pageId, raw })
+}
+
+function stopCanvasWatcher(folderPath?: string, pageId?: string) {
+  if (typeof folderPath === 'string') {
+    if (typeof pageId === 'string') {
+      const key = watcherKey(folderPath, pageId)
+      const entry = canvasWatchers.get(key)
+      if (!entry) return
+      if (entry.timer) clearTimeout(entry.timer)
+      try { entry.watcher.close() } catch {}
+      canvasWatchers.delete(key)
+      return
+    }
+    for (const [key, entry] of canvasWatchers) {
+      if (entry.folderPath !== folderPath) continue
+      if (entry.timer) clearTimeout(entry.timer)
+      try { entry.watcher.close() } catch {}
+      canvasWatchers.delete(key)
+    }
+    return
+  }
+  for (const entry of canvasWatchers.values()) {
+    if (entry.timer) clearTimeout(entry.timer)
+    try { entry.watcher.close() } catch {}
+  }
+  canvasWatchers.clear()
+}
+
+function startCanvasWatcher(folderPath: string, pageId: string) {
+  const key = watcherKey(folderPath, pageId)
+  if (canvasWatchers.has(key)) return
+  // Watch the pages directory; only emit when our specific <pageId>.json
+  // changes. Using a directory watch is more reliable across platforms than
+  // watching the file itself (which breaks on atomic rename + replace).
   try {
-    const raw = fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8')
-    mainWindow.webContents.send('canvas:changed', { projectDir, raw })
+    const dir = path.dirname(pageFile(folderPath, pageId))
+    fs.mkdirSync(dir, { recursive: true })
+    const pageFilename = `${pageId}.json`
+    const entry: CanvasWatcherEntry = {
+      folderPath,
+      pageId,
+      pageFilename,
+      watcher: fs.watch(dir, (_eventType, filename) => {
+        if (filename && filename !== pageFilename) return
+        const current = canvasWatchers.get(key)
+        if (!current) return
+        if (current.timer) clearTimeout(current.timer)
+        current.timer = setTimeout(() => {
+          const live = canvasWatchers.get(key)
+          if (!live) return
+          live.timer = null
+          emitCanvasChanged(folderPath, pageId)
+        }, 120)
+      }),
+      timer: null,
+    }
+    canvasWatchers.set(key, entry)
   } catch {}
-}
-
-function stopCanvasWatcher() {
-  if (canvasWatchTimer) {
-    clearTimeout(canvasWatchTimer)
-    canvasWatchTimer = null
-  }
-  canvasWatcher?.close()
-  canvasWatcher = null
-  watchedProjectDir = null
-}
-
-function startCanvasWatcher(projectDir: string) {
-  stopCanvasWatcher()
-  watchedProjectDir = projectDir
-
-  try {
-    canvasWatcher = fs.watch(projectDir, (_eventType, filename) => {
-      if (filename && filename !== CANVAS_FILENAME) return
-      if (canvasWatchTimer) clearTimeout(canvasWatchTimer)
-      canvasWatchTimer = setTimeout(() => {
-        canvasWatchTimer = null
-        if (watchedProjectDir !== projectDir) return
-        emitCanvasChanged(projectDir)
-      }, 120)
-    })
-  } catch {
-    canvasWatcher = null
-    watchedProjectDir = null
-  }
 }
 
 function buildMenu(): void {
@@ -235,14 +289,59 @@ ipcMain.handle('open-directory', async () => {
 
 ipcMain.handle('inspect-project', (_event, projectDir: string) => {
   const architectDir = path.join(projectDir, ARCHITECT_DIRNAME)
-  const canvasFile = path.join(projectDir, CANVAS_FILENAME)
+  const pagesPath = path.join(architectDir, PAGES_SUBDIR)
+  const workspacePath = path.join(architectDir, 'workspace.json')
+  const legacyCanvasFile = path.join(projectDir, CANVAS_FILENAME)
   let hasArchitectDir = false
   let hasCanvasFile = false
   let projectIsNonEmpty = false
   let canvasIsEmpty = false
 
   try { hasArchitectDir = fs.statSync(architectDir).isDirectory() } catch {}
-  try { hasCanvasFile = fs.statSync(canvasFile).isFile() } catch {}
+
+  // v2 detection: workspace.json is the authoritative signal. Even if the
+  // pages/ directory is empty or missing, a workspace.json means the folder
+  // has been migrated and we should NOT fall through to the legacy path
+  // (which would otherwise treat it as an unmigrated folder and re-run the
+  // onboarding offer for an already-set-up project).
+  let pageFiles: string[] = []
+  try {
+    pageFiles = fs.readdirSync(pagesPath).filter(n => n.endsWith('.json'))
+  } catch {}
+  const hasV2 = fs.existsSync(workspacePath)
+
+  if (hasV2) {
+    hasCanvasFile = true
+    let anyContent = false
+    for (const name of pageFiles) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(path.join(pagesPath, name), 'utf-8')) as {
+          nodes?: unknown
+          edges?: unknown
+        }
+        const n = Array.isArray(raw.nodes) ? raw.nodes.length : 0
+        const e = Array.isArray(raw.edges) ? raw.edges.length : 0
+        if (n + e > 0) { anyContent = true; break }
+      } catch {}
+    }
+    // Empty when there are no page files at all, or every page is empty.
+    canvasIsEmpty = pageFiles.length === 0 || !anyContent
+  } else {
+    try { hasCanvasFile = fs.statSync(legacyCanvasFile).isFile() } catch {}
+    if (hasCanvasFile) {
+      try {
+        const raw = JSON.parse(fs.readFileSync(legacyCanvasFile, 'utf-8')) as {
+          nodes?: unknown
+          edges?: unknown
+        }
+        const nodeCount = Array.isArray(raw.nodes) ? raw.nodes.length : 0
+        const edgeCount = Array.isArray(raw.edges) ? raw.edges.length : 0
+        canvasIsEmpty = nodeCount === 0 && edgeCount === 0
+      } catch {
+        canvasIsEmpty = false
+      }
+    }
+  }
 
   try {
     projectIsNonEmpty = fs
@@ -252,38 +351,109 @@ ipcMain.handle('inspect-project', (_event, projectDir: string) => {
     projectIsNonEmpty = false
   }
 
-  if (hasCanvasFile) {
-    try {
-      const raw = JSON.parse(fs.readFileSync(canvasFile, 'utf-8')) as {
-        nodes?: unknown
-        edges?: unknown
-      }
-      const nodeCount = Array.isArray(raw.nodes) ? raw.nodes.length : 0
-      const edgeCount = Array.isArray(raw.edges) ? raw.edges.length : 0
-      canvasIsEmpty = nodeCount === 0 && edgeCount === 0
-    } catch {
-      canvasIsEmpty = false
-    }
-  }
-
   return { projectIsNonEmpty, hasArchitectDir, hasCanvasFile, canvasIsEmpty }
 })
 
-ipcMain.handle('save-canvas', (_event, projectDir: string, data: string) => {
-  fs.writeFileSync(path.join(projectDir, CANVAS_FILENAME), data, 'utf-8')
+// Per-page canvas IO. Each folder owns a list of pages under
+// ARCHITECT/pages/<pageId>.json. The legacy architect-canvas.json at the
+// folder root is preserved post-migration with a _migratedAt marker for
+// one release as a rollback path.
+ipcMain.handle('save-canvas', (_event, projectDir: string, pageId: string, data: string) => {
+  savePageCanvas(projectDir, pageId, data)
 })
 
-ipcMain.handle('load-canvas', (_event, projectDir: string) => {
-  try { return fs.readFileSync(path.join(projectDir, CANVAS_FILENAME), 'utf-8') }
-  catch { return null }
+ipcMain.handle('load-canvas', (_event, projectDir: string, pageId: string) => {
+  return loadPageCanvas(projectDir, pageId)
 })
 
-ipcMain.handle('watch-canvas', (_event, projectDir: string) => {
-  startCanvasWatcher(projectDir)
+ipcMain.handle('watch-canvas', (_event, projectDir: string, pageId: string) => {
+  startCanvasWatcher(projectDir, pageId)
 })
 
-ipcMain.handle('unwatch-canvas', () => {
-  stopCanvasWatcher()
+ipcMain.handle('unwatch-canvas', (_event, projectDir?: string, pageId?: string) => {
+  stopCanvasWatcher(projectDir, pageId)
+})
+
+// Workspace v2: each folder owns its own pages[] + activePageId. Migration
+// from v1 (folders[]) is one-shot on first load; see src/main/workspace.ts.
+ipcMain.handle('workspace:load', (_event, hostDir: string): LoadedWorkspace => {
+  return loadWorkspace(hostDir)
+})
+
+ipcMain.handle('workspace:save', (_event, hostDir: string, file: LoadedWorkspace) => {
+  try {
+    saveWorkspace(hostDir, file)
+    return { ok: true as const }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
+})
+
+ipcMain.handle('workspace:set-active-page', (_event, hostDir: string, pageId: string) => {
+  try {
+    setActivePage(hostDir, pageId)
+    return { ok: true as const }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
+})
+
+ipcMain.handle('workspace:create-page', (_event, hostDir: string, name?: string) => {
+  try {
+    return { ok: true as const, page: createPage(hostDir, name) }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
+})
+
+ipcMain.handle('workspace:rename-page', (_event, hostDir: string, pageId: string, name: string) => {
+  try {
+    renamePage(hostDir, pageId, name)
+    return { ok: true as const }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
+})
+
+ipcMain.handle('workspace:delete-page', (_event, hostDir: string, pageId: string) => {
+  try {
+    const ws = deletePage(hostDir, pageId)
+    return { ok: true as const, workspace: { pages: ws.pages, activePageId: ws.activePageId } }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
+})
+
+ipcMain.handle(
+  'workspace:add-link',
+  (_event, hostDir: string, hostPageId: string, otherDir: string, otherPageId?: string) => {
+    try {
+      const resolved = ensureLink(hostDir, hostPageId, otherDir, otherPageId)
+      return { ok: true as const, ...resolved }
+    } catch (err) {
+      return { ok: false as const, error: String(err) }
+    }
+  },
+)
+
+ipcMain.handle(
+  'workspace:remove-link',
+  (_event, hostDir: string, hostPageId: string, otherDir: string, otherPageId?: string) => {
+    try {
+      removeLink(hostDir, hostPageId, otherDir, otherPageId)
+      return { ok: true as const }
+    } catch (err) {
+      return { ok: false as const, error: String(err) }
+    }
+  },
+)
+
+ipcMain.handle('workspace:list-pages-in-folder', (_event, folderDir: string) => {
+  try {
+    return { ok: true as const, pages: listPagesInFolder(folderDir) }
+  } catch (err) {
+    return { ok: false as const, error: String(err) }
+  }
 })
 
 // ── Terminal IPC ───────────────────────────────────────────────────────────
@@ -298,20 +468,20 @@ ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
   return runZone(mainWindow, opts)
 })
 
-ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string) => {
-  return listZoneSessionsForZone(projectDir, zoneId, label)
+ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string, pageId?: string) => {
+  return listZoneSessionsForZone(projectDir, zoneId, label, pageId)
 })
 
-ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string) => {
-  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label)
+ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string, pageId?: string) => {
+  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label, pageId)
 })
 
-ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) => {
-  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label)
+ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string, pageId?: string) => {
+  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label, pageId)
 })
 
-ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string) => {
-  return resetZoneSession(projectDir, zoneId, label)
+ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string, pageId?: string) => {
+  return resetZoneSession(projectDir, zoneId, label, pageId)
 })
 
 ipcMain.handle('dispatches:list', (_event, projectDir: string) => {

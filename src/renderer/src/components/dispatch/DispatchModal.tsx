@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Check, History, Pencil, Rocket, Trash2, X } from 'lucide-react'
 import {
   AGENT_RUNTIMES,
@@ -8,14 +8,19 @@ import {
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
+import { useWorkspace } from '../../context/WorkspaceContext'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import type { DispatchRecord, DispatchRequest } from '../../types'
 
-interface ZoneOption {
+export interface ZoneOption {
   id: string
   label: string
   color: string
+  // Workspace folder this zone belongs to. Set when the workspace has more
+  // than one folder loaded and the zone has been tagged via merge or drop
+  // targeting. Single-folder workspaces leave this undefined.
+  folderPath?: string
 }
 
 interface Props {
@@ -27,10 +32,43 @@ interface Props {
 
 type Tab = 'new' | 'resume'
 
+// Computes which folder anchors a multi-folder dispatch — the runtime/
+// prompts/conductor live under this folder's ARCHITECT/ tree. Picks the
+// folder that contributes the most selected zones; the workspace primary
+// breaks ties so single-folder workflows stay anchored at the canonical
+// project. Returns null when no zones are selected.
+function computePrimaryForDispatch(opts: {
+  zones: ZoneOption[]
+  selectedIds: Set<string>
+  primaryPath: string
+}): string | null {
+  const counts = new Map<string, number>()
+  for (const zone of opts.zones) {
+    if (!opts.selectedIds.has(zone.id)) continue
+    const folderPath = zone.folderPath ?? opts.primaryPath
+    counts.set(folderPath, (counts.get(folderPath) ?? 0) + 1)
+  }
+  if (counts.size === 0) return null
+  // First pass: find the highest contribution count.
+  let bestCount = -1
+  for (const count of counts.values()) {
+    if (count > bestCount) bestCount = count
+  }
+  // Second pass: among folders tied at bestCount, prefer the workspace
+  // primary; otherwise return the first one we see (Map iteration order
+  // matches insertion order, which mirrors zone declaration order).
+  if ((counts.get(opts.primaryPath) ?? -1) === bestCount) return opts.primaryPath
+  for (const [folderPath, count] of counts) {
+    if (count === bestCount) return folderPath
+  }
+  return null
+}
+
 export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit }: Props) {
   const zoneCount = zones.length
   const projectDir = useProjectDir()
   const projectSettings = useProjectSettings()
+  const { loadedFolders, primaryFolder } = useWorkspace()
 
   const [tab, setTab] = useState<Tab>('new')
   const [prompt, setPrompt] = useState(prefillPrompt ?? '')
@@ -77,21 +115,63 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
     setModel(projectSettings.dispatchModels[conductorRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[conductorRuntime] ?? '')
   }, [conductorRuntime, projectSettings.dispatchModels])
 
+  const { activePageId } = useWorkspace()
+
   const reload = useCallback(async () => {
     if (!projectDir) return
     setLoading(true)
     try {
       const records = await window.electron.dispatches.list(projectDir)
-      setPriorSessions(records ?? [])
+      // Scope resume history to the active canvas page. Records written
+      // before per-page scoping landed have no pageId — surface them so a
+      // user's older dispatches don't disappear silently.
+      const filtered = (records ?? []).filter(
+        r => r.pageId === undefined || r.pageId === activePageId,
+      )
+      setPriorSessions(filtered)
     } finally {
       setLoading(false)
     }
-  }, [projectDir])
+  }, [projectDir, activePageId])
 
   useEffect(() => { void reload() }, [reload])
 
   const selectedCount = selectedZoneIds.size
   const canSubmitNew = prompt.trim().length > 0 && selectedCount > 0
+
+  // Group zones by folder so the picker reads as one column per folder.
+  // Single-folder workspaces collapse back to the flat layout (no header
+  // chrome) by short-circuiting on loadedFolders.length < 2.
+  const zonesByFolder = useMemo(() => {
+    const groups = new Map<string, ZoneOption[]>()
+    for (const folder of loadedFolders) groups.set(folder.path, [])
+    for (const zone of zones) {
+      const target = zone.folderPath && groups.has(zone.folderPath)
+        ? zone.folderPath
+        : primaryFolder.path
+      const bucket = groups.get(target) ?? groups.get(primaryFolder.path)
+      bucket?.push(zone)
+    }
+    return groups
+  }, [zones, loadedFolders, primaryFolder.path])
+
+  const primaryForDispatch = useMemo(
+    () => computePrimaryForDispatch({
+      zones,
+      selectedIds: selectedZoneIds,
+      primaryPath: primaryFolder.path,
+    }),
+    [zones, selectedZoneIds, primaryFolder.path],
+  )
+
+  const involvedFolderCount = useMemo(() => {
+    const seen = new Set<string>()
+    for (const zone of zones) {
+      if (!selectedZoneIds.has(zone.id)) continue
+      seen.add(zone.folderPath ?? primaryFolder.path)
+    }
+    return seen.size
+  }, [zones, selectedZoneIds, primaryFolder.path])
 
   const toggleZone = (id: string) => {
     setSelectedZoneIds(prev => {
@@ -186,30 +266,63 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                     <button type="button" onClick={selectNoZones} className="text-fg-muted hover:text-fg transition-colors">Select none</button>
                   </div>
                 </div>
-                <div className="flex flex-wrap gap-1.5">
-                  {zones.map(z => {
-                    const selected = selectedZoneIds.has(z.id)
-                    return (
-                      <button
-                        key={z.id}
-                        type="button"
-                        onClick={() => toggleZone(z.id)}
-                        className={`px-2.5 py-1 text-xs rounded-md border transition-colors flex items-center gap-1.5 ${
-                          selected
-                            ? 'bg-white/10 border-white/20 text-fg'
-                            : 'bg-canvas border-white/10 text-fg-subtle hover:text-fg-muted'
-                        }`}
-                      >
-                        <span
-                          className="w-2 h-2 rounded-full flex-shrink-0"
-                          style={{ backgroundColor: selected ? z.color : 'transparent', border: `1px solid ${z.color}` }}
-                        />
-                        {z.label}
-                      </button>
-                    )
-                  })}
-                </div>
-                <p className="text-[11px] text-fg-subtle mt-1.5">Only the selected zones will receive task files. Others remain idle for this dispatch.</p>
+                {loadedFolders.length < 2 ? (
+                  <div className="flex flex-wrap gap-1.5">
+                    {zones.map(z => (
+                      <ZonePill key={z.id} zone={z} selected={selectedZoneIds.has(z.id)} onToggle={toggleZone} />
+                    ))}
+                  </div>
+                ) : (
+                  <div className="space-y-3">
+                    {loadedFolders.map(folder => {
+                      const groupZones = zonesByFolder.get(folder.path) ?? []
+                      if (groupZones.length === 0) return null
+                      const isDispatchPrimary = folder.path === primaryForDispatch
+                      return (
+                        <div key={folder.path}>
+                          <div className="flex items-center gap-1.5 mb-1.5 text-[10px] uppercase tracking-wider text-fg-subtle font-mono">
+                            <span
+                              className="inline-block w-2 h-2 rounded-sm flex-shrink-0"
+                              style={{ background: folder.color }}
+                              aria-hidden
+                            />
+                            <span className="text-fg-muted">{folder.label}</span>
+                            {folder.isPrimary && (
+                              <span className="text-fg-subtle">primary</span>
+                            )}
+                            {isDispatchPrimary && involvedFolderCount > 1 && (
+                              <span
+                                className="ml-1 text-[9px] px-1 py-0.5 rounded border border-accent/40 text-accent"
+                                title="Runtime/prompts will live under this folder's ARCHITECT/ for the dispatch"
+                              >
+                                anchor
+                              </span>
+                            )}
+                          </div>
+                          <div className="flex flex-wrap gap-1.5">
+                            {groupZones.map(z => (
+                              <ZonePill
+                                key={z.id}
+                                zone={z}
+                                selected={selectedZoneIds.has(z.id)}
+                                onToggle={toggleZone}
+                              />
+                            ))}
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+                <p className="text-[11px] text-fg-subtle mt-1.5">
+                  Only the selected zones will receive task files. Others remain idle for this dispatch.
+                  {involvedFolderCount > 1 && (
+                    <>
+                      {' '}Spans <strong className="text-fg-muted">{involvedFolderCount}</strong> folders;
+                      runtime + prompts anchor at the marked folder.
+                    </>
+                  )}
+                </p>
               </div>
             )}
 
@@ -433,6 +546,34 @@ function TabButton({ active, onClick, children }: { active: boolean; onClick: ()
       }`}
     >
       {children}
+    </button>
+  )
+}
+
+function ZonePill({
+  zone,
+  selected,
+  onToggle,
+}: {
+  zone: ZoneOption
+  selected: boolean
+  onToggle: (id: string) => void
+}) {
+  return (
+    <button
+      type="button"
+      onClick={() => onToggle(zone.id)}
+      className={`px-2.5 py-1 text-xs rounded-md border transition-colors flex items-center gap-1.5 ${
+        selected
+          ? 'bg-white/10 border-white/20 text-fg'
+          : 'bg-canvas border-white/10 text-fg-subtle hover:text-fg-muted'
+      }`}
+    >
+      <span
+        className="w-2 h-2 rounded-full flex-shrink-0"
+        style={{ backgroundColor: selected ? zone.color : 'transparent', border: `1px solid ${zone.color}` }}
+      />
+      {zone.label}
     </button>
   )
 }
