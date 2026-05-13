@@ -1,5 +1,6 @@
 import { useState, type FormEvent } from 'react'
 import { Loader2 } from 'lucide-react'
+import CliqueLogo from '../branding/CliqueLogo'
 
 const REQUEST_ACCESS_URL = 'https://architect-dev.com/early-access'
 
@@ -32,16 +33,9 @@ export default function LoginScreen() {
   return (
     <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
       <div className="flex flex-col items-center gap-4">
-        <svg width="52" height="52" viewBox="0 0 400 400" fill="none">
-          <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-          <circle cx="40" cy="360" r="14" fill="#58A6FF" />
-          <circle cx="200" cy="360" r="14" fill="#58A6FF" />
-          <circle cx="360" cy="40" r="14" fill="#58A6FF" />
-        </svg>
+        <CliqueLogo size={52} className="text-fg" />
         <div className="text-center">
-          <h1 className="text-2xl font-semibold text-fg tracking-tight">Architect</h1>
+          <h1 className="text-2xl font-semibold text-fg tracking-tight">Clique</h1>
           <p className="text-sm text-fg-subtle mt-1">Sign in to continue</p>
         </div>
       </div>

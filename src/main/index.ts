@@ -58,9 +58,9 @@ import { logMain, getMainLogPath } from './logger'
 import { bundleBugReport } from './bugReport'
 import type { AgentRuntime, AssistantMode } from '../shared/agentRuntimes'
 
-app.name = 'Architect'
-app.setName('Architect')
-process.title = 'Architect'
+app.name = 'Clique'
+app.setName('Clique')
+process.title = 'Clique'
 
 process.on('uncaughtException', (err) => {
   logMain('error', 'uncaughtException', err)
@@ -221,7 +221,7 @@ function createWindow(): void {
     show: false,
     backgroundColor: '#111111',
     icon,
-    title: 'Architect',
+    title: 'Clique',
     // macOS: keep the traffic lights but drop the native title bar strip.
     // Lights inset over TopNav row 1; the renderer reserves padding-left + a
     // drag region so the user can grab the bar to move the window.

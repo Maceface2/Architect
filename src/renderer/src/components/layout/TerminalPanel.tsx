@@ -9,6 +9,7 @@ import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import type { TerminalInfo } from '../../../../shared/electronTypes'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import { useWorkspaceOptional } from '../../context/WorkspaceContext'
+import CliqueLogo from '../branding/CliqueLogo'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
   emptyLayout,
@@ -607,18 +608,11 @@ function PaneView({
           <div className="flex items-stretch bg-white/[0.05]">
             <div style={{ width: 80, flexShrink: 0 }} aria-hidden />
             <div
-              className="flex items-center justify-center pl-1 pr-2.5 flex-shrink-0"
+              className="flex items-center justify-center pl-1 pr-2.5 flex-shrink-0 text-fg-muted"
               style={titleBarItemStyle}
-              aria-label="Architect"
+              aria-label="Clique"
             >
-              <svg width="14" height="14" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <circle cx="40" cy="360" r="28" fill="#58A6FF" />
-                <circle cx="200" cy="360" r="28" fill="#58A6FF" />
-                <circle cx="360" cy="40" r="28" fill="#58A6FF" />
-              </svg>
+              <CliqueLogo size={14} />
             </div>
             <div
               className="flex items-center gap-0 overflow-x-auto scrollbar-hide flex-1 min-w-0 relative"

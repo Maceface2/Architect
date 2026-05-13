@@ -1,5 +1,6 @@
 import type { CSSProperties } from 'react'
 import { Zap, Loader2, MessageSquare, Undo2, Redo2, RefreshCw } from 'lucide-react'
+import CliqueLogo from '../branding/CliqueLogo'
 
 interface TopNavProps {
   onDispatch: () => void
@@ -42,22 +43,7 @@ export default function TopNav({
       >
         {/* Left: logo + path chip */}
         <div className="flex items-center gap-2.5" style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}>
-          <svg
-            width="20"
-            height="20"
-            viewBox="0 0 400 400"
-            fill="none"
-            xmlns="http://www.w3.org/2000/svg"
-            aria-label="Architect"
-            className="flex-shrink-0"
-          >
-            <line x1="40"  y1="360" x2="360" y2="40"  stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-            <line x1="40"  y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-            <line x1="200" y1="360" x2="360" y2="40"  stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-            <circle cx="40"  cy="360" r="28" fill="#58A6FF" />
-            <circle cx="200" cy="360" r="28" fill="#58A6FF" />
-            <circle cx="360" cy="40"  r="28" fill="#58A6FF" />
-          </svg>
+          <CliqueLogo size={20} className="flex-shrink-0 text-fg" />
           <button
             onClick={onChangeDir}
             className="flex items-center gap-1.5 px-2 py-1 rounded-[2px] text-[11px] text-fg-muted hover:text-fg hover:bg-node border border-white/[0.08] transition-colors max-w-[220px]"

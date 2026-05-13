@@ -37,6 +37,8 @@ import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
 import TerminalPagePopoutApp from './components/layout/TerminalPagePopoutApp'
 import ResizablePanel from './components/layout/ResizablePanel'
 import SettingsPanel from './components/settings/SettingsPanel'
+import CliqueLogo from './components/branding/CliqueLogo'
+import GraphBackground from './components/canvas/GraphBackground'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { nodeTypes } from './components/nodes/nodeTypes'
@@ -260,20 +262,13 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
       <main className="flex-1 flex items-center justify-center px-10">
         <div className="w-full max-w-3xl flex items-stretch gap-12">
           <section className="flex-1 flex flex-col items-start justify-end gap-5 pb-1">
-            <svg width="56" height="56" viewBox="0 0 400 400" fill="none" aria-hidden>
-              <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <circle cx="40" cy="360" r="14" fill="#58A6FF" />
-              <circle cx="200" cy="360" r="14" fill="#58A6FF" />
-              <circle cx="360" cy="40" r="14" fill="#58A6FF" />
-            </svg>
+            <CliqueLogo size={56} className="text-fg" />
             <div>
               <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle mb-2">
                 / Schematic for AI agent CLIs
               </div>
               <h1 className="text-[32px] font-medium uppercase tracking-[0.2em] leading-none text-fg">
-                Architect
+                Clique
               </h1>
             </div>
           </section>
@@ -465,7 +460,7 @@ function AutoCanvasOnboardingModal({
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Generate an architecture canvas?</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            This looks like an existing codebase without an Architect canvas. Architect can open the Architecture Assistant and ask it to map the project into zones, components, and dependencies.
+            This looks like an existing codebase without a Clique canvas. Clique can open the Architecture Assistant and ask it to map the project into zones, components, and dependencies.
           </p>
         </div>
 
@@ -2379,16 +2374,16 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               minZoom={0.05}
               maxZoom={3}
             >
-              <Background
-                variant={projectSettings.interface.canvasBackground === 'grid' ? BackgroundVariant.Lines : BackgroundVariant.Dots}
-                gap={28}
-                size={projectSettings.interface.canvasBackground === 'grid' ? 1 : 1.8}
-                color={
-                  projectSettings.interface.theme === 'light'
-                    ? (projectSettings.interface.canvasBackground === 'grid' ? '#e2e8f0' : '#cbd5e1')
-                    : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
-                }
-              />
+              {projectSettings.interface.canvasBackground === 'grid' ? (
+                <Background
+                  variant={BackgroundVariant.Lines}
+                  gap={28}
+                  size={1}
+                  color={projectSettings.interface.theme === 'light' ? '#e2e8f0' : '#69696935'}
+                />
+              ) : (
+                <GraphBackground theme={projectSettings.interface.theme === 'light' ? 'light' : 'dark'} />
+              )}
               <FolderRegions
                 nodes={nodes}
                 emptyOffsets={emptyFolderOffsets}

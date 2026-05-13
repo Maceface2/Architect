@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" role="img" aria-label="clique">
+  <title>clique</title>
+  <g stroke="#111111" stroke-width="6" stroke-linecap="round" fill="none">
+    <line x1="50"  y1="50"  x2="150" y2="50"/>
+    <line x1="150" y1="50"  x2="150" y2="150"/>
+    <line x1="150" y1="150" x2="50"  y2="150"/>
+    <line x1="50"  y1="150" x2="50"  y2="50"/>
+    <line x1="50"  y1="50"  x2="150" y2="150"/>
+    <line x1="150" y1="50"  x2="50"  y2="150"/>
+  </g>
+  <circle cx="50"  cy="50"  r="13" fill="#111111"/>
+  <circle cx="150" cy="50"  r="13" fill="#E2B237"/>
+  <circle cx="150" cy="150" r="13" fill="#111111"/>
+  <circle cx="50"  cy="150" r="13" fill="#111111"/>
+</svg>

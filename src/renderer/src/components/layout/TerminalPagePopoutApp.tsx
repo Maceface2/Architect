@@ -30,7 +30,7 @@ export default function TerminalPagePopoutApp() {
   const [interfaceSettings, setInterfaceSettings] = useState<InterfaceSettings>(DEFAULT_INTERFACE_SETTINGS)
 
   useEffect(() => {
-    document.title = 'Architect — Terminal'
+    document.title = 'Clique — Terminal'
   }, [])
 
   // Pull the cached snapshot once on mount. Main process kept it from the

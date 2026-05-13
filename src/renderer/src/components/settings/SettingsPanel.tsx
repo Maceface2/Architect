@@ -498,11 +498,11 @@ function AboutSection({ onOpenBugReport }: { onOpenBugReport: () => void }) {
   })()
 
   return (
-    <Section title="About" hint="Architect auto-checks for updates in the background and installs them on quit.">
+    <Section title="About" hint="Clique auto-checks for updates in the background and installs them on quit.">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[12px] font-medium text-fg-muted">
-            Architect <span className="font-mono text-fg-subtle">v{version || '…'}</span>
+            Clique <span className="font-mono text-fg-subtle">v{version || '…'}</span>
           </p>
           {statusLine && (
             <p className={`mt-0.5 text-[11px] leading-relaxed ${status.kind === 'error' ? 'text-amber-300' : 'text-fg-subtle'}`}>
