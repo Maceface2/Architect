@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Activity, FileStack, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -40,7 +40,7 @@ import SettingsPanel from './components/settings/SettingsPanel'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { nodeTypes } from './components/nodes/nodeTypes'
-import ComponentEdge from './components/edges/ComponentEdge'
+import { edgeTypes } from './components/edges/edgeTypes'
 import CompactCanvasPalette, {
   type CanvasPaletteTool,
   type ComponentCreateConfig,
@@ -75,7 +75,7 @@ import { ProjectSettingsProvider } from './context/ProjectSettingsContext'
 import { InterfaceSettingsProvider } from './context/InterfaceSettingsContext'
 import { ProjectDirProvider } from './context/ProjectDirContext'
 import { WorkspaceProvider, useWorkspace } from './context/WorkspaceContext'
-import PageTabs from './components/canvas/PageTabs'
+import PagesPanel from './components/canvas/PagesPanel'
 import FolderRegions, { computeFolderRegions, nearestFolderForPoint, applyEmptyAdjustments, type EmptyOffset, type EmptyBase } from './components/canvas/FolderRegions'
 import { RuntimeDetectionProvider, useRuntimeDetection } from './context/RuntimeDetectionContext'
 import DispatchModal from './components/dispatch/DispatchModal'
@@ -160,10 +160,6 @@ Do a deep architecture discovery pass over this existing codebase and generate a
 # Scope
 
 Do not modify source code. Only write \`architect-canvas.json\`.`
-const edgeTypes = {
-  'component-edge': ComponentEdge,
-}
-
 function createEdgeId(): string {
   const uuid = globalThis.crypto?.randomUUID?.()
   return uuid ? `edge-${uuid}` : `edge-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -2025,6 +2021,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
   }, [onChangeDir, onSave, undoCanvas, redoCanvas])
 
   const isCanvas = activeTab === 'Canvas'
+  const isPages = activeTab === 'Pages'
   const isFiles = activeTab === 'Files'
   const isTerminal = activeTab === 'Terminal'
   // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
@@ -2125,6 +2122,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           <nav className="flex flex-col items-stretch w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
             {([
               { id: 'Canvas',   code: 'CAN', icon: <Layers size={14} strokeWidth={1.7} />,      title: 'Canvas'   },
+              { id: 'Pages',    code: 'PAG', icon: <FileStack size={14} strokeWidth={1.7} />,   title: 'Pages'    },
               { id: 'Files',    code: 'FIL', icon: <Files size={14} strokeWidth={1.7} />,       title: 'Files'    },
               { id: 'Terminal', code: 'TRM', icon: <TerminalIcon size={14} strokeWidth={1.7} />, title: 'Terminal' },
               { id: 'Logs',     code: 'LOG', icon: <Activity size={14} strokeWidth={1.7} />,    title: 'Logs'     },
@@ -2164,8 +2162,10 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           >
             <div className="flex-1 flex overflow-hidden">
 
+          <div className={`flex-1 relative ${isPages ? '' : 'hidden'}`}>
+            <PagesPanel onSwitch={() => setActiveTab('Canvas')} />
+          </div>
           <div className={`flex-1 relative ${isCanvas ? '' : 'hidden'}`}>
-            <PageTabs />
             <ReactFlow
               nodes={nodes}
               edges={edges}

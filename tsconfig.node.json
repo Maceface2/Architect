@@ -7,6 +7,7 @@
     "strict": true,
     "skipLibCheck": true,
     "esModuleInterop": true,
+    "outDir": ".output/node",
     "types": ["node"]
   },
   "include": ["electron.vite.config.*", "src/main/**/*", "src/preload/**/*", "src/shared/**/*"]

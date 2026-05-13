@@ -340,25 +340,24 @@ export default function FilesPanel() {
               </div>
             </div>
 
-            <div className="px-4 pt-3 pb-1">
+            <div className="px-4 pt-3 pb-2">
               <div className="text-[10px] uppercase tracking-wider text-fg-subtle font-mono mb-1.5">
                 Target page in {pendingLink.folderLabel}
               </div>
-            </div>
-            <div className="max-h-[200px] overflow-y-auto py-1">
               {pendingLink.pages.length === 0 ? (
-                <div className="px-4 py-3 text-xs text-fg-subtle">No pages yet. Create one below.</div>
+                <div className="text-xs text-fg-subtle">No pages yet. Create one below.</div>
               ) : (
-                pendingLink.pages.map(p => (
-                  <button
-                    key={p.id}
-                    onClick={() => void confirmLinkToExisting(p.id)}
-                    className="flex items-center gap-2 w-full px-4 py-2 text-left hover:bg-white/[0.04] transition-colors"
-                  >
-                    <FolderOpen size={12} className="text-amber-400 flex-shrink-0" />
-                    <span className="text-sm text-fg truncate">{p.name}</span>
-                  </button>
-                ))
+                <div className="flex flex-wrap gap-1">
+                  {pendingLink.pages.map(p => (
+                    <button
+                      key={p.id}
+                      onClick={() => void confirmLinkToExisting(p.id)}
+                      className="flex items-center gap-1 px-2 py-1 rounded-[3px] border border-white/[0.06] text-[11px] text-fg-muted hover:bg-white/[0.05] hover:text-fg"
+                    >
+                      <span className="truncate max-w-[140px]">{p.name}</span>
+                    </button>
+                  ))}
+                </div>
               )}
             </div>
             <div className="border-t border-white/[0.06] px-3 py-2">

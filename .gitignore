@@ -5,6 +5,7 @@ dist/
 *.log
 graphify-out/
 out-tsc/
+.output/
 *.tsbuildinfo
 test_results/
 .env
