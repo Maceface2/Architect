@@ -110,16 +110,19 @@ function safeFit(id: string, instance: TermInstance, container: HTMLElement | nu
 // be one or two frames behind a tab/pagetab switch; we double-rAF first
 // (the canonical "wait for the next paint after the next layout" pattern)
 // then retry per-frame up to 10 frames before giving up. Calls onSuccess
-// exactly once on a successful fit; never calls it if we give up.
+// exactly once on a successful fit; never calls it if we give up. Returns
+// a cancel function callers can wire to their effect cleanup so an in-flight
+// retry chain doesn't fire scrollToBottom against a now-inactive tab.
 function scheduleFitWhenReady(
   id: string,
   instance: TermInstance,
   container: HTMLElement | null,
   onSuccess?: () => void,
-): void {
+): () => void {
   let frames = 0
+  let cancelled = false
   const attempt = () => {
-    if (!container) return
+    if (cancelled || !container) return
     if (safeFit(id, instance, container)) {
       onSuccess?.()
       return
@@ -128,6 +131,7 @@ function scheduleFitWhenReady(
     requestAnimationFrame(attempt)
   }
   requestAnimationFrame(() => requestAnimationFrame(attempt))
+  return () => { cancelled = true }
 }
 
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
@@ -236,8 +240,8 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       // Defer the fit until the container has measurable width. Pin scroll
       // to the bottom only after a successful fit so the latest output is
       // what the user sees on reveal (per-write scroll is intentionally
-      // avoided  see comment on the data handler).
-      scheduleFitWhenReady(info.id, inst, container, () => {
+      // avoided, see comment on the data handler).
+      const cancelFit = scheduleFitWhenReady(info.id, inst, container, () => {
         inst.term.scrollToBottom()
       })
       const rafId = requestAnimationFrame(() => {
@@ -258,6 +262,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       })
       ro.observe(container)
       return () => {
+        cancelFit()
         cancelAnimationFrame(rafId)
         ro.disconnect()
       }
@@ -859,16 +864,22 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   // trade-off here (see plan + acceptance #4).
   useEffect(() => {
     if (!isVisible) return
+    const cancels: Array<() => void> = []
     termInstances.forEach((instance, id) => {
-      scheduleFitWhenReady(id, instance, instance.term.element ?? null, () => {
-        instance.term.scrollToBottom()
-      })
+      cancels.push(
+        scheduleFitWhenReady(id, instance, instance.term.element ?? null, () => {
+          instance.term.scrollToBottom()
+        }),
+      )
     })
     const raf = requestAnimationFrame(() => {
       const activeId = layout ? collectActiveTabs(layout.root)[0] : null
       if (activeId) termInstances.get(activeId)?.term.focus()
     })
-    return () => cancelAnimationFrame(raf)
+    return () => {
+      cancels.forEach(c => c())
+      cancelAnimationFrame(raf)
+    }
   }, [isVisible, layout])
 
   // Dispose xterm instances whose sessions no longer exist.
