@@ -299,13 +299,16 @@ ipcMain.handle('inspect-project', (_event, projectDir: string) => {
 
   try { hasArchitectDir = fs.statSync(architectDir).isDirectory() } catch {}
 
-  // v2 first: a workspace.json with a non-empty pages/ directory is the
-  // authoritative signal that this folder has a real canvas.
+  // v2 detection: workspace.json is the authoritative signal. Even if the
+  // pages/ directory is empty or missing, a workspace.json means the folder
+  // has been migrated and we should NOT fall through to the legacy path
+  // (which would otherwise treat it as an unmigrated folder and re-run the
+  // onboarding offer for an already-set-up project).
   let pageFiles: string[] = []
   try {
     pageFiles = fs.readdirSync(pagesPath).filter(n => n.endsWith('.json'))
   } catch {}
-  const hasV2 = pageFiles.length > 0 && fs.existsSync(workspacePath)
+  const hasV2 = fs.existsSync(workspacePath)
 
   if (hasV2) {
     hasCanvasFile = true
@@ -321,7 +324,8 @@ ipcMain.handle('inspect-project', (_event, projectDir: string) => {
         if (n + e > 0) { anyContent = true; break }
       } catch {}
     }
-    canvasIsEmpty = !anyContent
+    // Empty when there are no page files at all, or every page is empty.
+    canvasIsEmpty = pageFiles.length === 0 || !anyContent
   } else {
     try { hasCanvasFile = fs.statSync(legacyCanvasFile).isFile() } catch {}
     if (hasCanvasFile) {
@@ -464,20 +468,20 @@ ipcMain.handle('terminal:run-zone', (_event, opts: RunZoneOptions) => {
   return runZone(mainWindow, opts)
 })
 
-ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string) => {
-  return listZoneSessionsForZone(projectDir, zoneId, label)
+ipcMain.handle('zone:list-sessions', (_event, projectDir: string, zoneId: string, label?: string, pageId?: string) => {
+  return listZoneSessionsForZone(projectDir, zoneId, label, pageId)
 })
 
-ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string) => {
-  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label)
+ipcMain.handle('zone:delete-session', (_event, projectDir: string, zoneId: string, sessionId: string, label?: string, pageId?: string) => {
+  return deleteZoneSessionEntry(projectDir, zoneId, sessionId, label, pageId)
 })
 
-ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) => {
-  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label)
+ipcMain.handle('zone:update-session-summary', (_event, projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string, pageId?: string) => {
+  return renameZoneSessionEntry(projectDir, zoneId, sessionId, summary, label, pageId)
 })
 
-ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string) => {
-  return resetZoneSession(projectDir, zoneId, label)
+ipcMain.handle('zone:reset-session', (_event, projectDir: string, zoneId: string, label?: string, pageId?: string) => {
+  return resetZoneSession(projectDir, zoneId, label, pageId)
 })
 
 ipcMain.handle('dispatches:list', (_event, projectDir: string) => {

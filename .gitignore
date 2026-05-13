@@ -13,3 +13,8 @@ test_results/
 
 ARCHITECT/
 architect-canvas.json
+
+# Claude Code harness state — settings.json is shared, everything else is local
+.claude/scheduled_tasks.lock
+.claude/settings.local.json
+

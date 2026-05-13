@@ -23,6 +23,11 @@ export interface ConductorZoneContext {
   runtime: AgentRuntime
   model: string
   components: ConductorComponentContext[]
+  // Multi-folder dispatches: which workspace folder this zone's PTY runs in
+  // (its cwd). Equal to the dispatch primary for single-folder dispatches;
+  // surfaced in the conductor prompt when at least one zone differs so the
+  // conductor knows cross-folder paths matter when phrasing task bodies.
+  folderPath?: string
 }
 
 export interface ConductorPromptInput {
@@ -56,13 +61,26 @@ export function buildConductorPrompt(input: ConductorPromptInput): string {
   const { projectDir, dispatchId, userPrompt, zones, componentEdges, unassignedComponents } = input
   const activityLog = activityLogPath(projectDir, dispatchId, 'conductor')
 
+  // Multi-folder dispatch: zone PTYs run in different cwds. When this is the
+  // case the conductor's task bodies need to reference absolute paths (or
+  // explicitly say "in <folder>") because each zone resolves relative paths
+  // against its own root, not projectDir. Single-folder dispatches collapse
+  // this back to the implicit "everything's under projectDir" assumption.
+  const distinctFolders = Array.from(
+    new Set(zones.map(z => z.folderPath ?? projectDir)),
+  )
+  const isMultiFolder = distinctFolders.length > 1
+
   const zoneBlocks = zones.map(zone => {
     const head = `### ${zone.label} (\`${zone.participantId}\`, ${getAgentRuntime(zone.runtime).shortLabel})`
     const desc = zone.description ? `\n${zone.description}` : ''
+    const cwd = isMultiFolder && zone.folderPath
+      ? `\n_cwd:_ \`${zone.folderPath}\``
+      : ''
     const components = zone.components.length
       ? `\n\n**Components:**\n${zone.components.map(renderConductorComponent).join('\n')}`
       : '\n\n_(no components drawn in this zone)_'
-    return `${head}${desc}${components}`
+    return `${head}${desc}${cwd}${components}`
   }).join('\n\n')
 
   const unassigned = unassignedComponents.length
@@ -197,7 +215,8 @@ Use it whenever a downstream zone has inbound edges from another zone, or when s
 ## Rules
 
 - Only engage zones the task requires. Idle zones are correct.
-- Project source lives in \`${projectDir}\`; \`ARCHITECT/\` is coordination-only. A zone's output file is \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`.
+- Project source lives in \`${projectDir}\`; \`ARCHITECT/\` is coordination-only. A zone's output file is \`${projectDir}/ARCHITECT/outputs/<participantId>.md\`.${isMultiFolder ? `
+- **Multi-folder dispatch.** Zones run in distinct cwds (see \`_cwd:_\` per zone above). The conductor's tree stays anchored at \`${projectDir}/ARCHITECT/\`, but a zone's relative paths resolve against ITS cwd. When a task body mentions a file outside the zone's own folder, use the absolute path or name the folder explicitly.` : ''}
 - **Trust the harness on retries.** When a user turn says "will retry automatically", emit \`{type:"noop"}\`. Only re-assign on "retries exhausted" or when overriding by routing elsewhere.
 - \`{type:"final"}\` is rejected if any zone is still working or queued. Wait for "All engaged zones reported done."
 - Empty bodies/summaries, unknown zones, reused taskIds, and unknown \`dependsOn\` entries are rejected at parse time. Fix and re-emit.

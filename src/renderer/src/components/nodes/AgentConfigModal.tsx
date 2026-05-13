@@ -7,6 +7,7 @@ import {
 } from '../../../../shared/agentRuntimes'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
+import { useWorkspaceOptional } from '../../context/WorkspaceContext'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
 import { resolveZoneModelSuggestions } from '../../lib/canvas'
@@ -73,6 +74,8 @@ export default function AgentConfigModal({
   const labelInputRef = useRef<HTMLInputElement>(null)
   const projectSettings = useProjectSettings()
   const projectDir = useProjectDir()
+  const workspace = useWorkspaceOptional()
+  const pageId = workspace?.ready ? workspace.activePageId : undefined
   const detection = useRuntimeDetection()
   const effectiveRuntimeMeta = getAgentRuntime(effectiveRuntime)
   const effectiveDetected = detection.byId[effectiveRuntime]
@@ -99,7 +102,7 @@ export default function AgentConfigModal({
     if (!projectDir) return
     setResetState('pending')
     try {
-      await window.electron.zone.resetSession({ projectDir, zoneId })
+      await window.electron.zone.resetSession({ projectDir, zoneId, pageId })
       setResetState('done')
     } catch {
       setResetState('error')

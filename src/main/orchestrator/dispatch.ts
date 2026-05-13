@@ -326,6 +326,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
       model: dispatch.model,
       planMode: dispatch.planMode === true,
       settings: rawSettings,
+      pageId: dispatch.pageId,
     })
     if (!result.ok) throw new Error(`runZone failed: ${result.reason ?? 'unknown'}`)
     return [{ id: zone.id, label: zone.data.label, runtime }]
@@ -445,6 +446,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
           legacyKey: ws.participantId,
           summary: dispatchSummary,
           dispatchId: undefined,
+          pageId: dispatch.pageId,
         },
         onSessionCaptured: zoneSessionId => {
           const upsert = (): void => {
@@ -461,9 +463,20 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
               console.error('[dispatch-v5] failed to upsert zone session', err)
             }
             try {
-              const rec = getZoneSessionRecord(projectDir, zone.id, zoneSessionId, ws.participantId)
+              const rec = getZoneSessionRecord(
+                projectDir,
+                zone.id,
+                zoneSessionId,
+                ws.participantId,
+                dispatch.pageId,
+              )
               if (rec && !rec.dispatchId) {
-                appendZoneSession(projectDir, zone.id, { ...rec, dispatchId: architectSessionId })
+                appendZoneSession(
+                  projectDir,
+                  zone.id,
+                  { ...rec, dispatchId: architectSessionId },
+                  dispatch.pageId,
+                )
               }
             } catch {}
           }
@@ -536,6 +549,7 @@ export async function startDispatchV5(input: StartDispatchV5Input): Promise<Term
         zoneKey: CONDUCTOR_PTY_ID,
         legacyKey: 'Conductor',
         summary: dispatchSummary,
+        pageId: dispatch.pageId,
       },
       onSessionCaptured: sessionId => {
         architectSessionId = sessionId

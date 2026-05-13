@@ -36,6 +36,10 @@ export default function FilesPanel() {
   // Resolve the linked page name for each non-host folder once per change to
   // the active page's link set. One IPC call per linked folder; results are
   // cached locally and refreshed when the user switches active pages.
+  const activeLinksKey = useMemo(
+    () => activePage.links.map(l => `${l.folderPath}:${l.pageId}`).join('\n'),
+    [activePage.links],
+  )
   useEffect(() => {
     let cancelled = false
     const links = activePage.links
@@ -56,7 +60,8 @@ export default function FilesPanel() {
       setLinkedPageNameByFolder(next)
     })
     return () => { cancelled = true }
-  }, [activePage])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLinksKey])
 
   // Seed pathByFolder for any folder we've never tracked yet (newly added).
   useEffect(() => {

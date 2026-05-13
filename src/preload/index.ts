@@ -279,19 +279,21 @@ contextBridge.exposeInMainWorld('electron', {
     },
   },
 
-  // Per-zone session history + launch
+  // Per-zone session history + launch. pageId scopes records to the active
+  // canvas page so each page sees its own history; omit it on single-page
+  // callers (assistant) and history falls back to the _default bucket.
   zone: {
-    listSessions: (projectDir: string, zoneId: string, label?: string) =>
-      ipcRenderer.invoke('zone:list-sessions', projectDir, zoneId, label),
+    listSessions: (projectDir: string, zoneId: string, label?: string, pageId?: string) =>
+      ipcRenderer.invoke('zone:list-sessions', projectDir, zoneId, label, pageId),
 
-    deleteSession: (projectDir: string, zoneId: string, sessionId: string, label?: string) =>
-      ipcRenderer.invoke('zone:delete-session', projectDir, zoneId, sessionId, label),
+    deleteSession: (projectDir: string, zoneId: string, sessionId: string, label?: string, pageId?: string) =>
+      ipcRenderer.invoke('zone:delete-session', projectDir, zoneId, sessionId, label, pageId),
 
-    updateSessionSummary: (projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string) =>
-      ipcRenderer.invoke('zone:update-session-summary', projectDir, zoneId, sessionId, summary, label),
+    updateSessionSummary: (projectDir: string, zoneId: string, sessionId: string, summary: string, label?: string, pageId?: string) =>
+      ipcRenderer.invoke('zone:update-session-summary', projectDir, zoneId, sessionId, summary, label, pageId),
 
-    resetSession: (opts: { projectDir: string; zoneId: string; label?: string }) =>
-      ipcRenderer.invoke('zone:reset-session', opts.projectDir, opts.zoneId, opts.label),
+    resetSession: (opts: { projectDir: string; zoneId: string; label?: string; pageId?: string }) =>
+      ipcRenderer.invoke('zone:reset-session', opts.projectDir, opts.zoneId, opts.label, opts.pageId),
 
     launch: (opts: {
       projectDir: string
@@ -305,6 +307,7 @@ contextBridge.exposeInMainWorld('electron', {
       model?: string
       planMode?: boolean
       settings: unknown
+      pageId?: string
     }) => ipcRenderer.invoke('terminal:run-zone', opts),
 
     onSessionCaptured: (

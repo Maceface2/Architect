@@ -251,12 +251,14 @@ interface ElectronAPI {
       projectDir: string,
       zoneId: string,
       label?: string,
+      pageId?: string,
     ) => Promise<ZoneSessionRecord[]>
     deleteSession: (
       projectDir: string,
       zoneId: string,
       sessionId: string,
       label?: string,
+      pageId?: string,
     ) => Promise<boolean>
     updateSessionSummary: (
       projectDir: string,
@@ -264,11 +266,13 @@ interface ElectronAPI {
       sessionId: string,
       summary: string,
       label?: string,
+      pageId?: string,
     ) => Promise<boolean>
     resetSession: (opts: {
       projectDir: string
       zoneId: string
       label?: string
+      pageId?: string
     }) => Promise<boolean>
     launch: (opts: {
       projectDir: string
@@ -282,6 +286,7 @@ interface ElectronAPI {
       model?: string
       planMode?: boolean
       settings: ProjectSettings
+      pageId?: string
     }) => Promise<{ ok: boolean; reason?: string; info?: TerminalInfo }>
     onSessionCaptured: (
       cb: (event: {

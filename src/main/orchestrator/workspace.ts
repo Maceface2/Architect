@@ -149,6 +149,7 @@ function writePrompts(input: WorkspaceInput): WorkspaceOutput {
     description: zone.description,
     runtime: zone.runtime,
     model: zone.model,
+    folderPath: zone.folderPath,
     components: zone.components.map(c => ({
       label: c.label,
       tag: c.tag,

@@ -286,6 +286,12 @@ export default function FolderRegions({ nodes, emptyOffsets, setEmptyOffsets, em
   // change so the region chrome can show "<folder> · <linked page name>"
   // without baking the name into the PageLink schema.
   const [linkedPageNameByFolder, setLinkedPageNameByFolder] = useState<Record<string, string>>({})
+  // Stable key over the link set — re-fetching whenever the WorkspaceContext
+  // value identity changed would hammer listPagesInFolder on every render.
+  const activeLinksKey = useMemo(
+    () => activePage.links.map(l => `${l.folderPath}:${l.pageId}`).join('\n'),
+    [activePage.links],
+  )
   useEffect(() => {
     let cancelled = false
     const links = activePage.links
@@ -306,7 +312,8 @@ export default function FolderRegions({ nodes, emptyOffsets, setEmptyOffsets, em
       setLinkedPageNameByFolder(next)
     })
     return () => { cancelled = true }
-  }, [activePage])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeLinksKey])
 
   if (loadedFolders.length < 2) return null
   return (

@@ -170,6 +170,33 @@ function createNodeId(prefix: string): string {
   return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+// Re-mint colliding ids on an assistant-supplied patch so it can't clobber
+// nodes that live in other (currently-loaded) workspace folders. Returns a
+// rename map (oldId -> newId) the caller applies to incoming edge endpoints.
+function dedupeAgainstReserved(
+  nodes: Array<{ id: string }>,
+  reservedIds: Set<string>,
+): Map<string, string> {
+  const rename = new Map<string, string>()
+  const seen = new Set<string>(reservedIds)
+  for (const n of nodes) {
+    if (!seen.has(n.id)) {
+      seen.add(n.id)
+      continue
+    }
+    let suffix = 2
+    let candidate = `${n.id}#${suffix}`
+    while (seen.has(candidate)) {
+      suffix += 1
+      candidate = `${n.id}#${suffix}`
+    }
+    seen.add(candidate)
+    rename.set(n.id, candidate)
+    n.id = candidate
+  }
+  return rename
+}
+
 // Strip in-memory workspace tags from each node's data before serializing.
 // `folderPath` is added by loadMergedCanvas at load time; it must not bleed
 // into the on-disk canvas file or single-folder round-trip drifts.
@@ -301,9 +328,13 @@ function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
 }
 
 function CanvasConflictModal({
+  changedFolders,
   onLoadIncoming,
   onKeepLocal,
 }: {
+  // Non-primary folder paths whose on-disk canvas changed while we're dirty.
+  // Empty when only the primary folder's canvas changed.
+  changedFolders: string[]
   onLoadIncoming: () => void
   onKeepLocal: () => void
 }) {
@@ -313,10 +344,20 @@ function CanvasConflictModal({
         <div className="border-b border-white/[0.06] px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.
+            {changedFolders.length === 0
+              ? 'The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.'
+              : 'Linked folders’ canvases changed on disk, but you still have unsaved canvas edits in memory.'}
           </p>
         </div>
-
+        {changedFolders.length > 0 && (
+          <div className="px-5 py-3 space-y-1">
+            {changedFolders.map(p => (
+              <div key={p} className="text-[11px] font-mono text-fg-muted truncate" title={p}>
+                {p}
+              </div>
+            ))}
+          </div>
+        )}
         <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
           <button
             onClick={onKeepLocal}
@@ -328,7 +369,7 @@ function CanvasConflictModal({
             onClick={onLoadIncoming}
             className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
           >
-            Load assistant changes
+            Load incoming changes
           </button>
         </div>
       </div>
@@ -508,6 +549,22 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
   const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
+  // Non-primary folders whose canvas changed externally while the user has
+  // unsaved edits. Coexists with `pendingExternalCanvasRaw` (primary's pending
+  // raw); together they drive the conflict modal so cross-folder drifts can't
+  // be clobbered by the next save.
+  const [externalChangedFolders, setExternalChangedFolders] = useState<Set<string>>(
+    () => new Set(),
+  )
+  // Latest pending raw per non-primary folder while we're dirty. Mirrors
+  // pendingExternalCanvasRaw (primary's pending raw) but keyed by folder so
+  // a multi-folder workspace can hold one pending drift per folder.
+  const externalPendingByFolderRef = useRef<Map<string, string>>(new Map())
+  // Dismissal cache, mirrors dismissedExternalCanvasRef but keyed by folder
+  // path. Lets "Keep local edits" silence a specific raw per folder so the
+  // same drift won't re-prompt on every save until the user genuinely picks
+  // it up.
+  const dismissedExternalByFolderRef = useRef<Map<string, string>>(new Map())
   const [terminalLayout, setTerminalLayout] = useState<TerminalLayout | null>(null)
   const [activeDispatchId, setActiveDispatchId] = useState<string | null>(null)
   const [bugReportOpen, setBugReportOpen] = useState(false)
@@ -796,9 +853,15 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     lastAppliedCanvasRef.current = primaryRaw
     dismissedExternalCanvasRef.current = null
     setPendingExternalCanvasRaw(null)
+    // Cache the raw BEFORE awaiting the write so the canvas:changed event
+    // fired by our own save lands on a hot cache hit and short-circuits the
+    // watcher's drift-detection path — no need for the post-write split
+    // recomputation in the common case.
+    for (const file of split) {
+      lastRawByFolderRef.current.set(file.folderPath, file.raw)
+    }
     for (const file of split) {
       await window.electron.saveCanvas(file.folderPath, pageIdForFolder(file.folderPath), file.raw)
-      lastRawByFolderRef.current.set(file.folderPath, file.raw)
     }
     if (clearDirty) setIsDirty(false)
   }, [primaryFolder.path, loadedFolders, pageIdForFolder])
@@ -904,8 +967,11 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     let disposed = false
     lastAppliedCanvasRef.current = ''
     dismissedExternalCanvasRef.current = null
+    dismissedExternalByFolderRef.current = new Map()
+    externalPendingByFolderRef.current = new Map()
     lastRawByFolderRef.current = new Map()
     setPendingExternalCanvasRaw(null)
+    setExternalChangedFolders(new Set())
     setAutoCanvasOfferOpen(false)
     setAutoCanvasStarting(false)
 
@@ -977,39 +1043,30 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         return
       }
 
-      // If the watcher fired because of our own splitMergedForSave write,
-      // the raw will match what splitMergedForSave produces for this folder
-      // right now. Compare against the live in-memory state.
-      const split = splitMergedForSave({
-        nodes: nodesRef.current,
-        edges: edgesRef.current,
-        primarySettings: settingsRef.current,
-        primaryFolderPath: primaryFolder.path,
-        folderPaths: watchedFolders,
-        perFolderSettings: perFolderSettingsRef.current,
-        idAliases: idAliasesRef.current,
-        edgeAliases: edgeAliasesRef.current,
-        folderOffsets: folderOffsetsRef.current,
-      })
-      const ourCurrentRaw = split.find(s => s.folderPath === changedDir)?.raw
-      if (raw === ourCurrentRaw) {
-        lastRawByFolderRef.current.set(changedDir, raw)
-        if (changedDir === primaryFolder.path) {
-          lastAppliedCanvasRef.current = raw
-          dismissedExternalCanvasRef.current = null
-        }
-        return
-      }
+      // Echo-suppression is now driven entirely by lastRawByFolderRef, which
+      // persistCanvasRaw pre-sets before its saveCanvas await. If we got here
+      // with raw !== lastRaw, it really is an external edit — no need for a
+      // splitMergedForSave fallback comparison on every watcher tick.
 
       if (isDirtyRef.current) {
         if (autoSaveTimerRef.current) {
           clearTimeout(autoSaveTimerRef.current)
           autoSaveTimerRef.current = null
         }
-        // Surface only primary's external edit in the merge prompt for now —
-        // cross-folder UI is left to a follow-up.
         if (changedDir === primaryFolder.path) {
           setPendingExternalCanvasRaw(raw)
+        } else {
+          // Skip if the user already dismissed exactly this raw for this
+          // folder — matches the primary "remember dismiss" behavior so the
+          // modal doesn't reappear on every save.
+          if (dismissedExternalByFolderRef.current.get(changedDir) === raw) return
+          externalPendingByFolderRef.current.set(changedDir, raw)
+          setExternalChangedFolders(prev => {
+            if (prev.has(changedDir)) return prev
+            const next = new Set(prev)
+            next.add(changedDir)
+            return next
+          })
         }
         return
       }
@@ -1629,6 +1686,20 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
         clearTimeout(autoSaveTimerRef.current)
         autoSaveTimerRef.current = null
       }
+      // De-collide assistant ids against nodes that already live in OTHER
+      // workspace folders. Same-folder collisions are intentional (a patch
+      // can overwrite an existing node by id), so the reserved set is
+      // strictly the other-folder ids.
+      const reservedIds = new Set(otherFolderNodes.map(n => n.id))
+      const rename = dedupeAgainstReserved(migrated.nodes, reservedIds)
+      if (rename.size > 0) {
+        for (const e of migrated.edges) {
+          const newSource = rename.get(e.source)
+          if (newSource) e.source = newSource
+          const newTarget = rename.get(e.target)
+          if (newTarget) e.target = newTarget
+        }
+      }
       const taggedAssistantNodes = migrated.nodes.map(n =>
         tagWithActive(n as unknown as { data: Record<string, unknown> }),
       ) as typeof migrated.nodes
@@ -1770,15 +1841,27 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
       }
     })
 
-    const newEdges: CanvasEdge[] = rawEdges.map(raw => ({
-      id: raw.id ?? createEdgeId(),
-      type: 'component-edge',
-      source: raw.source,
-      target: raw.target,
-      sourceHandle: raw.sourceHandle ?? null,
-      targetHandle: raw.targetHandle ?? null,
-      data: normalizeEdgeData(raw.data ?? raw),
-    }))
+    // De-collide assistant ids against nodes from OTHER workspace folders
+    // before edges are built — newEdges below reference the (possibly
+    // renamed) zone/component ids.
+    const reservedIds = new Set(otherFolderNodes.map(n => n.id))
+    const renameZones = dedupeAgainstReserved(newZones, reservedIds)
+    const renameComps = dedupeAgainstReserved(newComps, reservedIds)
+    const rename = new Map([...renameZones, ...renameComps])
+
+    const newEdges: CanvasEdge[] = rawEdges.map(raw => {
+      const source = rename.get(raw.source) ?? raw.source
+      const target = rename.get(raw.target) ?? raw.target
+      return {
+        id: raw.id ?? createEdgeId(),
+        type: 'component-edge',
+        source,
+        target,
+        sourceHandle: raw.sourceHandle ?? null,
+        targetHandle: raw.targetHandle ?? null,
+        data: normalizeEdgeData(raw.data ?? raw),
+      }
+    })
 
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
@@ -1971,16 +2054,108 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     }
   }, [projectDir])
 
-  const handleLoadIncomingCanvas = useCallback(() => {
-    if (!pendingExternalCanvasRaw) return
-    applyRawCanvas(pendingExternalCanvasRaw, true)
-  }, [applyRawCanvas, pendingExternalCanvasRaw])
+  const handleLoadIncomingCanvas = useCallback(async () => {
+    // If non-primary folders also drifted, re-read each one from disk so the
+    // merge picks up THEIR changes too (not just primary's). When only the
+    // primary changed, fall through to the simpler in-memory merge path.
+    if (externalChangedFolders.size > 0) {
+      const inputs = await Promise.all(
+        loadedFolders.map(async f => {
+          if (f.isPrimary) {
+            return {
+              folderPath: f.path,
+              isPrimary: true as const,
+              raw: pendingExternalCanvasRaw ?? (await window.electron.loadCanvas(f.path, pageIdForFolder(f.path))),
+            }
+          }
+          if (externalChangedFolders.has(f.path)) {
+            return {
+              folderPath: f.path,
+              isPrimary: false as const,
+              raw: await window.electron.loadCanvas(f.path, pageIdForFolder(f.path)),
+            }
+          }
+          // Untouched folder: round-trip its current in-memory slice so the
+          // merge result preserves it byte-for-byte.
+          const split = splitMergedForSave({
+            nodes: nodesRef.current,
+            edges: edgesRef.current,
+            primarySettings: settingsRef.current,
+            primaryFolderPath: primaryFolder.path,
+            folderPaths: loadedFolders.map(lf => lf.path),
+            perFolderSettings: perFolderSettingsRef.current,
+            idAliases: idAliasesRef.current,
+            edgeAliases: edgeAliasesRef.current,
+            folderOffsets: folderOffsetsRef.current,
+          })
+          return {
+            folderPath: f.path,
+            isPrimary: false as const,
+            raw: split.find(s => s.folderPath === f.path)?.raw ?? null,
+          }
+        }),
+      )
+      const merged = loadMergedCanvas(inputs)
+      if (autoSaveTimerRef.current) {
+        clearTimeout(autoSaveTimerRef.current)
+        autoSaveTimerRef.current = null
+      }
+      setNodes(merged.nodes)
+      setEdges(merged.edges)
+      setProjectSettings(merged.settings)
+      perFolderSettingsRef.current = merged.perFolderSettings
+      idAliasesRef.current = merged.idAliases
+      edgeAliasesRef.current = merged.edgeAliases
+      folderOffsetsRef.current = merged.folderOffsets
+      for (const input of inputs) {
+        if (input.raw != null) lastRawByFolderRef.current.set(input.folderPath, input.raw)
+      }
+      const primaryInput = inputs.find(i => i.isPrimary)
+      if (primaryInput?.raw != null) lastAppliedCanvasRef.current = primaryInput.raw
+      dismissedExternalCanvasRef.current = null
+      dismissedExternalByFolderRef.current = new Map()
+      externalPendingByFolderRef.current = new Map()
+      setPendingExternalCanvasRaw(null)
+      setExternalChangedFolders(new Set())
+      setIsDirty(false)
+      setDispatchedGraph(null)
+      setActiveTab('Canvas')
+      resetHistory()
+      queueFitView()
+      return
+    }
+    if (pendingExternalCanvasRaw) {
+      applyRawCanvas(pendingExternalCanvasRaw, true)
+    }
+  }, [
+    applyRawCanvas,
+    externalChangedFolders,
+    loadedFolders,
+    pageIdForFolder,
+    pendingExternalCanvasRaw,
+    primaryFolder.path,
+    queueFitView,
+    resetHistory,
+    setEdges,
+    setNodes,
+  ])
 
   const handleKeepLocalCanvas = useCallback(() => {
-    if (!pendingExternalCanvasRaw) return
-    dismissedExternalCanvasRef.current = pendingExternalCanvasRaw
-    setPendingExternalCanvasRaw(null)
-  }, [pendingExternalCanvasRaw])
+    if (pendingExternalCanvasRaw) {
+      dismissedExternalCanvasRef.current = pendingExternalCanvasRaw
+      setPendingExternalCanvasRaw(null)
+    }
+    if (externalChangedFolders.size > 0) {
+      // Snapshot each pending folder's latest external raw into the dismissal
+      // cache so the same drift won't re-prompt. New, different raws will.
+      for (const folderPath of externalChangedFolders) {
+        const pending = externalPendingByFolderRef.current.get(folderPath)
+        if (pending) dismissedExternalByFolderRef.current.set(folderPath, pending)
+      }
+      externalPendingByFolderRef.current = new Map()
+      setExternalChangedFolders(new Set())
+    }
+  }, [externalChangedFolders, pendingExternalCanvasRaw])
 
   // Canvas undo/redo keyboard shortcuts — Cmd/Ctrl+Z undo, Cmd/Ctrl+Shift+Z
   // (or Cmd/Ctrl+Y) redo. Ignored while the user is typing in an input so
@@ -2303,9 +2478,10 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
             )}
 
-            {pendingExternalCanvasRaw && (
+            {(pendingExternalCanvasRaw || externalChangedFolders.size > 0) && (
               <CanvasConflictModal
-                onLoadIncoming={handleLoadIncomingCanvas}
+                changedFolders={Array.from(externalChangedFolders)}
+                onLoadIncoming={() => void handleLoadIncomingCanvas()}
                 onKeepLocal={handleKeepLocalCanvas}
               />
             )}
