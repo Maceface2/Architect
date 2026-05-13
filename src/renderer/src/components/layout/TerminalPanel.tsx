@@ -83,7 +83,52 @@ const TAB_DRAG_MIME = 'application/architect-terminal-tab'
 const RESUMABLE_RUNTIMES: ReadonlySet<AgentRuntime> = new Set<AgentRuntime>(['claude', 'codex', 'gemini', 'opencode', 'bob'])
 
 // One xterm instance per terminal id, persisted across pane moves & tab switches.
-const termInstances = new Map<string, { term: Terminal; fit: FitAddon }>()
+type TermInstance = { term: Terminal; fit: FitAddon; lastFittedWidth: number }
+const termInstances = new Map<string, TermInstance>()
+
+// Fit only when the container is actually laid out. offsetParent === null
+// catches any display:none ancestor (the global TerminalPanel hidden via the
+// .hidden Tailwind class, or a tab body parked off-DOM). clientWidth <= 0
+// catches in-flight reflows from canvas PageTab swaps where the node is in
+// the tree but has no measured width yet.
+function safeFit(id: string, instance: TermInstance, container: HTMLElement | null): boolean {
+  const el = container ?? instance.term.element ?? null
+  if (!el) return false
+  if (el.offsetParent === null) return false
+  if (el.clientWidth <= 0) return false
+  try {
+    instance.fit.fit()
+    instance.lastFittedWidth = el.clientWidth
+    window.electron.terminal.resize(id, instance.term.cols, instance.term.rows)
+    return true
+  } catch {
+    return false
+  }
+}
+
+// Wait for the container to have real dimensions before fitting. Layout can
+// be one or two frames behind a tab/pagetab switch; we double-rAF first
+// (the canonical "wait for the next paint after the next layout" pattern)
+// then retry per-frame up to 10 frames before giving up. Calls onSuccess
+// exactly once on a successful fit; never calls it if we give up.
+function scheduleFitWhenReady(
+  id: string,
+  instance: TermInstance,
+  container: HTMLElement | null,
+  onSuccess?: () => void,
+): void {
+  let frames = 0
+  const attempt = () => {
+    if (!container) return
+    if (safeFit(id, instance, container)) {
+      onSuccess?.()
+      return
+    }
+    if (++frames > 10) return
+    requestAnimationFrame(attempt)
+  }
+  requestAnimationFrame(() => requestAnimationFrame(attempt))
+}
 
 function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
@@ -129,7 +174,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       })
       const fit = new FitAddon()
       term.loadAddon(fit)
-      instance = { term, fit }
+      instance = { term, fit, lastFittedWidth: 0 }
       termInstances.set(info.id, instance)
 
       // Forward EVERYTHING xterm wants to send to the PTY — keystrokes, paste
@@ -175,7 +220,7 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       })
     }
 
-    const { term, fit } = instance
+    const { term } = instance
 
     // First mount: open the terminal here. Subsequent mounts (different pane):
     // physically move the existing element so we don't double-init xterm.
@@ -185,20 +230,33 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
       containerRef.current.appendChild(term.element)
     }
 
-    const doFit = () => {
-      try {
-        fit.fit()
-        window.electron.terminal.resize(info.id, term.cols, term.rows)
-      } catch {}
-    }
-
     if (active) {
-      doFit()
+      const container = containerRef.current
+      const inst = instance
+      // Defer the fit until the container has measurable width. Pin scroll
+      // to the bottom only after a successful fit so the latest output is
+      // what the user sees on reveal (per-write scroll is intentionally
+      // avoided  see comment on the data handler).
+      scheduleFitWhenReady(info.id, inst, container, () => {
+        inst.term.scrollToBottom()
+      })
       const rafId = requestAnimationFrame(() => {
         termInstances.get(info.id)?.term.focus()
       })
-      const ro = new ResizeObserver(doFit)
-      ro.observe(containerRef.current)
+      // ResizeObserver is the primary driver for live resizes. Suppress
+      // fits when the observed width is within 1px of the last fit (avoids
+      // jittery refits during the post-reveal layout settle) or when the
+      // panel has been detached from layout (offsetParent === null).
+      const ro = new ResizeObserver(() => {
+        const inst = termInstances.get(info.id)
+        if (!inst || !container) return
+        if (container.offsetParent === null) return
+        const w = container.clientWidth
+        if (w <= 0) return
+        if (Math.abs(w - inst.lastFittedWidth) <= 1) return
+        safeFit(info.id, inst, container)
+      })
+      ro.observe(container)
       return () => {
         cancelAnimationFrame(rafId)
         ro.disconnect()
@@ -793,15 +851,20 @@ export default function TerminalPanel({ sessions, isVisible, projectDir, layout,
   }, [layout, allSessions, onLayoutChange])
 
   // Re-fit terminals when this panel becomes visible, then focus the active one.
+  // The panel is hidden via Tailwind .hidden (display:none) when the user is
+  // on another top-nav tab; on reveal the children's dimensions need a frame
+  // or two to settle, so we route every instance through scheduleFitWhenReady.
+  // After a successful fit we pin scroll to the bottom so the user returns to
+  // the latest output. Preserving mid-history scroll on reveal is the wrong
+  // trade-off here (see plan + acceptance #4).
   useEffect(() => {
     if (!isVisible) return
-    const raf = requestAnimationFrame(() => {
-      termInstances.forEach((instance, id) => {
-        try {
-          instance.fit.fit()
-          window.electron.terminal.resize(id, instance.term.cols, instance.term.rows)
-        } catch {}
+    termInstances.forEach((instance, id) => {
+      scheduleFitWhenReady(id, instance, instance.term.element ?? null, () => {
+        instance.term.scrollToBottom()
       })
+    })
+    const raf = requestAnimationFrame(() => {
       const activeId = layout ? collectActiveTabs(layout.root)[0] : null
       if (activeId) termInstances.get(activeId)?.term.focus()
     })
