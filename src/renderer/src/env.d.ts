@@ -25,6 +25,9 @@ interface ElectronAPI {
     hasCanvasFile: boolean
     canvasIsEmpty: boolean
   }>
+  appWindow: {
+    setMode: (mode: 'launcher' | 'workspace') => Promise<void>
+  }
   saveCanvas: (projectDir: string, pageId: string, data: string) => Promise<void>
   loadCanvas: (projectDir: string, pageId: string) => Promise<string | null>
   watchCanvas: (projectDir: string, pageId: string) => Promise<void>

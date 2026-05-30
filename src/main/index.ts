@@ -79,6 +79,8 @@ const iconPath = join(__dirname, '../../resources/icon.png')
 const CANVAS_FILENAME = 'architect-canvas.json'
 const ARCHITECT_DIRNAME = 'ARCHITECT'
 const IGNORED_PROJECT_ENTRIES = new Set(['.DS_Store'])
+const LAUNCHER_WINDOW_SIZE = { width: 540, height: 540 }
+const WORKSPACE_WINDOW_SIZE = { width: 1440, height: 900 }
 
 let mainWindow: BrowserWindow | null = null
 interface CanvasWatcherEntry {
@@ -216,10 +218,10 @@ function createWindow(): void {
   const icon = nativeImage.createFromPath(iconPath)
 
   mainWindow = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    width: LAUNCHER_WINDOW_SIZE.width,
+    height: LAUNCHER_WINDOW_SIZE.height,
     show: false,
-    backgroundColor: '#111111',
+    backgroundColor: '#1e1e1e',
     icon,
     title: 'Clique',
     // macOS: keep the traffic lights but drop the native title bar strip.
@@ -285,6 +287,18 @@ ipcMain.handle('open-directory', async () => {
     properties: ['openDirectory', 'createDirectory']
   })
   return result.filePaths[0] ?? null
+})
+
+ipcMain.handle('app-window:set-mode', (event, mode: 'launcher' | 'workspace') => {
+  const win = BrowserWindow.fromWebContents(event.sender)
+  if (!win || win.isDestroyed()) return
+  const next = mode === 'workspace' ? WORKSPACE_WINDOW_SIZE : LAUNCHER_WINDOW_SIZE
+  try {
+    if (win.isFullScreen()) win.setFullScreen(false)
+    if (win.isMaximized()) win.unmaximize()
+    win.setSize(next.width, next.height, true)
+    win.center()
+  } catch {}
 })
 
 ipcMain.handle('inspect-project', (_event, projectDir: string) => {

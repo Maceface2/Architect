@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, FileStack, Loader2, Save, SquareTerminal } from 'lucide-react'
+import { Activity, FileStack, FolderOpen, Loader2, Save, SquareTerminal } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -262,77 +262,138 @@ function serializeCanvasData(
   })
 }
 
+interface RecentProject {
+  path: string
+  openedAt: string
+}
+
+const RECENT_PROJECTS_KEY = 'architect:recent-projects'
+const RECENT_PROJECT_LIMIT = 6
+
+function projectNameFromPath(projectPath: string): string {
+  const normalized = projectPath.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.split('/').filter(Boolean).pop() || projectPath
+}
+
+function loadRecentProjects(): RecentProject[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(RECENT_PROJECTS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((entry): entry is RecentProject =>
+        entry &&
+        typeof entry === 'object' &&
+        typeof entry.path === 'string' &&
+        typeof entry.openedAt === 'string',
+      )
+      .slice(0, RECENT_PROJECT_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function saveRecentProjects(projects: RecentProject[]): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(projects.slice(0, RECENT_PROJECT_LIMIT)))
+  } catch {}
+}
+
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
-  const [loading, setLoading] = useState(false)
+  const [openingPath, setOpeningPath] = useState<string | null>(null)
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => loadRecentProjects())
+
+  const openProject = useCallback((dir: string) => {
+    const next = [
+      { path: dir, openedAt: new Date().toISOString() },
+      ...recentProjects.filter(project => project.path !== dir),
+    ].slice(0, RECENT_PROJECT_LIMIT)
+    setRecentProjects(next)
+    saveRecentProjects(next)
+    onOpen(dir)
+  }, [onOpen, recentProjects])
 
   const pick = async () => {
-    setLoading(true)
+    setOpeningPath('__picker__')
     try {
       const dir = await window.electron.openDirectory()
-      if (dir) onOpen(dir)
+      if (dir) openProject(dir)
     } finally {
-      setLoading(false)
+      setOpeningPath(null)
     }
   }
 
   return (
-    <div className="relative h-screen w-screen bg-canvas text-fg select-none flex flex-col overflow-hidden">
-      {/* Drag strip across the top so the user can move the window before
-          they've picked a project (TopNav, which owns drag normally, isn't
-          mounted yet). Behind the composition; interactive elements opt out. */}
-      <div
-        className="absolute top-0 left-0 right-0 h-9 z-0"
-        style={{ WebkitAppRegion: 'drag' } as CSSProperties}
-        aria-hidden
-      />
-      <div className="absolute top-2.5 right-3 z-10">
-        <UserMenu />
-      </div>
-
-      {/* Title block: two columns separated by a hairline rule. The lockup is
-          a drafting-style nameplate; the action column reads as the next step
-          in a numbered procedure. Asymmetric on purpose, breaks the centered-
-          welcome-stack reflex. */}
-      <main className="flex-1 flex items-center justify-center px-10">
-        <div className="w-full max-w-3xl flex items-stretch gap-12">
-          <section className="flex-1 flex flex-col items-start justify-end gap-5 pb-1">
-            <CliqueLogo size={56} className="text-fg" />
-            <div>
-              <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle mb-2">
-                / Schematic for AI agent CLIs
-              </div>
-              <h1 className="text-[32px] font-medium uppercase tracking-[0.2em] leading-none text-fg">
-                Clique
-              </h1>
+    <div
+      className="grid h-screen w-screen select-none grid-cols-[218px_minmax(0,1fr)] overflow-hidden text-fg"
+      style={{ WebkitAppRegion: 'drag', backgroundColor: 'rgb(30, 30, 30)' } as CSSProperties}
+    >
+      <aside
+        className="flex min-h-0 flex-col border-r border-node-border px-3 pb-4 pt-[58px]"
+        style={{ backgroundColor: 'rgb(38, 38, 38)' }}
+      >
+        <div className="mb-3 text-[10px] font-medium uppercase tracking-[0.18em] text-fg-subtle">
+          Recent
+        </div>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+          {recentProjects.length === 0 ? (
+            <div className="rounded-md border border-node-border px-3 py-2 text-[11px] leading-4 text-fg-subtle">
+              No recent projects.
             </div>
-          </section>
+          ) : (
+            recentProjects.map(project => {
+              const isOpening = openingPath === project.path
+              return (
+                <button
+                  key={project.path}
+                  onClick={() => {
+                    setOpeningPath(project.path)
+                    openProject(project.path)
+                  }}
+                  disabled={openingPath !== null}
+                  title={project.path}
+                  className="group w-full rounded-md px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60"
+                  style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+                >
+                  <div className="truncate text-[12px] font-medium text-fg">
+                    {isOpening ? 'Opening...' : projectNameFromPath(project.path)}
+                  </div>
+                  <div className="mt-0.5 truncate text-[10px] text-fg-subtle group-hover:text-fg-muted">
+                    {project.path}
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </aside>
 
-          <div className="w-px self-stretch bg-white/[0.08]" aria-hidden />
-
-          <section className="flex-1 flex flex-col items-start justify-end gap-3 pb-1">
-            <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle">
-              01 / Open project
-            </div>
-            <button
-              onClick={pick}
-              disabled={loading}
-              className="inline-flex items-center gap-2 rounded-[3px] bg-accent px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.18em] text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
-            >
-              {loading ? 'Opening…' : 'Choose folder'}
-            </button>
-            <p className="text-[11px] text-fg-subtle leading-relaxed mt-1 max-w-[28ch]">
-              All agents are scoped to this directory.
+      <main className="flex min-w-0 flex-col px-7 pb-7 pt-[58px]">
+        <div className="flex flex-1 flex-col justify-between">
+          <div>
+            <CliqueLogo size={42} className="text-fg" />
+            <h1 className="mt-4 text-[22px] font-semibold leading-none text-fg">
+              Clique
+            </h1>
+            <p className="mt-2 max-w-[23ch] text-[12px] leading-5 text-fg-muted">
+              Open a repository to compose and dispatch agent zones.
             </p>
-          </section>
+          </div>
+
+          <button
+            onClick={pick}
+            disabled={openingPath !== null}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-node-border bg-node px-3.5 py-2.5 text-[12px] font-medium text-fg transition-colors hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-50"
+            style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+          >
+            <FolderOpen size={14} strokeWidth={1.8} />
+            {openingPath === '__picker__' ? 'Opening...' : 'Open project'}
+          </button>
         </div>
       </main>
-
-      {/* Drawing-sheet footer: hairline rule + tracked monoglyphs left/right.
-          Reinforces the title-block convention without adding decoration. */}
-      <footer className="flex items-center justify-between border-t border-node-border px-6 py-3 text-fg-subtle">
-        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">v0.1.0 / alpha</span>
-        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">Sheet 01 of 01</span>
-      </footer>
     </div>
   )
 }
@@ -2720,6 +2781,10 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
 
 function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.electron.appWindow.setMode(projectDir ? 'workspace' : 'launcher')
+  }, [projectDir])
 
   if (!projectDir) {
     return <DirectoryGate onOpen={setProjectDir} />
