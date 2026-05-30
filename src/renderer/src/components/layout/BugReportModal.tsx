@@ -72,8 +72,8 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
 
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Report a bug</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             Describe what happened, then click <span className="text-fg">Copy logs &amp; open form</span>. Architect copies a diagnostic bundle to your clipboard and opens the feedback form. Paste the bundle into the &ldquo;Logs&rdquo; field.
@@ -86,7 +86,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
             onChange={(e) => setMessage(e.target.value)}
             placeholder="What were you doing when the issue occurred?"
             rows={5}
-            className="w-full resize-none rounded border border-node-border bg-[#0e0e0e] px-3 py-2 text-xs text-fg placeholder:text-fg-subtle focus:outline-none focus:border-accent/60"
+            className="w-full resize-none rounded border border-node-border bg-node px-3 py-2 text-xs text-fg placeholder:text-fg-subtle focus:border-accent/60 focus:outline-none"
           />
           <label className="flex items-center gap-2 text-xs text-fg-muted">
             <input
@@ -112,7 +112,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
           )}
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onClose}
             className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
@@ -131,7 +131,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
           <button
             onClick={() => void handleCopyAndOpen()}
             disabled={working}
-            className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+            className="flex items-center gap-1.5 rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
           >
             {working ? <Loader2 size={11} className="animate-spin" /> : <ExternalLink size={11} />}
             Copy logs &amp; open form

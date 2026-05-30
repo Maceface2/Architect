@@ -6,58 +6,70 @@
    Tailwind's `<alpha-value>` placeholder (configured in tailwind.config.ts)
    lets `bg-accent/90`, `hover:bg-node/50`, etc. resolve correctly. */
 :root {
-  /* Warm Graphite palette. OKLCH lightness ~14-18%, hue 60 (warm yellow-
-     brown), chroma kept low (≤0.012) so the tint reads as a drafted
-     surface, not a stained one. Lifted off pure-black so the canvas reads
-     as graphite paper under a tungsten desk lamp. */
-  --bg-canvas: 34 31 27;
-  --bg-panel: 26 23 20;
-  --bg-node: 52 48 43;
-  /* Dark-themed cards inside the canvas (e.g. ComponentNode). Stays dark
-     in dark mode, flips to white-ish in light mode so cards aren't
-     unreadable on a light backdrop. */
-  --bg-component: 42 39 35;
-  /* Terminal surface: kept separate from --bg-canvas so the terminal can
-     be a flatter near-black in dark mode (better contrast for ANSI colors)
-     and pure white in light mode. xterm's own theme is updated to match. */
-  --bg-terminal: 20 17 14;
-  --border-node: 68 61 53;
-  --border-node-active: 88 166 255;
-  --accent: 88 166 255;
-  --fg: 235 231 225;
-  --fg-muted: 170 162 152;
-  --fg-subtle: 117 105 95;
+  /* Flat Obsidian base. The whole app sits on a single grey (#262626 / 38);
+     regions are separated by hairline borders and the top bar's one lighter
+     step, not by stepped fills. Node + component lift one notch (#2e2e2e)
+     so inputs, chips, cards, and hover surfaces still read on the base. */
+  --bg-canvas: 38 38 38;    /* #262626 — base: chrome + content           */
+  --bg-flow: 30 30 30;      /* #1e1e1e — react-flow graph surface (darker)*/
+  --bg-panel: 38 38 38;     /* #262626 — docked sidebars (files / pages)  */
+  --bg-topbar: 54 54 54;    /* #363636 — top navigation bar (lighter)     */
+  --bg-sidebar: 38 38 38;   /* #262626 — left icon rail                   */
+  --bg-node: 46 46 46;      /* #2e2e2e — inputs / chips / cards / hover   */
+  --bg-component: 38 38 38; /* #262626 — component card body              */
+  /* Terminal surface. Single source of truth for the PTY/shell pane:
+     xterm's theme.background is derived from this token at runtime
+     (see lib/terminalTheme.ts), so editing this value actually moves
+     the terminal color. */
+  --bg-terminal: 38 38 38;
+  --border-node: 50 50 50;  /* #323232 — hairline separators on the base  */
+  /* Focus/active border: a quiet neutral step up, not a saturated color. */
+  --border-node-active: 86 86 86;
+  --accent: 126 126 234;
+  --fg: 237 237 237;
+  --fg-muted: 155 155 165;
+  --fg-subtle: 100 100 110;
   /* React Flow chrome: not Tailwind-bound, used directly in CSS rules below. */
-  --rf-dot: #5a5048;
-  --rf-controls-bg: #2c2823;
-  --rf-controls-border: #443d35;
-  --rf-controls-fg: #aaa298;
-  --rf-controls-bg-hover: #34302b;
-  --rf-controls-fg-hover: #ebe7e1;
+  --rf-dot: #3a3a3a;
+  --rf-controls-bg: #2a2a2a;
+  --rf-controls-border: #404040;
+  --rf-controls-fg: #9c9c9c;
+  --rf-controls-bg-hover: #363636;
+  --rf-controls-fg-hover: #ededed;
 }
 
 :root[data-theme='light'] {
-  /* Canvas is a noticeably tinted slate so nodes read as objects on a
-     surface, not as floating white-on-white shapes. */
-  --bg-canvas: 226 232 240;          /* slate-200 */
-  --bg-panel: 248 250 252;           /* slate-50  */
-  --bg-node: 255 255 255;            /* white     */
-  --bg-component: 255 255 255;       /* white     */
-  --bg-terminal: 255 255 255;        /* white     */
-  --border-node: 203 213 225;        /* slate-300 */
-  /* Keep the accent the same blue across themes. Switching to indigo turns
-     every primary button purple, which was confusing and inconsistent. */
-  --border-node-active: 88 166 255;
-  --accent: 88 166 255;
-  --fg: 15 23 42;
-  --fg-muted: 71 85 105;
-  --fg-subtle: 100 116 139;
-  --rf-dot: #94a3b8;
+  /* Neutral light: soft true-gray surfaces mirroring the dark step scale. */
+  --bg-canvas: 243 243 243;
+  /* #F3F3F3 */
+  --bg-flow: 243 243 243;
+  --bg-panel: 249 249 249;
+  /* #F9F9F9 */
+  --bg-topbar: 249 249 249;
+  --bg-sidebar: 249 249 249;
+  --bg-node: 255 255 255;
+  /* white   */
+  --bg-component: 255 255 255;
+  /* white   */
+  --bg-terminal: 255 255 255;
+  /* white   */
+  --border-node: 224 224 224;
+  /* #E0E0E0 hairline */
+  --border-node-active: 168 168 168;
+  /* #A8A8A8 quiet focus */
+  --accent: 126 126 234;
+  --fg: 23 23 23;
+  /* #171717 */
+  --fg-muted: 93 93 93;
+  /* #5D5D5D */
+  --fg-subtle: 140 140 140;
+  /* #8C8C8C */
+  --rf-dot: #c8c8c8;
   --rf-controls-bg: #ffffff;
-  --rf-controls-border: #cbd5e1;
-  --rf-controls-fg: #475569;
-  --rf-controls-bg-hover: #e2e8f0;
-  --rf-controls-fg-hover: #0f172a;
+  --rf-controls-border: #e0e0e0;
+  --rf-controls-fg: #5d5d5d;
+  --rf-controls-bg-hover: #ececec;
+  --rf-controls-fg-hover: #171717;
 }
 
 * {
@@ -73,25 +85,49 @@ button:focus {
 body {
   margin: 0;
   padding: 0;
-  /* Single-face mono UI. Commit Mono is loaded once in main.tsx and
-     inherited everywhere; weight/size/tracking carry hierarchy. */
+  /* Native OS UI font (Obsidian-style): the whole app inherits the host
+     machine's interface typeface. Monospace is reserved for code + the
+     terminal. Hierarchy is carried by weight + size, not a second family. */
+  font-family:
+    -apple-system,
+    BlinkMacSystemFont,
+    'Segoe UI',
+    Roboto,
+    'Helvetica Neue',
+    Arial,
+    system-ui,
+    sans-serif;
+  /* tnum: tabular figures so numbers still align across badges + counters. */
+  font-feature-settings: 'tnum' 1;
+  font-variant-numeric: tabular-nums;
+  -webkit-font-smoothing: antialiased;
+  background-color: rgb(var(--bg-canvas));
+  color: rgb(var(--fg));
+}
+
+/* Code stays monospace even though the UI runs in the system font. Covers raw
+   <code>/<pre> from rendered markdown; anything opting in via Tailwind's
+   font-mono utility already resolves to the same stack (fontFamily.mono). */
+code,
+pre,
+kbd,
+samp {
   font-family:
     'Commit Mono',
     ui-monospace,
     SFMono-Regular,
     Menlo,
     monospace;
-  /* tnum: tabular figures so numbers align across tables, badges, counters.
-     liga/calt off: ensure UI chrome reads as plain mono (no programming
-     ligatures sneaking into labels and counts). */
-  font-feature-settings: 'tnum' 1, 'liga' 0, 'calt' 0;
-  font-variant-numeric: tabular-nums;
-  /* Mono letterforms are slightly wider than proportional sans; a touch of
-     negative tracking at small UI sizes keeps copy from feeling spaced-out. */
-  letter-spacing: -0.005em;
-  -webkit-font-smoothing: antialiased;
-  background-color: rgb(var(--bg-canvas));
-  color: rgb(var(--fg));
+}
+
+/* Rendered-markdown reading mode (DocPane). Fenced code blocks render as
+   <pre><code>; the <pre> already carries the block surface, so strip the
+   inline-chip styling off the nested <code> to avoid a double background. */
+.md-body pre code {
+  background: transparent;
+  padding: 0;
+  font-size: inherit;
+  color: inherit;
 }
 
 /* Re-enable ligatures + contextual alternates inside the embedded terminal
@@ -101,13 +137,14 @@ body {
   font-feature-settings: 'tnum' 1, 'liga' 1, 'calt' 1 !important;
 }
 
-/* React Flow canvas */
+/* React Flow canvas. The graph surface is its own darker token (--bg-flow,
+   #1e1e1e) so the drawing area recedes below the flat #262626 app base. */
 .react-flow {
-  background-color: rgb(var(--bg-canvas));
+  background-color: rgb(var(--bg-flow));
 }
 
 .react-flow__background {
-  background-color: rgb(var(--bg-canvas));
+  background-color: rgb(var(--bg-flow));
 }
 
 /* Keep translucent zones behind components, including while selected/dragged. */
@@ -143,14 +180,14 @@ body {
   fill: currentColor;
 }
 
-/* Edge */
+/* Edge — neutral so signal lines never out-saturate the canvas. */
 .react-flow__edge-path {
-  stroke: #58a6ff;
+  stroke: #525252;
   stroke-width: 2;
 }
 
 .react-flow__edge.selected .react-flow__edge-path {
-  stroke: #8fc2ff;
+  stroke: #6e6e6e;
 }
 
 /* Lift edges above the zone fill — React Flow stacks edges under nodes by
@@ -174,22 +211,24 @@ body {
 
 .architect-edge-mode .architect-component-handle {
   animation: architect-handle-pulse 1.15s ease-in-out infinite;
-  box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.18), 0 0 14px rgba(88, 166, 255, 0.42);
+  box-shadow: 0 0 0 2px rgb(var(--accent) / 0.18), 0 0 14px rgb(var(--accent) / 0.42);
 }
 
 @keyframes architect-handle-pulse {
-  0%, 100% {
-    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.16), 0 0 10px rgba(88, 166, 255, 0.32);
+  0%,
+  100% {
+    box-shadow: 0 0 0 2px rgb(var(--accent) / 0.16), 0 0 10px rgb(var(--accent) / 0.3);
   }
+
   50% {
-    box-shadow: 0 0 0 5px rgba(88, 166, 255, 0.28), 0 0 18px rgba(88, 166, 255, 0.58);
+    box-shadow: 0 0 0 5px rgb(var(--accent) / 0.26), 0 0 18px rgb(var(--accent) / 0.52);
   }
 }
 
-/* Selection box */
+/* Selection box — neutral marquee, not a colored signal. */
 .react-flow__selection {
-  background: rgba(88, 166, 255, 0.08);
-  border: 1px solid #58a6ff;
+  background: rgba(150, 150, 150, 0.10);
+  border: 1px solid #7a7a7a;
 }
 
 /* Node drag placeholder */
@@ -203,6 +242,7 @@ body {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
@@ -217,6 +257,7 @@ body {
   height: 0;
   background: transparent;
 }
+
 * {
   scrollbar-width: none;
   -ms-overflow-style: none;
@@ -226,18 +267,22 @@ body {
   scrollbar-width: thin;
   scrollbar-color: rgba(148, 148, 148, 0.45) transparent;
 }
+
 .xterm-viewport::-webkit-scrollbar {
   width: 10px;
   height: 10px;
   background: transparent;
 }
+
 .xterm-viewport::-webkit-scrollbar-thumb {
   background: rgba(148, 148, 148, 0.45);
   border-radius: 5px;
 }
+
 .xterm-viewport::-webkit-scrollbar-thumb:hover {
   background: rgba(148, 148, 148, 0.7);
 }
+
 .xterm-viewport::-webkit-scrollbar-track {
   background: transparent;
 }

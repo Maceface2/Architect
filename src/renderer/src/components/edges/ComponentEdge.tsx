@@ -3,7 +3,6 @@ import { createPortal } from 'react-dom'
 import {
   BaseEdge,
   EdgeLabelRenderer,
-  Position,
   getBezierPath,
   useReactFlow,
   type EdgeProps,
@@ -22,39 +21,6 @@ function edgeMarkerId(id: string, side: 'start' | 'end'): string {
   return `component-edge-${side}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
-// Component handles sit 5px outside the node body (left:-5 / right:-5 in
-// ComponentNode), so the bezier from handle-center to handle-center leaves a
-// 5px gap between the line and each node. Extend the path with a short
-// straight segment on each end so the line (and arrow) reach the node edge
-// while the dots stay where they are.
-const HANDLE_INSET = 5
-
-function outwardDelta(pos: Position): { x: number; y: number } {
-  switch (pos) {
-    case Position.Left:   return { x: -1, y: 0 }
-    case Position.Right:  return { x:  1, y: 0 }
-    case Position.Top:    return { x:  0, y: -1 }
-    case Position.Bottom: return { x:  0, y: 1 }
-  }
-}
-
-function extendPathToNodeEdges(
-  bezierPath: string,
-  sourceX: number, sourceY: number, sourcePosition: Position,
-  targetX: number, targetY: number, targetPosition: Position,
-): string {
-  const sd = outwardDelta(sourcePosition)
-  const td = outwardDelta(targetPosition)
-  const sourceEdgeX = sourceX - sd.x * HANDLE_INSET
-  const sourceEdgeY = sourceY - sd.y * HANDLE_INSET
-  const targetEdgeX = targetX - td.x * HANDLE_INSET
-  const targetEdgeY = targetY - td.y * HANDLE_INSET
-  const cIdx = bezierPath.indexOf('C')
-  if (cIdx < 0) return bezierPath
-  const curve = bezierPath.slice(cIdx)
-  return `M ${sourceEdgeX},${sourceEdgeY} L ${sourceX},${sourceY} ${curve} L ${targetEdgeX},${targetEdgeY}`
-}
-
 function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const {
     id,
@@ -71,7 +37,10 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const { setEdges, getNode } = useReactFlow()
   const [editorOpen, setEditorOpen] = useState(false)
 
-  const [bezierPath, labelX, labelY] = getBezierPath({
+  // Handle-to-handle bezier only — handles sit ~5px outside each node body,
+  // so the line stays in the gap *outside* the nodes instead of being
+  // extended in to touch (and tuck under) the card edges.
+  const [edgePath, labelX, labelY] = getBezierPath({
     sourceX,
     sourceY,
     sourcePosition,
@@ -79,11 +48,6 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
     targetY,
     targetPosition,
   })
-  const edgePath = extendPathToNodeEdges(
-    bezierPath,
-    sourceX, sourceY, sourcePosition,
-    targetX, targetY, targetPosition,
-  )
   const edgeData = normalizeEdgeData(data)
   const direction = edgeData.direction ?? 'source-to-target'
   const label = edgeData.label ?? ''
@@ -93,13 +57,14 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   // isn't in the graph), so the renderer just dims the source endpoint
   // marker via the muted color/dash.
   const isDangling = (data as { dangling?: boolean } | undefined)?.dangling === true
+  // Neutral gray connection lines. Selection is signalled by stroke width
+  // (below), cross-folder by the dashed pattern — so color stays a quiet
+  // two-step gray rather than another saturated signal.
   const color = selected
-    ? '#8b8bff'
+    ? 'rgb(var(--accent))'
     : isDangling
-      ? '#3a3a3a'
-      : isCrossFolder
-        ? '#6b6bd6'
-        : '#4b5563'
+      ? '#424242'
+      : '#525252'
   const markerStart = direction === 'bidirectional' ? `url(#${edgeMarkerId(id, 'start')})` : undefined
   const markerEnd = direction === 'source-to-target' || direction === 'bidirectional'
     ? `url(#${edgeMarkerId(id, 'end')})`
@@ -235,7 +200,7 @@ function EdgeEditorModal({
       className="fixed inset-0 z-[100] flex items-center justify-center bg-black/55"
       onMouseDown={event => { if (event.target === event.currentTarget) onClose() }}
     >
-      <div className="w-[360px] rounded-lg border border-white/10 bg-[#171717] p-4 shadow-2xl">
+      <div className="w-[360px] rounded-lg border border-node-border bg-panel p-4 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
           <h2 className="text-sm font-semibold text-fg">Component Edge</h2>
           <button
@@ -254,13 +219,13 @@ function EdgeEditorModal({
             value={label}
             onChange={event => setLabel(event.target.value)}
             placeholder="e.g. publishes events"
-            className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+            className="w-full rounded border border-node-border bg-node px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
           />
         </label>
 
         <div className="mb-5">
           <span className="mb-1.5 block text-xs font-medium text-fg-muted">Direction</span>
-          <div className="grid grid-cols-3 gap-1 rounded bg-black/30 p-1">
+          <div className="grid grid-cols-3 gap-1 rounded bg-node p-1">
             {(Object.keys(DIRECTION_LABELS) as ComponentEdgeDirection[]).map(value => (
               <button
                 key={value}
@@ -298,7 +263,7 @@ function EdgeEditorModal({
             <button
               type="button"
               onClick={save}
-              className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-[#4a4ad0]"
+              className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-accent/90"
             >
               Save
             </button>

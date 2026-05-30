@@ -71,14 +71,14 @@ export default function ResizablePanel({
       <div
         className={
           horizontal
-            ? 'absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-node-border group-hover:bg-[#5b5bf0]/50 transition-colors'
-            : 'absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-node-border group-hover:bg-[#5b5bf0]/50 transition-colors'
+            ? 'absolute inset-y-0 left-1/2 -translate-x-1/2 w-px bg-node-border group-hover:bg-accent/50 transition-colors'
+            : 'absolute inset-x-0 top-1/2 -translate-y-1/2 h-px bg-node-border group-hover:bg-accent/50 transition-colors'
         }
       />
 
       {/* Collapse toggle — visible on hover */}
       <button
-        className={`relative z-10 flex items-center justify-center rounded-sm bg-panel border border-node-border text-fg-subtle hover:text-fg hover:border-[#5b5bf0] transition-all opacity-0 group-hover:opacity-100 flex-shrink-0 ${
+        className={`relative z-10 flex items-center justify-center rounded-sm bg-panel border border-node-border text-fg-subtle hover:text-fg hover:border-accent transition-all opacity-0 group-hover:opacity-100 flex-shrink-0 ${
           horizontal ? 'w-[18px] h-6' : 'h-[18px] w-6'
         }`}
         onMouseDown={e => e.stopPropagation()}

@@ -262,7 +262,7 @@ export default function ZoneLaunchModal({
                               <div className="flex items-center gap-2">
                                 <span className="text-fg font-medium truncate">{record.summary}</span>
                                 {record.dispatchId && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-[#c084fc]/20 text-[#c084fc] flex-shrink-0">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-accent/20 text-accent flex-shrink-0">
                                     from dispatch
                                   </span>
                                 )}

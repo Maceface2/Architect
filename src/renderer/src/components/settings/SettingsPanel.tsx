@@ -165,7 +165,7 @@ export default function SettingsPanel({
                       selected
                         ? notInstalled
                           ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
-                          : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                          : 'border-accent/50 bg-accent/10 text-fg'
                         : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                     }`}
                   >
@@ -281,7 +281,7 @@ export default function SettingsPanel({
                         onClick={() => setModel(runtime.id, model)}
                         className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                           current === model
-                            ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
+                            ? 'border-accent/50 bg-accent/10 text-accent'
                             : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                         }`}
                       >
@@ -421,7 +421,7 @@ export default function SettingsPanel({
             <button
               onClick={onGenerateCanvasFromCodebase}
               disabled={generatingCanvasFromCodebase}
-              className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+              className="flex-shrink-0 rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
             >
               {generatingCanvasFromCodebase ? 'Opening assistant...' : 'Generate Canvas From Codebase'}
             </button>
@@ -522,7 +522,7 @@ function AboutSection({ onOpenBugReport }: { onOpenBugReport: () => void }) {
           {status.kind === 'downloaded' ? (
             <button
               onClick={onInstall}
-              className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+              className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
             >
               Restart to install
             </button>
@@ -572,7 +572,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: readonly
           key={option}
           onClick={() => onChange(option)}
           className={`px-2.5 py-1 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-fg-subtle hover:text-fg-muted'
+            value === option ? 'bg-accent/20 text-accent' : 'text-fg-subtle hover:text-fg-muted'
           }`}
         >
           {option}
@@ -586,7 +586,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   return (
     <button onClick={onChange} className="flex items-center justify-between w-full group py-0.5">
       <span className="text-[12px] text-fg-muted group-hover:text-fg transition-colors">{label}</span>
-      <div className={`relative w-8 h-4 rounded-full transition-colors ${value ? 'bg-[#58A6FF]' : 'bg-white/10'}`}>
+      <div className={`relative w-8 h-4 rounded-full transition-colors ${value ? 'bg-accent' : 'bg-white/10'}`}>
         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${value ? 'left-[18px]' : 'left-0.5'}`} />
       </div>
     </button>
@@ -682,12 +682,12 @@ function PinnedModelsEditor({
           {pinned.map(id => (
             <span
               key={id}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#58A6FF]/40 bg-[#58A6FF]/10 text-[#58A6FF] text-[11px]"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-accent/40 bg-accent/10 text-accent text-[11px]"
             >
               <span className="font-mono">{shortModelLabel(id)}</span>
               <button
                 onClick={() => remove(id)}
-                className="text-[#58A6FF]/70 hover:text-[#58A6FF]"
+                className="text-accent/70 hover:text-accent"
                 aria-label={`Remove ${id}`}
               >
                 <XIcon size={10} />

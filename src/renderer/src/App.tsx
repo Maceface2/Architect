@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, FileStack, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Activity, FileStack, Loader2, Save, SquareTerminal } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -36,9 +36,9 @@ import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
 import TerminalPagePopoutApp from './components/layout/TerminalPagePopoutApp'
 import ResizablePanel from './components/layout/ResizablePanel'
+import { DocPaneProvider, type DocPaneTarget } from './context/DocPaneContext'
 import SettingsPanel from './components/settings/SettingsPanel'
 import CliqueLogo from './components/branding/CliqueLogo'
-import GraphBackground from './components/canvas/GraphBackground'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { nodeTypes } from './components/nodes/nodeTypes'
@@ -55,6 +55,7 @@ import type {
   CanvasNode,
   ComponentEdgeData,
   ComponentEdgeDirection,
+  ComponentNodeData,
   ComponentNodeType,
   ProjectSettings,
   ZoneNodeData,
@@ -65,6 +66,8 @@ import {
   createDefaultProjectSettings,
   applyDetectionToProjectSettings,
   migrateCanvasData,
+  getEffectiveModel,
+  getEffectiveRuntime,
   mintParticipantId,
   normalizeEdgeData,
   loadMergedCanvas,
@@ -85,11 +88,42 @@ import { RuntimeDetectionProvider, useRuntimeDetection } from './context/Runtime
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
 import BugReportModal from './components/layout/BugReportModal'
+import AgentConfigModal from './components/nodes/AgentConfigModal'
+import ComponentConfigModal from './components/nodes/ComponentConfigModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, isAgentRuntime, type AgentRuntime } from '../../shared/agentRuntimes'
 import type { SessionInfo, TerminalInfo } from '../../shared/electronTypes'
+
+/** Custom rail icon for the Canvas tab: a 3-node graph — one node fanning
+    out to two others (no edge between the pair), nodes drawn hollow. Sized +
+    colored like the sibling lucide tab icons so active/inactive coloring
+    (currentColor) carries through unchanged. */
+function CanvasGraphIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {/* rotated 90° counter-clockwise so the hub node points left */}
+      <g transform="rotate(-90 12 12)">
+        <line x1="12" y1="4" x2="5" y2="18" />
+        <line x1="12" y1="4" x2="19" y2="18" />
+        <circle cx="12" cy="4" r="2.4" fill="none" />
+        <circle cx="5" cy="18" r="2.4" fill="none" />
+        <circle cx="19" cy="18" r="2.4" fill="none" />
+      </g>
+    </svg>
+  )
+}
 
 interface CanvasUpdate {
   zones?: unknown[]
@@ -282,7 +316,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
             <button
               onClick={pick}
               disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-[11px] font-medium uppercase tracking-[0.18em] rounded-[3px] transition-colors"
+              className="inline-flex items-center gap-2 rounded-[3px] bg-accent px-4 py-2.5 text-[11px] font-medium uppercase tracking-[0.18em] text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
             >
               {loading ? 'Opening…' : 'Choose folder'}
             </button>
@@ -295,7 +329,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 
       {/* Drawing-sheet footer: hairline rule + tracked monoglyphs left/right.
           Reinforces the title-block convention without adding decoration. */}
-      <footer className="flex items-center justify-between px-6 py-3 border-t border-white/[0.06] text-fg-subtle">
+      <footer className="flex items-center justify-between border-t border-node-border px-6 py-3 text-fg-subtle">
         <span className="text-[10px] uppercase tracking-[0.22em] font-medium">v0.1.0 / alpha</span>
         <span className="text-[10px] uppercase tracking-[0.22em] font-medium">Sheet 01 of 01</span>
       </footer>
@@ -308,18 +342,13 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 // main; this placeholder just gives the user a way to bring the panel back.
 function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center gap-3 bg-terminal text-fg-muted">
-      <p className="text-sm">Terminal page is open in a separate window.</p>
+    <div className="h-full w-full flex flex-col items-center justify-center bg-terminal text-fg-muted">
       <button
         onClick={onDock}
         className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-accent/90 transition-colors"
       >
         Dock back here
       </button>
-      <p className="text-[11px] text-fg-subtle max-w-md text-center">
-        Closing the popout window also docks. Sessions and PTY state are
-        preserved across the move; on-screen scrollback may reset.
-      </p>
     </div>
   )
 }
@@ -337,8 +366,8 @@ function CanvasConflictModal({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             {changedFolders.length === 0
@@ -355,7 +384,7 @@ function CanvasConflictModal({
             ))}
           </div>
         )}
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onKeepLocal}
             className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
@@ -364,7 +393,7 @@ function CanvasConflictModal({
           </button>
           <button
             onClick={onLoadIncoming}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Load incoming changes
           </button>
@@ -385,8 +414,8 @@ function MissingFoldersPrompt({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Some folders aren&apos;t loaded</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             This dispatch ran across folders that aren&apos;t currently in the workspace. Resume will skip those zones unless you add the folders first.
@@ -399,7 +428,7 @@ function MissingFoldersPrompt({
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onCancel}
             className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
@@ -408,7 +437,7 @@ function MissingFoldersPrompt({
           </button>
           <button
             onClick={onContinue}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Resume anyway
           </button>
@@ -427,15 +456,15 @@ function DispatchErrorModal({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Dispatch error</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">{message}</p>
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Dismiss
           </button>
@@ -456,15 +485,15 @@ function AutoCanvasOnboardingModal({
 }) {
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Generate an architecture canvas?</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             This looks like an existing codebase without a Clique canvas. Clique can open the Architecture Assistant and ask it to map the project into zones, components, and dependencies.
           </p>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onDismiss}
             disabled={starting}
@@ -475,7 +504,7 @@ function AutoCanvasOnboardingModal({
           <button
             onClick={onGenerate}
             disabled={starting}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
           >
             {starting ? 'Opening assistant...' : 'Generate Canvas'}
           </button>
@@ -536,6 +565,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false)
   const [dispatchPrefill, setDispatchPrefill] = useState<string>('')
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [autoCanvasOfferOpen, setAutoCanvasOfferOpen] = useState(false)
   const [autoCanvasStarting, setAutoCanvasStarting] = useState(false)
@@ -543,6 +573,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('architect:assistant-orientation') : null
     return raw === 'bottom' ? 'bottom' : 'right'
   })
+  const [docPaneTarget, setDocPaneTarget] = useState<DocPaneTarget>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
   const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
@@ -581,7 +612,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
 
-  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, ready: workspaceReady } = useWorkspace()
+  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, deletePage, ready: workspaceReady } = useWorkspace()
 
   // Empty-region placement offsets — lifted out of FolderRegions so the
   // pane-click drop targeting and the visual rendering stay aligned after a
@@ -1335,6 +1366,32 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [setEdges, setNodes, snapshotHistory])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
+  const isCanvas = activeTab === 'Canvas'
+  const isPages = activeTab === 'Pages'
+  const isTerminal = activeTab === 'Terminal'
+  const visibleNodes = nodes.filter(node => {
+    const folderPath = (node.data as { folderPath?: string }).folderPath ?? primaryFolder.path
+    return folderPath === activeFolder.path
+  })
+  const docPaneNode = docPaneTarget ? nodes.find(node => node.id === docPaneTarget.nodeId) ?? null : null
+  const activeZoneDocNode = docPaneTarget?.kind === 'zone' && docPaneNode?.type === 'zone' ? docPaneNode : null
+  const activeComponentDocNode = docPaneTarget?.kind === 'component' && docPaneNode?.type === 'component' ? docPaneNode : null
+  const patchActiveZoneDocNode = useCallback((partial: Partial<ZoneNodeData>) => {
+    if (!activeZoneDocNode) return
+    setNodes(nodes => nodes.map(node =>
+      node.id === activeZoneDocNode.id
+        ? ({ ...node, data: { ...(node.data as ZoneNodeData), ...partial } } as ZoneNodeType)
+        : node,
+    ))
+  }, [activeZoneDocNode, setNodes])
+  const patchActiveComponentDocNode = useCallback((partial: Partial<ComponentNodeData>) => {
+    if (!activeComponentDocNode) return
+    setNodes(nodes => nodes.map(node =>
+      node.id === activeComponentDocNode.id
+        ? ({ ...node, data: { ...(node.data as ComponentNodeData), ...partial } } as ComponentNodeType)
+        : node,
+    ))
+  }, [activeComponentDocNode, setNodes])
 
   const changedZoneLabels = dispatchedGraph
     ? zones.filter(n => zoneHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
@@ -2210,10 +2267,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     })
   }, [onChangeDir, onSave, undoCanvas, redoCanvas])
 
-  const isCanvas = activeTab === 'Canvas'
-  const isPages = activeTab === 'Pages'
-  const isFiles = activeTab === 'Files'
-  const isTerminal = activeTab === 'Terminal'
   // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
   // the DispatchView (swimlane + flat log). Keep the variable name aligned
   // with the tab string so a future tab rename only has to be made in one place.
@@ -2249,7 +2302,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     // Conductor gets a fixed accent so it reads as orchestration, not a zone.
     // Zones contribute their own color so swimlane column headers match the
     // on-canvas zone they represent.
-    const map: Record<string, string> = { conductor: '#c084fc' }
+    const map: Record<string, string> = { conductor: '#7e7eea' }
     for (const z of zones) {
       const pid = (z.data.participantId as string) || z.id
       map[pid] = (z.data.color as string) || '#58A6FF'
@@ -2282,11 +2335,37 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     }
   }, [setNodes])
 
+  const openZoneDocPane = useCallback((nodeId: string) => {
+    setDocPaneTarget({ kind: 'zone', nodeId })
+  }, [])
+
+  const openComponentDocPane = useCallback((nodeId: string) => {
+    setDocPaneTarget({ kind: 'component', nodeId })
+  }, [])
+
+  const closeDocPane = useCallback(() => {
+    setDocPaneTarget(null)
+  }, [])
+
+  useEffect(() => {
+    if (!docPaneTarget) return
+    if (nodes.some(node => node.id === docPaneTarget.nodeId)) return
+    setDocPaneTarget(null)
+  }, [docPaneTarget, nodes])
+
   return (
     <ProjectSettingsProvider value={projectSettings}>
       <InterfaceSettingsProvider value={projectSettings.interface}>
       <ProjectDirProvider value={projectDir}>
-      <div className="flex flex-col h-screen bg-canvas text-fg overflow-hidden">
+      <DocPaneProvider
+        value={{
+          target: docPaneTarget,
+          openZone: openZoneDocPane,
+          openComponent: openComponentDocPane,
+          close: closeDocPane,
+        }}
+      >
+      <div className="flex h-screen flex-col overflow-hidden bg-canvas text-fg">
         <TopNav
           onDispatch={onDispatch}
           dispatching={dispatching}
@@ -2295,6 +2374,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onChangeDir={onChangeDir}
           onAssistantToggle={handleAssistantToggle}
           assistantOpen={assistantOpen}
+          onFilesToggle={() => setFilesPanelOpen(o => !o)}
+          filesPanelOpen={filesPanelOpen}
           isRedispatch={dispatchedGraph !== null}
           changedCount={changedZoneLabels.length}
           onUndo={undoCanvas}
@@ -2305,19 +2386,16 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onUpdateInstall={onUpdateInstall}
         />
         <div className="flex flex-1 overflow-hidden">
-          {/* Left rail: vertical instrument strip. Each tab stacks an icon
-              over a tracked 3-letter mono code. The active tab is signaled
-              by an inset hairline rule along its top edge in the accent
-              color, never a side stripe or a filled pill. */}
-          <nav className="flex flex-col items-stretch w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
+          {/* Left rail: Obsidian-style ribbon. Each tab is a bare icon; the
+              active tab brightens to full foreground on a soft surface, never
+              a colored stripe or hairline. */}
+          <nav className="flex flex-col items-stretch w-11 py-2 bg-sidebar border-r border-node-border flex-shrink-0">
             {([
-              { id: 'Canvas',   code: 'CAN', icon: <Layers size={14} strokeWidth={1.7} />,      title: 'Canvas'   },
-              { id: 'Pages',    code: 'PAG', icon: <FileStack size={14} strokeWidth={1.7} />,   title: 'Pages'    },
-              { id: 'Files',    code: 'FIL', icon: <Files size={14} strokeWidth={1.7} />,       title: 'Files'    },
-              { id: 'Terminal', code: 'TRM', icon: <TerminalIcon size={14} strokeWidth={1.7} />, title: 'Terminal' },
-              { id: 'Logs',     code: 'LOG', icon: <Activity size={14} strokeWidth={1.7} />,    title: 'Logs'     },
-              { id: 'Settings', code: 'SET', icon: <Settings size={14} strokeWidth={1.7} />,    title: 'Settings' },
-            ] as const).map(({ id, code, icon, title }) => {
+              { id: 'Canvas',   icon: <CanvasGraphIcon size={18} />,                  title: 'Canvas'   },
+              { id: 'Pages',    icon: <FileStack size={18} strokeWidth={1.7} />,      title: 'Pages'    },
+              { id: 'Terminal', icon: <SquareTerminal size={18} strokeWidth={1.7} />, title: 'Terminal' },
+              { id: 'Logs',     icon: <Activity size={18} strokeWidth={1.7} />,       title: 'Logs'     },
+            ] as const).map(({ id, icon, title }) => {
               const active = activeTab === id
               return (
                 <button
@@ -2325,32 +2403,37 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                   onClick={() => setActiveTab(id)}
                   title={title}
                   aria-label={title}
-                  className={`relative flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
-                    active ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
+                  className={`flex items-center justify-center mx-1.5 my-0.5 rounded-md py-2 transition-colors ${
+                    active
+                      ? 'bg-white/[0.09] text-fg'
+                      : 'text-fg-subtle hover:text-fg hover:bg-white/[0.05]'
                   }`}
                 >
-                  {active && (
-                    <span
-                      className="absolute left-1.5 right-1.5 top-0 h-px bg-accent"
-                      aria-hidden
-                    />
-                  )}
                   {icon}
-                  <span className="text-[9px] font-bold uppercase tracking-[0.2em] leading-none">
-                    {code}
-                  </span>
                 </button>
               )
             })}
             <div className="flex-1" />
             <div className="flex items-center justify-center pb-1">
-              <UserMenu />
+              <UserMenu onOpenSettings={() => setActiveTab('Settings')} />
             </div>
           </nav>
           <div
             className={`flex-1 flex overflow-hidden ${assistantOrientation === 'bottom' ? 'flex-col' : 'flex-row'}`}
           >
             <div className="flex-1 flex overflow-hidden">
+
+          {/* Files: a left-docked resizable panel that lives alongside the
+              active tab (Canvas included), mirroring the AssistantPanel
+              open/hide pattern. Kept mounted so its directory listing +
+              folder-link state survive a close/reopen. */}
+          <div style={{ display: filesPanelOpen ? 'contents' : 'none' }}>
+            <ResizablePanel side="left" defaultSize={280} minSize={180} maxSize={560}>
+              <div className="h-full overflow-hidden">
+                <FilesPanel />
+              </div>
+            </ResizablePanel>
+          </div>
 
           <div className={`flex-1 relative ${isPages ? '' : 'hidden'}`}>
             <PagesPanel onSwitch={() => setActiveTab('Canvas')} />
@@ -2374,15 +2457,16 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               minZoom={0.05}
               maxZoom={3}
             >
-              {projectSettings.interface.canvasBackground === 'grid' ? (
+              {/* Grid is still available via Settings; the default canvas is a
+                  plain solid surface (no dot texture), painted by the
+                  --bg-flow token on .react-flow. */}
+              {projectSettings.interface.canvasBackground === 'grid' && (
                 <Background
                   variant={BackgroundVariant.Lines}
                   gap={28}
                   size={1}
                   color={projectSettings.interface.theme === 'light' ? '#e2e8f0' : '#69696935'}
                 />
-              ) : (
-                <GraphBackground theme={projectSettings.interface.theme === 'light' ? 'light' : 'dark'} />
               )}
               <FolderRegions
                 nodes={nodes}
@@ -2396,17 +2480,17 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                 pannable
                 zoomable
                 ariaLabel="Canvas minimap"
-                bgColor={projectSettings.interface.theme === 'light' ? '#f8fafc' : '#1a1714'}
+                bgColor={projectSettings.interface.theme === 'light' ? '#f9f9f9' : '#1a1a1a'}
                 maskColor={
                   projectSettings.interface.theme === 'light'
-                    ? 'rgba(34, 31, 27, 0.10)'
-                    : 'rgba(20, 17, 14, 0.55)'
+                    ? 'rgba(0, 0, 0, 0.08)'
+                    : 'rgba(0, 0, 0, 0.55)'
                 }
                 nodeColor={(node) => {
                   const c = (node.data as { color?: string } | undefined)?.color
                   return typeof c === 'string' ? c : '#58A6FF'
                 }}
-                nodeStrokeColor={projectSettings.interface.theme === 'light' ? '#cbd5e1' : '#443d35'}
+                nodeStrokeColor={projectSettings.interface.theme === 'light' ? '#e0e0e0' : '#3a3a3a'}
                 nodeBorderRadius={2}
                 style={{
                   border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -2419,42 +2503,14 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
 
             <div className="absolute right-4 z-30 flex items-center gap-1.5" style={{ bottom: 144 }}>
               <button
-                onClick={() => setProjectSettings(s => ({
-                  ...s,
-                  interface: {
-                    ...s.interface,
-                    componentDensity:
-                      s.interface.componentDensity === 'simplified' ? 'detailed' : 'simplified',
-                  },
-                }))}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
-                title={
-                  projectSettings.interface.componentDensity === 'simplified'
-                    ? 'Switch to detailed UML node rendering'
-                    : 'Switch to simplified node rendering (header only)'
-                }
-              >
-                {projectSettings.interface.componentDensity === 'simplified' ? (
-                  <>
-                    <Rows3 size={11} />
-                    Simple
-                  </>
-                ) : (
-                  <>
-                    <LayoutList size={11} />
-                    Detail
-                  </>
-                )}
-              </button>
-              <button
                 onClick={onClear}
-                className="px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                className="rounded-md border border-node-border bg-node/90 px-2.5 py-1 text-xs text-fg-muted shadow-lg backdrop-blur transition-colors hover:bg-node hover:text-fg"
               >
                 Clear
               </button>
               <button
                 onClick={onSave}
-                className="relative flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                className="relative flex items-center gap-1.5 rounded-md border border-node-border bg-node/90 px-2.5 py-1 text-xs text-fg-muted shadow-lg backdrop-blur transition-colors hover:bg-node hover:text-fg"
                 title="Save canvas"
               >
                 <Save size={11} />
@@ -2516,12 +2572,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
             )}
           </div>
-
-          {isFiles && (
-            <div className="flex-1 overflow-hidden">
-              <FilesPanel />
-            </div>
-          )}
 
           <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
             {terminalPagePoppedOut ? (
@@ -2624,7 +2674,44 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             onClose={() => setDispatchErrorMessage(null)}
           />
         )}
+        {activeZoneDocNode && (
+          <AgentConfigModal
+            zoneColor={(activeZoneDocNode.data.color as string) ?? '#58A6FF'}
+            zoneId={activeZoneDocNode.id}
+            label={(activeZoneDocNode.data.label as string) ?? 'Zone'}
+            systemPrompt={(activeZoneDocNode.data.systemPrompt as string) ?? ''}
+            configuredRuntime={(activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime}
+            effectiveRuntime={getEffectiveRuntime(
+              { agentRuntime: (activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime },
+              projectSettings,
+            )}
+            effectiveModel={getEffectiveModel(
+              {
+                providerModels: (activeZoneDocNode.data.providerModels ?? {}) as Record<string, string>,
+                agentRuntime: (activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime,
+              },
+              projectSettings,
+            )}
+            providerModels={(activeZoneDocNode.data.providerModels ?? {}) as Record<string, string>}
+            skills={(activeZoneDocNode.data.skills ?? []) as ZoneNodeData['skills']}
+            tools={(activeZoneDocNode.data.tools ?? { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false }) as ZoneNodeData['tools']}
+            behavior={(activeZoneDocNode.data.behavior ?? { mode: 'sequential', retries: 0, onFailure: 'stop', timeoutMs: 30000 }) as ZoneNodeData['behavior']}
+            permissions={(activeZoneDocNode.data.permissions ?? { readFiles: false, writeFiles: false, network: false, shell: false }) as ZoneNodeData['permissions']}
+            envVars={(activeZoneDocNode.data.envVars ?? []) as ZoneNodeData['envVars']}
+            patch={patchActiveZoneDocNode}
+            onClose={closeDocPane}
+          />
+        )}
+        {activeComponentDocNode && (
+          <ComponentConfigModal
+            label={(activeComponentDocNode.data.label as string) ?? 'Component'}
+            specs={(activeComponentDocNode.data.specs as string) ?? ''}
+            patch={patchActiveComponentDocNode}
+            onClose={closeDocPane}
+          />
+        )}
       </div>
+      </DocPaneProvider>
       </ProjectDirProvider>
       </InterfaceSettingsProvider>
     </ProjectSettingsProvider>

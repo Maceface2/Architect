@@ -1,12 +1,13 @@
 interface CliqueLogoProps {
   size?: number
   className?: string
+  /** Kept for API compatibility with existing call sites. The triangle mark
+      uses fixed brand colors (white ink + yellow top node) and is
+      intentionally not themed. */
   monochrome?: boolean
 }
 
-export default function CliqueLogo({ size = 20, className, monochrome = false }: CliqueLogoProps) {
-  const ink = 'currentColor'
-  const accent = monochrome ? 'currentColor' : '#E2B237'
+export default function CliqueLogo({ size = 20, className }: CliqueLogoProps) {
   return (
     <svg
       width={size}
@@ -17,18 +18,22 @@ export default function CliqueLogo({ size = 20, className, monochrome = false }:
       aria-label="Clique"
       className={className}
     >
-      <g stroke={ink} strokeWidth={10} strokeLinecap="round">
-        <line x1="50" y1="50" x2="150" y2="50" />
-        <line x1="150" y1="50" x2="150" y2="150" />
-        <line x1="150" y1="150" x2="50" y2="150" />
-        <line x1="50" y1="150" x2="50" y2="50" />
-        <line x1="50" y1="50" x2="150" y2="150" />
-        <line x1="150" y1="50" x2="50" y2="150" />
+      <g transform="translate(100, 110)">
+        <g stroke="#ffffff" strokeWidth={2.5} strokeLinecap="round">
+          {/* Triangle perimeter */}
+          <line x1="0" y1="-65" x2="-60" y2="40" />
+          <line x1="0" y1="-65" x2="60" y2="40" />
+          <line x1="-60" y1="40" x2="60" y2="40" />
+          {/* Spokes to center */}
+          <line x1="0" y1="-65" x2="0" y2="5" />
+          <line x1="-60" y1="40" x2="0" y2="5" />
+          <line x1="60" y1="40" x2="0" y2="5" />
+        </g>
+        <circle cx="0" cy="-65" r="8" fill="#e8c547" />
+        <circle cx="-60" cy="40" r="8" fill="#ffffff" />
+        <circle cx="60" cy="40" r="8" fill="#ffffff" />
+        <circle cx="0" cy="5" r="8" fill="#ffffff" />
       </g>
-      <circle cx="50" cy="50" r="15" fill={ink} />
-      <circle cx="150" cy="50" r="15" fill={accent} />
-      <circle cx="150" cy="150" r="15" fill={ink} />
-      <circle cx="50" cy="150" r="15" fill={ink} />
     </svg>
   )
 }

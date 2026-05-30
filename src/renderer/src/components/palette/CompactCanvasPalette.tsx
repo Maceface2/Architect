@@ -80,7 +80,7 @@ export default function CompactCanvasPalette({
 
   return (
     <div className="pointer-events-none absolute left-4 top-4 z-30 flex items-start gap-3">
-      <div className="pointer-events-auto flex flex-col gap-1 rounded-lg border border-white/10 bg-[#1c1916]/95 p-1 shadow-2xl backdrop-blur">
+      <div className="pointer-events-auto flex flex-col gap-1 rounded-lg border border-node-border bg-panel/95 p-1 shadow-2xl backdrop-blur">
         <ToolButton
           label="Edges"
           active={activeTool === 'edge' || dialog === 'edge'}
@@ -113,7 +113,7 @@ export default function CompactCanvasPalette({
       </div>
 
       {placementHint && (
-        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-white/10 bg-[#1c1916]/95 px-3 py-2 text-xs text-fg-muted shadow-2xl backdrop-blur">
+        <div className="pointer-events-auto flex items-center gap-2 rounded-lg border border-node-border bg-panel/95 px-3 py-2 text-xs text-fg-muted shadow-2xl backdrop-blur">
           <MousePointer2 size={14} className="text-accent" />
           {placementHint}
         </div>
@@ -282,7 +282,7 @@ function ZoneCreateDialog({
                       ? notInstalled
                         ? 'bg-amber-400/15 text-amber-100 border border-amber-400/40'
                         : 'bg-accent text-fg'
-                      : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
+                          : 'bg-node text-fg-muted hover:bg-node/80 hover:text-fg'
                   }`}
                 >
                   {option.shortLabel}
@@ -305,7 +305,7 @@ function ZoneCreateDialog({
                 className={`rounded border px-2 py-1 text-[10px] transition-colors ${
                   model === option
                     ? 'border-accent bg-accent/15 text-fg'
-                    : 'border-white/10 bg-black/20 text-fg-subtle hover:border-white/20 hover:text-fg-muted'
+                    : 'border-node-border bg-node text-fg-subtle hover:border-border-node-active hover:text-fg-muted'
                 }`}
               >
                 {option}
@@ -352,7 +352,7 @@ function EdgeCreateDialog({
               type="button"
               onClick={() => setDirection(option.value)}
               className={`rounded px-2 py-1.5 text-xs transition-colors ${
-                direction === option.value ? 'bg-accent text-fg' : 'bg-black/30 text-fg-muted hover:bg-white/10 hover:text-fg'
+                direction === option.value ? 'bg-accent text-fg' : 'bg-node text-fg-muted hover:bg-node/80 hover:text-fg'
               }`}
             >
               {option.label}
@@ -379,7 +379,7 @@ function PaletteDialog({
   onClose: () => void
 }) {
   return (
-    <div className="pointer-events-auto w-[300px] rounded-lg border border-white/10 bg-[#1c1916]/95 p-4 shadow-2xl backdrop-blur">
+    <div className="pointer-events-auto w-[300px] rounded-lg border border-node-border bg-panel/95 p-4 shadow-2xl backdrop-blur">
       <div className="mb-4 flex items-center justify-between">
         <h2 className="text-sm font-semibold text-fg">{title}</h2>
         <button
@@ -414,7 +414,7 @@ function TextField({
         value={value}
         onChange={event => onChange(event.target.value)}
         autoFocus={autoFocus}
-        className="w-full rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+        className="w-full rounded border border-node-border bg-node px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
       />
     </label>
   )
@@ -441,7 +441,7 @@ function TextAreaField({
         onChange={event => onChange(event.target.value)}
         placeholder={placeholder}
         rows={rows}
-        className="w-full resize-none rounded border border-white/10 bg-black/30 px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+        className="w-full resize-none rounded border border-node-border bg-node px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
       />
     </label>
   )
@@ -463,7 +463,7 @@ function ColorField({
         type="color"
         value={value}
         onChange={event => onChange(event.target.value)}
-        className="h-[38px] w-full cursor-pointer rounded border border-white/10 bg-black/30 p-1"
+        className="h-[38px] w-full cursor-pointer rounded border border-node-border bg-node p-1"
       />
     </label>
   )
@@ -490,7 +490,7 @@ function DialogActions({
       <button
         type="button"
         onClick={onSubmit}
-        className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-[#4a4ad0]"
+        className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-accent/90"
       >
         {submitLabel}
       </button>

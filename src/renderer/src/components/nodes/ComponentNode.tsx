@@ -1,49 +1,29 @@
-import { memo, useState, type CSSProperties } from 'react'
-import { createPortal } from 'react-dom'
+import { memo, type CSSProperties } from 'react'
 import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { FileText, Trash2 } from 'lucide-react'
 import { getIcon } from '../../lib/icons'
-import { fieldTypeColor } from '../../lib/fieldTypes'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
-import ComponentConfigModal from './ComponentConfigModal'
-import type { ComponentField, ComponentNodeData } from '../../types'
+import { useDocPane } from '../../context/DocPaneContext'
+import type { ComponentNodeData } from '../../types'
 
 type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
 
 function ComponentNode({ id, data, selected }: ComponentNodeProps) {
-  const { setNodes, deleteElements } = useReactFlow()
-  const { theme, componentDensity } = useInterfaceSettings()
+  const { deleteElements } = useReactFlow()
+  const { openComponent, close: closeDocPane } = useDocPane()
+  const { theme } = useInterfaceSettings()
   const isLight = theme === 'light'
-  const isSimplified = componentDensity === 'simplified'
-  const [modalOpen, setModalOpen] = useState(false)
 
   const color = data.color
-  const tag = data.tag
   const label = data.label
   const description = data.description
   const specs = data.specs ?? ''
   const iconName = data.iconName
   const Icon = getIcon(iconName)
-  const hasSpecs = specs.trim().length > 0
-  const fields = (data.fields ?? []) as ComponentField[]
-  const hasFields = fields.length > 0
-  // Collapsed nodes render a small specs/notes preview under the header:
-  // prefer the explicit one-line description, fall back to the first non-
-  // empty line of the long-form specs prose so the card still teaches the
-  // viewer something at a glance.
-  const previewText = (
-    description.trim() ||
-    specs.split('\n').map(line => line.trim()).find(line => line.length > 0) ||
-    ''
-  )
-  const hasPreview = previewText.length > 0
-
-  const patch = (partial: Partial<ComponentNodeData>) =>
-    setNodes(nodes =>
-      nodes.map(node =>
-        node.id === id ? { ...node, data: { ...(node.data as ComponentNodeData), ...partial } } : node
-      )
-    )
+  // The card previews the component's markdown note: the first few content
+  // lines of `specs` (markdown tokens stripped), falling back to the legacy
+  // one-line description so older canvases still read well.
+  const cardPreview = deriveCardPreview(specs, description, label)
 
   const handleBaseStyle = {
     width: 9,
@@ -84,65 +64,45 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
         />,
       ])}
 
-      {/* UML class card. Neutral hairline border (no zone-color outline);
-          zone identity is carried by the icon and tag inside the header.
-          Body renders typed `name : type` rows from data.fields, with the
-          type colored by category via fieldTypeColor (string=green,
-          int=blue, enum=pink, ...). Selection ring uses accent blue so it
-          reads as a system signal, not as zone overlap. */}
+      {/* Markdown note card. Neutral hairline border (no zone-color outline);
+          zone identity is carried by the icon in the header and the color band
+          at the foot. The body previews the component's markdown note.
+          Selection ring uses accent blue so it reads as a system signal, not
+          as zone overlap. */}
       <div
-        className={`relative bg-component overflow-hidden select-none cursor-pointer transition-colors rounded-md ${
-          isSimplified ? 'min-w-[210px] max-w-[300px]' : 'min-w-[220px] max-w-[280px]'
-        }`}
+        className="relative bg-component overflow-hidden select-none cursor-pointer transition-colors rounded-md min-w-[210px] max-w-[300px]"
         style={{
           border: '1px solid rgba(255, 255, 255, 0.06)',
           boxShadow: selected
             ? '0 0 0 1px rgba(88, 166, 255, 0.55), 0 0 24px rgba(88, 166, 255, 0.18)'
             : '0 6px 14px -8px rgba(0, 0, 0, 0.55)',
         }}
-        onDoubleClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
+        onDoubleClick={(e) => {
+          e.stopPropagation()
+          openComponent(id)
+        }}
       >
-        {/* Header band: darker than body (UML inverse-elevation). The
-            stereotype tag renders in italic muted mono («entity» style),
-            neutral rather than zone-colored; the icon also stays neutral.
-            Zone identity now lives in spatial containment, not on the card
-            chrome. */}
-        <div className={`flex items-center justify-between gap-2 px-3 py-2 bg-canvas ${isSimplified && !hasPreview ? '' : 'border-b border-white/[0.06]'}`}>
+        {/* Header band: darker than body. Holds the (neutral) icon + name and
+            the edit/delete actions. The bottom border is dropped when the note
+            preview is empty, so the header reads as the whole card. */}
+        <div className={`flex items-center justify-between gap-2 px-3 py-2 bg-canvas ${cardPreview ? 'border-b border-node-border' : ''}`}>
           <div className="flex items-center gap-2 min-w-0">
             <Icon
-              size={isSimplified ? 14 : 12}
+              size={14}
               strokeWidth={1.7}
               style={{ color }}
               className="flex-shrink-0"
             />
-            <span
-              className={`font-semibold text-fg truncate ${
-                isSimplified ? 'text-[14px]' : 'text-[12px]'
-              }`}
-            >
+            <span className="font-semibold text-fg truncate text-[14px]">
               {label}
             </span>
           </div>
           <div className="flex items-center gap-1.5 flex-shrink-0">
-            {tag && (
-              <span
-                className={`italic text-fg-subtle ${
-                  isSimplified ? 'text-[12px]' : 'text-[11px]'
-                }`}
-              >
-                «{tag.toLowerCase()}»
-              </span>
-            )}
-            {hasSpecs && (
-              <span
-                className="w-1 h-1 rounded-full flex-shrink-0 bg-fg-subtle"
-                aria-label="Has specs"
-                title="Has specs"
-              />
-            )}
-            <span className="w-px h-3 bg-white/[0.08] mx-0.5" aria-hidden />
             <button
-              onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                openComponent(id)
+              }}
               onMouseDown={(e) => e.stopPropagation()}
               className={`w-4 h-4 flex items-center justify-center rounded-[2px] text-fg-subtle hover:text-fg transition-colors nodrag ${
                 isLight ? 'hover:bg-slate-200/70' : 'hover:bg-white/10'
@@ -153,7 +113,11 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
               <FileText size={10} strokeWidth={1.7} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); deleteElements({ nodes: [{ id }] }) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                closeDocPane()
+                deleteElements({ nodes: [{ id }] })
+              }}
               onMouseDown={(e) => e.stopPropagation()}
               className="w-4 h-4 flex items-center justify-center rounded-[2px] text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
               title="Delete component"
@@ -164,53 +128,13 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
           </div>
         </div>
 
-        {/* Body. Render order: typed fields > description prose >
-            placeholder. Each block is independent so a component with both
-            fields and a description shows both. Suppressed entirely in
-            simplified view: only the header band remains. */}
-        {!isSimplified && (
-        <div className="px-3 py-2 space-y-1">
-          {hasFields && (
-            <div className="space-y-0.5">
-              {fields.map(field => (
-                <div
-                  key={field.id}
-                  className="flex items-baseline justify-between gap-3 text-[12px] leading-relaxed"
-                >
-                  <span className="text-fg truncate">
-                    {field.key || <span className="text-fg-subtle italic">unkeyed</span>}
-                  </span>
-                  <span
-                    className="flex-shrink-0 truncate text-right max-w-[60%]"
-                    style={{ color: fieldTypeColor(field.value) }}
-                  >
-                    {field.value || '—'}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-          {description && (
-            <p className={`text-[11px] text-fg-muted leading-relaxed line-clamp-3 ${hasFields ? 'pt-1.5 mt-1.5 border-t border-white/[0.05]' : ''}`}>
-              {description}
-            </p>
-          )}
-          {!hasFields && !description && (
-            <p className="text-[10px] text-fg-subtle italic py-0.5">
-              undocumented
-            </p>
-          )}
-        </div>
-        )}
-
-        {/* Collapsed preview: a 2-line snippet of the component's notes
-            (description first, then the first non-empty line of specs).
-            Skipped entirely if there are no notes — the header reads as the
-            full card in that case. */}
-        {isSimplified && hasPreview && (
+        {/* Body: a few lines of the component's markdown note (markdown tokens
+            stripped). Suppressed entirely when the note is empty — the header
+            then reads as the whole card. */}
+        {cardPreview && (
           <div className="px-3 py-2">
-            <p className="text-[12px] text-fg-muted leading-relaxed line-clamp-3">
-              {previewText}
+            <p className="whitespace-pre-line text-[12px] text-fg-muted leading-relaxed line-clamp-3">
+              {cardPreview}
             </p>
           </div>
         )}
@@ -222,22 +146,31 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
         <div className="h-1 w-full" style={{ backgroundColor: color }} aria-hidden />
       </div>
 
-      {modalOpen && createPortal(
-        <ComponentConfigModal
-          label={label}
-          tag={tag}
-          color={color}
-          iconName={iconName}
-          description={description}
-          specs={specs}
-          fields={fields}
-          patch={patch}
-          onClose={() => setModalOpen(false)}
-        />,
-        document.body
-      )}
     </div>
   )
+}
+
+// Build the on-card preview from a component's markdown note. Strips heading
+// hashes, list/blockquote markers, and inline-code backticks; skips a leading
+// H1 that just repeats the component name; keeps the first 3 content lines.
+// Falls back to the legacy one-line description when the note is empty.
+function deriveCardPreview(specs: string, description: string, label: string): string {
+  const out: string[] = []
+  for (const raw of specs.split('\n')) {
+    const text = raw
+      .trim()
+      .replace(/^#{1,6}\s+/, '')
+      .replace(/^[-*+]\s+/, '• ')
+      .replace(/^\d+\.\s+/, '')
+      .replace(/^>\s?/, '')
+      .replace(/`/g, '')
+      .trim()
+    if (!text) continue
+    if (out.length === 0 && text.toLowerCase() === label.trim().toLowerCase()) continue
+    out.push(text)
+    if (out.length >= 3) break
+  }
+  return out.join('\n') || description.trim()
 }
 
 export default memo(ComponentNode)

@@ -6,9 +6,9 @@ import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRunt
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useProjectDir } from '../../context/ProjectDirContext'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
+import { useDocPane } from '../../context/DocPaneContext'
 import { getEffectiveModel, getEffectiveRuntime } from '../../lib/canvas'
 import { hexToRgba } from '../../lib/color'
-import AgentConfigModal from './AgentConfigModal'
 import ZoneLaunchModal from './ZoneLaunchModal'
 import type {
   ZoneNodeData,
@@ -25,8 +25,8 @@ type ZoneNodeProps = NodeProps<Node<ZoneNodeData>>
 
 function ZoneNode({ id, data, selected }: ZoneNodeProps) {
   const { setNodes, getNodes, getEdges, deleteElements } = useReactFlow()
-  const [modalOpen, setModalOpen] = useState(false)
   const [launchOpen, setLaunchOpen] = useState(false)
+  const { openZone, close: closeDocPane } = useDocPane()
   const projectSettings = useProjectSettings()
   const { zoneTreatment, theme } = useInterfaceSettings()
   const projectDir = useProjectDir()
@@ -171,7 +171,10 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
               <Play size={12} />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); setModalOpen(true) }}
+              onClick={(e) => {
+                e.stopPropagation()
+                openZone(id)
+              }}
               onMouseDown={(e) => e.stopPropagation()}
               className={`w-5 h-5 flex items-center justify-center rounded transition-colors nodrag ${buttonIdleClass}`}
               title="Configure zone agent"
@@ -182,6 +185,7 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
             <button
               onClick={(e) => {
                 e.stopPropagation()
+                closeDocPane()
                 if (window.confirm(`Delete zone "${label}"? This removes the node and its connections.`)) {
                   deleteElements({ nodes: [{ id }] })
                 }
@@ -211,26 +215,6 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
         document.body
       )}
 
-      {modalOpen && createPortal(
-        <AgentConfigModal
-          zoneColor={zoneColor}
-          zoneId={id}
-          label={label}
-          systemPrompt={systemPrompt}
-          configuredRuntime={configuredRuntime}
-          effectiveRuntime={effectiveRuntime}
-          effectiveModel={effectiveModel}
-          providerModels={providerModels}
-          skills={skills}
-          tools={tools}
-          behavior={behavior}
-          permissions={permissions}
-          envVars={envVars}
-          patch={patch}
-          onClose={() => setModalOpen(false)}
-        />,
-        document.body
-      )}
     </>
   )
 }

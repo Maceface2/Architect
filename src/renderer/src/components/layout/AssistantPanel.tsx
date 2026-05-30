@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Bot, Settings2, X } from 'lucide-react'
@@ -9,6 +9,7 @@ import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
+import { withTerminalSurface } from '../../lib/terminalTheme'
 import type { ProjectSettings } from '../../types'
 import AssistantLaunchModal, { type AssistantRelaunchOpts } from './AssistantLaunchModal'
 
@@ -34,16 +35,16 @@ function stripAnsi(s: string): string {
 // the rationale on light-mode color picks. Cursor stays purple here to
 // match the assistant accent that's used elsewhere in the UI.
 const TERM_THEME_DARK = {
-  background:   '#14110e',
+  background:   '#212121',
   foreground:   '#e2e8f0',
-  cursor:       '#c084fc',
-  cursorAccent: '#14110e',
+  cursor:       '#7e7eea',
+  cursorAccent: '#212121',
   black:        '#1e1e1e',
   red:          '#f87171',
   green:        '#4ade80',
   yellow:       '#fbbf24',
   blue:         '#58A6FF',
-  magenta:      '#c084fc',
+  magenta:      '#7e7eea',
   cyan:         '#38bdf8',
   white:        '#e2e8f0',
   brightBlack:  '#3a3a3a',
@@ -117,7 +118,10 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
     const parseBufferRef = useRef<string>('')
     const assistantId = ASSISTANT_IDS[mode]
     const { theme } = useInterfaceSettings()
-    const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
+    const xtermTheme = useMemo(
+      () => withTerminalSurface(theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK),
+      [theme],
+    )
 
     // Mirrored synchronously into a ref so callbacks (RO, debounce tail) can
     // read the current visibility without needing stale-closure gymnastics.
@@ -381,8 +385,8 @@ export default function AssistantPanel({
 
   const headerLabel = mode === 'architecture' ? 'Architecture Assistant' : 'General Assistant'
   const borderClass = orientation === 'bottom'
-    ? 'border-t border-white/[0.06]'
-    : 'border-l border-white/[0.06]'
+    ? 'border-t border-node-border'
+    : 'border-l border-node-border'
 
   const handleRelaunch = useCallback(async (opts: AssistantRelaunchOpts) => {
     // Clear the current mode's xterm before we ask main to respawn. Prevents
@@ -398,9 +402,9 @@ export default function AssistantPanel({
       style={{ display: visible ? 'flex' : 'none' }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] flex-shrink-0 bg-[#111111]">
+      <div className="flex items-center justify-between border-b border-node-border bg-panel px-3 py-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Bot size={13} className="text-[#c084fc] flex-shrink-0" />
+          <Bot size={13} className="text-accent flex-shrink-0" />
           <span className="text-xs font-medium text-fg-muted truncate">{headerLabel}</span>
           <span
             className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
@@ -442,7 +446,7 @@ export default function AssistantPanel({
               onClick={() => onModeChange('architecture')}
               className={
                 mode === 'architecture'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-accent text-fg'
                   : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="Architecture mode — edit the canvas"
@@ -453,7 +457,7 @@ export default function AssistantPanel({
               onClick={() => onModeChange('general')}
               className={
                 mode === 'general'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-accent text-fg'
                   : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="General mode — generic coding assistant"

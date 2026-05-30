@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from 'react'
-import { Plus, X, FileText, RotateCcw } from 'lucide-react'
+import { useRef, useState } from 'react'
+import { Plus, X, FileText, RotateCcw, ChevronRight } from 'lucide-react'
 import {
   DEFAULT_MODEL_BY_RUNTIME,
   getAgentRuntime,
@@ -10,8 +10,9 @@ import { useProjectDir } from '../../context/ProjectDirContext'
 import { useWorkspaceOptional } from '../../context/WorkspaceContext'
 import { pickerRuntimes, useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 import { RuntimeEmptyState } from '../runtime/RuntimeEmptyState'
+import DocPane from '../docpane/DocPane'
+import MarkdownEditor, { MarkdownModeToggle, type MarkdownMode } from '../docpane/MarkdownEditor'
 import { resolveZoneModelSuggestions } from '../../lib/canvas'
-import { hexToRgba } from '../../lib/color'
 import type {
   ZoneNodeData,
   NodeSkillFile,
@@ -68,10 +69,14 @@ export default function AgentConfigModal({
   patch,
   onClose,
 }: Props) {
+  void zoneColor
   const [labelDraft, setLabelDraft] = useState(label)
   const [customSkillInput, setCustomSkillInput] = useState('')
   const [resetState, setResetState] = useState<'idle' | 'confirm' | 'pending' | 'done' | 'error'>('idle')
+  const [mode, setMode] = useState<MarkdownMode>('edit')
+  const [advancedOpen, setAdvancedOpen] = useState(false)
   const labelInputRef = useRef<HTMLInputElement>(null)
+  const toggleMode = () => setMode(prev => (prev === 'edit' ? 'preview' : 'edit'))
   const projectSettings = useProjectSettings()
   const projectDir = useProjectDir()
   const workspace = useWorkspaceOptional()
@@ -108,12 +113,6 @@ export default function AgentConfigModal({
       setResetState('error')
     }
   }
-
-  useEffect(() => {
-    const onKey = (event: KeyboardEvent) => { if (event.key === 'Escape') onClose() }
-    window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
-  }, [onClose])
 
   const hasSkill = (path: string) => skills.some(skill => skill.path === path)
   const toggleBuiltinSkill = (preset: Omit<NodeSkillFile, 'id'>) => {
@@ -157,237 +156,187 @@ export default function AgentConfigModal({
     if (trimmed && trimmed !== label) patch({ label: trimmed })
   }
 
+  // Custom skills aren't represented by the preset chips, so they get an
+  // explicit removable row; builtins are toggled via their chip.
+  const customSkills = skills.filter(skill => !BUILTIN_SKILLS.some(preset => preset.path === skill.path))
+
   return (
-    <div
-      className="fixed inset-0 z-[9999] bg-black/70 backdrop-blur-sm flex items-center justify-center p-8"
-      onClick={event => { if (event.target === event.currentTarget) onClose() }}
+    <DocPane
+      title={labelDraft.trim() || label || 'Zone'}
+      kindLabel="Zone"
+      onClose={onClose}
+      headerActions={<MarkdownModeToggle mode={mode} onToggle={toggleMode} />}
     >
-      <div
-        className="bg-[#1c1916] rounded-md border border-white/10 shadow-2xl flex flex-col overflow-hidden"
-        style={{ width: '90vw', height: '85vh', maxWidth: 1100 }}
-      >
-        <div
-          className="flex items-center gap-4 px-6 py-4 border-b flex-shrink-0"
-          style={{ borderBottomColor: hexToRgba(zoneColor, 0.32) }}
-        >
-          <span className="text-[11px] font-bold tracking-widest flex-shrink-0 uppercase" style={{ color: zoneColor }}>Zone</span>
-          <input
-            ref={labelInputRef}
-            value={labelDraft}
-            onChange={event => setLabelDraft(event.target.value)}
-            onBlur={saveLabel}
-            onKeyDown={event => { if (event.key === 'Enter') { saveLabel(); labelInputRef.current?.blur() } }}
-            className="text-lg font-semibold text-fg bg-transparent border-b border-transparent hover:border-white/20 focus:border-white/40 focus:outline-none transition-colors flex-1 min-w-0"
-            placeholder="Agent name"
-          />
-          <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
-            <X size={18} />
-          </button>
-        </div>
+      <div className="space-y-6">
+        {/* Title — the note's H1; renames the zone */}
+        <input
+          ref={labelInputRef}
+          value={labelDraft}
+          onChange={event => setLabelDraft(event.target.value)}
+          onBlur={saveLabel}
+          onKeyDown={event => {
+            if (event.key === 'Enter') {
+              saveLabel()
+              labelInputRef.current?.blur()
+            }
+          }}
+          className="w-full border-0 bg-transparent p-0 text-[26px] font-semibold tracking-[-0.02em] text-fg outline-none placeholder:text-fg-subtle"
+          placeholder="Agent name"
+        />
 
-        <div className="flex flex-1 min-h-0 divide-x divide-white/[0.06]">
-          <div className="flex flex-col flex-1 min-w-0">
-            <div className="flex items-start justify-between gap-3 px-6 pt-5 pb-2 flex-shrink-0">
-              <div>
-                <p className="text-[10px] uppercase tracking-widest text-fg-subtle">System prompt</p>
-                <p className="text-[11px] text-fg-subtle mt-1 leading-relaxed max-w-md">
-                  Customizes this zone agent&apos;s behavior. Passed as <span className="font-mono text-fg-subtle">--append-system-prompt</span> on the first spawn. Edits take effect only after <span className="text-fg-muted">Reset conversation</span>.
-                </p>
-              </div>
-              {resetState === 'confirm' ? (
-                <div className="flex items-center gap-2 flex-shrink-0">
-                  <span className="text-[11px] text-amber-400">Erase conversation?</span>
-                  <button
-                    onClick={handleReset}
-                    className="px-2 py-1 text-[11px] text-fg bg-red-600/80 hover:bg-red-600 rounded transition-colors"
-                  >
-                    Reset
-                  </button>
-                  <button
-                    onClick={() => setResetState('idle')}
-                    className="px-2 py-1 text-[11px] text-fg-muted border border-white/[0.08] rounded hover:bg-white/[0.05] transition-colors"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              ) : (
-                <button
-                  onClick={() => setResetState('confirm')}
-                  disabled={resetState === 'pending'}
-                  className="flex items-center gap-1.5 px-2.5 py-1 text-[11px] text-fg-muted border border-white/[0.08] rounded hover:text-fg hover:border-white/20 transition-colors flex-shrink-0 disabled:opacity-50"
-                  title="Delete the saved session so the next dispatch starts fresh"
-                >
-                  <RotateCcw size={11} />
-                  {resetState === 'pending'
-                    ? 'Resetting…'
-                    : resetState === 'done'
-                      ? 'Conversation reset'
-                      : resetState === 'error'
-                        ? 'Reset failed. Retry.'
-                        : 'Reset conversation'}
-                </button>
-              )}
-            </div>
-            <textarea
-              value={systemPrompt}
-              onChange={event => patch({ systemPrompt: event.target.value })}
-              placeholder="Define this zone agent's role, expertise, tone, and constraints. E.g. 'You are a senior backend engineer. Write idiomatic, well-tested code. Prefer pure functions. Never introduce new frameworks without justification.'"
-              autoFocus
-              className="flex-1 bg-transparent text-fg text-sm leading-relaxed px-6 pb-6 resize-none focus:outline-none placeholder-fg-subtle font-mono"
-            />
-          </div>
-
-          <div className="w-[340px] flex-shrink-0 overflow-y-auto">
-            <div className="p-6 space-y-6">
-              <Section title="Runtime">
-                <div className="space-y-3">
-                  <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2 flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Canvas default</p>
-                      <p className="text-[12px] text-fg-muted mt-0.5 truncate">
-                        {getAgentRuntime(projectSettings.dispatchRuntime).label}
-                      </p>
-                    </div>
-                    {isOverride && canvasDefaultInstalled && (
-                      <button
-                        onClick={() => setConfiguredRuntime(projectSettings.dispatchRuntime)}
-                        className="flex-shrink-0 text-[10px] uppercase tracking-wider px-2 py-0.5 rounded border border-white/10 text-fg-subtle hover:text-fg hover:border-white/30"
-                        title="Drop the per-zone CLI override and inherit the canvas default."
-                      >
-                        Use default
-                      </button>
-                    )}
-                  </div>
-                  {!configuredRuntimeInstalled && (
-                    <div className="rounded-lg border border-amber-400/40 bg-amber-400/10 px-3 py-2 text-[11px] text-amber-200">
-                      This zone is configured for <span className="font-mono">{effectiveRuntimeMeta.label}</span>, which isn&apos;t installed on this machine. Pick another CLI below or run <span className="font-mono">Rescan CLIs</span> in Settings.
-                    </div>
-                  )}
-                  {detection.installed.length === 0 ? (
-                    <RuntimeEmptyState compact />
-                  ) : (
-                    <div className="grid grid-cols-2 gap-1.5">
-                      {runtimeOptions.map(detected => {
-                        const def = getAgentRuntime(detected.id)
-                        const selected = configuredRuntime === detected.id
-                        return (
-                          <button
-                            key={detected.id}
-                            onClick={() => setConfiguredRuntime(detected.id)}
-                            className={`flex items-center justify-between px-3 py-2 rounded-lg border text-left transition-colors ${
-                              selected
-                                ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
-                                : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                            }`}
-                          >
-                            <span className="text-[12px] font-medium">{def.label}</span>
-                            <span className="text-[10px] uppercase tracking-wider" style={{ color: def.accentColor }}>
-                              {def.shortLabel}
-                            </span>
-                          </button>
-                        )
-                      })}
-                    </div>
-                  )}
-                </div>
-              </Section>
-
-              {supportsModel ? (
-                <Section title="Model">
-                  <div className="space-y-2">
-                    <div className="rounded-lg border border-white/[0.08] bg-black/20 px-3 py-2">
-                      <p className="text-[10px] uppercase tracking-wider text-fg-subtle">Effective runtime</p>
-                      <p className="text-[12px] text-fg mt-1">{effectiveRuntimeMeta.label}</p>
-                    </div>
-                    <input
-                      value={effectiveModel}
-                      onChange={event => setRuntimeModel(effectiveRuntime, event.target.value)}
-                      placeholder={DEFAULT_MODEL_BY_RUNTIME[effectiveRuntime]}
-                      className="w-full bg-black/30 border border-white/[0.08] rounded px-3 py-2 text-[12px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
-                    />
-                    <div className="flex flex-wrap gap-1.5">
-                      {effectiveModelSuggestions.map(model => (
-                        <button
-                          key={model}
-                          onClick={() => setRuntimeModel(effectiveRuntime, model)}
-                          className={`px-2 py-1 rounded text-[11px] border transition-colors ${
-                            effectiveModel === model
-                              ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                              : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                          }`}
-                        >
-                          {shortModelLabel(model)}
-                        </button>
-                      ))}
-                    </div>
-                    {effectiveDetectedModels.length > effectiveModelSuggestions.length && (
-                      <ZoneModelBrowse
-                        available={effectiveDetectedModels}
-                        current={effectiveModel}
-                        onPick={id => setRuntimeModel(effectiveRuntime, id)}
-                      />
-                    )}
-                  </div>
-                </Section>
-              ) : (
-                <Section title="Model">
-                  <p className="text-[11px] text-fg-subtle leading-relaxed">
-                    {effectiveRuntimeMeta.label} manages its own model. No model selection here.
-                  </p>
-                </Section>
-              )}
-
-              <Section title="Skills">
-                <p className="text-[10px] text-fg-subtle uppercase tracking-wider mb-2">Presets</p>
-                <div className="flex flex-wrap gap-1.5 mb-3">
-                  {BUILTIN_SKILLS.map(preset => {
-                    const active = hasSkill(preset.path)
+        {/* Frontmatter: the few addons that aren't markdown — runtime, model,
+            skills. Styled like an Obsidian properties block above the note. */}
+        <div className="overflow-hidden rounded-lg border border-node-border bg-node/30">
+          <PropRow label="Runtime">
+            {detection.installed.length === 0 ? (
+              <RuntimeEmptyState compact />
+            ) : (
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-1.5">
+                  {runtimeOptions.map(detected => {
+                    const def = getAgentRuntime(detected.id)
+                    const selected = configuredRuntime === detected.id
                     return (
                       <button
-                        key={preset.path}
-                        onClick={() => toggleBuiltinSkill(preset)}
-                        className={`flex items-center gap-1 px-2 py-1 rounded text-[11px] border transition-colors ${
-                          active
-                            ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
-                            : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
-                        }`}
+                        key={detected.id}
+                        onClick={() => setConfiguredRuntime(detected.id)}
+                        className={chipClass(selected)}
                       >
-                        <FileText size={10} />
-                        {preset.name}
+                        {def.label}
                       </button>
                     )
                   })}
                 </div>
-                <p className="text-[10px] text-fg-subtle uppercase tracking-wider mb-2">Custom</p>
-                <div className="flex gap-2 mb-2">
-                  <input
-                    value={customSkillInput}
-                    onChange={event => setCustomSkillInput(event.target.value)}
-                    onKeyDown={event => event.key === 'Enter' && addCustomSkill()}
-                    placeholder="path/to/skill.md"
-                    className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
-                  />
-                  <button onClick={addCustomSkill} className="text-fg-subtle hover:text-fg transition-colors">
-                    <Plus size={14} />
-                  </button>
+                <div className="flex flex-wrap items-center gap-2 text-[11px] text-fg-subtle">
+                  <span>Canvas default: {getAgentRuntime(projectSettings.dispatchRuntime).label}</span>
+                  {isOverride && canvasDefaultInstalled && (
+                    <button
+                      onClick={() => setConfiguredRuntime(projectSettings.dispatchRuntime)}
+                      className="rounded border border-node-border px-1.5 py-0.5 uppercase tracking-wider text-fg-subtle transition-colors hover:border-accent hover:text-fg"
+                      title="Drop the per-zone CLI override and inherit the canvas default."
+                    >
+                      Use default
+                    </button>
+                  )}
                 </div>
-                {skills.length > 0 && (
-                  <div className="space-y-1">
-                    {skills.map(skill => (
-                      <div key={skill.path} className="flex items-center justify-between gap-2">
-                        <div className="flex items-center gap-1.5 min-w-0">
-                          <FileText size={10} className="text-[#58A6FF] flex-shrink-0" />
-                          <span className="text-[11px] text-fg-muted truncate font-mono">{skill.name}</span>
-                        </div>
-                        <button onClick={() => removeSkill(skill.path)} className="text-fg-subtle hover:text-fg-muted flex-shrink-0">
-                          <X size={11} />
-                        </button>
-                      </div>
-                    ))}
+                {!configuredRuntimeInstalled && (
+                  <div className="rounded border border-amber-400/40 bg-amber-400/10 px-2.5 py-1.5 text-[11px] text-amber-200">
+                    Configured for <span className="font-mono">{effectiveRuntimeMeta.label}</span>, which isn&apos;t installed. Pick another CLI or run <span className="font-mono">Rescan CLIs</span> in Settings.
                   </div>
                 )}
-              </Section>
+              </div>
+            )}
+          </PropRow>
 
+          <PropRow label="Model">
+            {supportsModel ? (
+              <div className="space-y-2">
+                <input
+                  value={effectiveModel}
+                  onChange={event => setRuntimeModel(effectiveRuntime, event.target.value)}
+                  placeholder={DEFAULT_MODEL_BY_RUNTIME[effectiveRuntime]}
+                  className="w-full rounded border border-node-border bg-node/80 px-2.5 py-1.5 font-mono text-[12px] text-fg-muted outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+                />
+                <div className="flex flex-wrap gap-1.5">
+                  {effectiveModelSuggestions.map(model => (
+                    <button
+                      key={model}
+                      onClick={() => setRuntimeModel(effectiveRuntime, model)}
+                      className={chipClass(effectiveModel === model)}
+                    >
+                      {shortModelLabel(model)}
+                    </button>
+                  ))}
+                </div>
+                {effectiveDetectedModels.length > effectiveModelSuggestions.length && (
+                  <ZoneModelBrowse
+                    available={effectiveDetectedModels}
+                    current={effectiveModel}
+                    onPick={id => setRuntimeModel(effectiveRuntime, id)}
+                  />
+                )}
+              </div>
+            ) : (
+              <p className="text-[12px] leading-relaxed text-fg-subtle">
+                {effectiveRuntimeMeta.label} manages its own model.
+              </p>
+            )}
+          </PropRow>
+
+          <PropRow label="Skills">
+            <div className="space-y-2">
+              <div className="flex flex-wrap gap-1.5">
+                {BUILTIN_SKILLS.map(preset => (
+                  <button
+                    key={preset.path}
+                    onClick={() => toggleBuiltinSkill(preset)}
+                    className={chipClass(hasSkill(preset.path))}
+                  >
+                    <FileText size={10} />
+                    {preset.name}
+                  </button>
+                ))}
+              </div>
+              <div className="flex gap-2">
+                <input
+                  value={customSkillInput}
+                  onChange={event => setCustomSkillInput(event.target.value)}
+                  onKeyDown={event => event.key === 'Enter' && addCustomSkill()}
+                  placeholder="path/to/skill.md"
+                  className="min-w-0 flex-1 rounded border border-node-border bg-node/80 px-2 py-1 font-mono text-[11px] text-fg-muted outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
+                />
+                <button onClick={addCustomSkill} className="text-fg-subtle transition-colors hover:text-fg" aria-label="Add skill">
+                  <Plus size={14} />
+                </button>
+              </div>
+              {customSkills.length > 0 && (
+                <div className="space-y-1">
+                  {customSkills.map(skill => (
+                    <div key={skill.path} className="flex items-center justify-between gap-2">
+                      <div className="flex min-w-0 items-center gap-1.5">
+                        <FileText size={10} className="flex-shrink-0 text-accent" />
+                        <span className="truncate font-mono text-[11px] text-fg-muted">{skill.name}</span>
+                      </div>
+                      <button onClick={() => removeSkill(skill.path)} className="flex-shrink-0 text-fg-subtle transition-colors hover:text-fg-muted" aria-label="Remove skill">
+                        <X size={11} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </PropRow>
+        </div>
+
+        <p className="text-[12px] leading-5 text-fg-subtle">
+          This note is the agent&apos;s role. Sent as <span className="font-mono text-fg-muted">--append-system-prompt</span> on first spawn; edits apply after a reset.
+        </p>
+
+        {/* Body: the role note */}
+        <MarkdownEditor
+          value={systemPrompt}
+          onChange={value => patch({ systemPrompt: value })}
+          mode={mode}
+          onToggleMode={toggleMode}
+          autoFocus
+          placeholder={'You are a senior backend engineer.\n\n# Responsibilities\n- Write idiomatic, well-tested code\n\n# Constraints\n- Prefer pure functions\n- Never introduce a new framework without justification'}
+        />
+
+        {/* Advanced: tools, behavior, permissions, environment, session.
+            Demoted out of the main flow but fully functional — behavior.retries
+            here feeds the orchestrator's retry budget. */}
+        <div className="border-t border-node-border/70 pt-4">
+          <button
+            onClick={() => setAdvancedOpen(open => !open)}
+            className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-[0.18em] text-fg-subtle transition-colors hover:text-fg"
+            aria-expanded={advancedOpen}
+          >
+            <ChevronRight size={13} className={`transition-transform ${advancedOpen ? 'rotate-90' : ''}`} />
+            Advanced
+          </button>
+
+          {advancedOpen && (
+            <div className="mt-4 grid gap-x-8 gap-y-5 sm:grid-cols-2">
               <Section title="Tools">
                 <div className="space-y-2">
                   {([
@@ -426,7 +375,7 @@ export default function AgentConfigModal({
                       max={10}
                       value={behavior.retries}
                       onChange={event => setBehavior({ retries: Number(event.target.value) })}
-                      className="w-16 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:border-white/20"
+                      className="w-16 rounded border border-node-border bg-node/80 px-2 py-1 text-xs text-fg-muted outline-none transition-colors focus:border-accent"
                     />
                   </Field>
                   <Field label="Timeout (ms)">
@@ -436,7 +385,7 @@ export default function AgentConfigModal({
                       step={1000}
                       value={behavior.timeoutMs}
                       onChange={event => setBehavior({ timeoutMs: Number(event.target.value) })}
-                      className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-xs text-fg-muted focus:outline-none focus:border-white/20"
+                      className="w-24 rounded border border-node-border bg-node/80 px-2 py-1 text-xs text-fg-muted outline-none transition-colors focus:border-accent"
                     />
                   </Field>
                 </div>
@@ -458,55 +407,101 @@ export default function AgentConfigModal({
               <Section title="Environment">
                 <div className="space-y-2">
                   {envVars.map((envVar, index) => (
-                    <div key={index} className="flex gap-2 items-center">
+                    <div key={index} className="flex items-center gap-2">
                       <input
                         value={envVar.key}
                         onChange={event => updateEnvVar(index, 'key', event.target.value)}
                         placeholder="KEY"
-                        className="w-24 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
+                        className="w-24 rounded border border-node-border bg-node/80 px-2 py-1 font-mono text-[11px] text-fg-muted outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
                       />
                       <input
                         value={envVar.value}
                         onChange={event => updateEnvVar(index, 'value', event.target.value)}
                         placeholder="value"
-                        className="flex-1 min-w-0 bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
+                        className="min-w-0 flex-1 rounded border border-node-border bg-node/80 px-2 py-1 font-mono text-[11px] text-fg-muted outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
                       />
-                      <button onClick={() => removeEnvVar(index)} className="text-fg-subtle hover:text-fg-muted flex-shrink-0">
+                      <button onClick={() => removeEnvVar(index)} className="flex-shrink-0 text-fg-subtle transition-colors hover:text-fg-muted" aria-label="Remove variable">
                         <X size={12} />
                       </button>
                     </div>
                   ))}
                   <button
                     onClick={addEnvVar}
-                    className="flex items-center gap-1 text-[11px] text-fg-subtle hover:text-fg-muted transition-colors"
+                    className="flex items-center gap-1 text-[11px] text-fg-subtle transition-colors hover:text-fg-muted"
                   >
                     <Plus size={12} /> Add variable
                   </button>
                 </div>
               </Section>
-            </div>
-          </div>
-        </div>
 
-        <div className="flex justify-end px-6 py-3 border-t border-white/[0.07] flex-shrink-0">
-          <button
-            onClick={onClose}
-            className="px-5 py-1.5 bg-[#3d3dbf] hover:bg-[#4f4fcf] text-fg text-sm rounded-lg transition-colors"
-          >
-            Done
-          </button>
+              <Section title="Session">
+                {resetState === 'confirm' ? (
+                  <div className="flex items-center gap-2">
+                    <span className="text-[11px] text-amber-400">Erase conversation?</span>
+                    <button
+                      onClick={handleReset}
+                      className="rounded bg-red-600/80 px-2 py-1 text-[11px] text-fg transition-colors hover:bg-red-600"
+                    >
+                      Reset
+                    </button>
+                    <button
+                      onClick={() => setResetState('idle')}
+                      className="rounded border border-node-border px-2 py-1 text-[11px] text-fg-muted transition-colors hover:bg-node hover:text-fg"
+                    >
+                      Cancel
+                    </button>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => setResetState('confirm')}
+                    disabled={resetState === 'pending'}
+                    className="flex items-center gap-1.5 rounded border border-node-border px-2.5 py-1 text-[11px] text-fg-muted transition-colors hover:border-accent hover:text-fg disabled:opacity-50"
+                    title="Delete the saved session so the next dispatch starts fresh"
+                  >
+                    <RotateCcw size={11} />
+                    {resetState === 'pending'
+                      ? 'Resetting…'
+                      : resetState === 'done'
+                        ? 'Conversation reset'
+                        : resetState === 'error'
+                          ? 'Reset failed. Retry.'
+                          : 'Reset conversation'}
+                  </button>
+                )}
+              </Section>
+            </div>
+          )}
         </div>
       </div>
+    </DocPane>
+  )
+}
+
+// Shared chip styling for the runtime / model / skill pickers in the
+// frontmatter block. Active picks read in accent; idle picks are quiet.
+function chipClass(active: boolean): string {
+  return `flex items-center gap-1 rounded-md border px-2.5 py-1 text-[12px] transition-colors ${
+    active
+      ? 'border-accent/50 bg-accent/10 text-accent'
+      : 'border-node-border bg-node text-fg-subtle hover:border-node-border-active hover:text-fg'
+  }`
+}
+
+function PropRow({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3 border-b border-node-border/60 px-3.5 py-3 last:border-b-0">
+      <div className="w-16 flex-shrink-0 pt-1 text-[11px] uppercase tracking-wider text-fg-subtle">{label}</div>
+      <div className="min-w-0 flex-1">{children}</div>
     </div>
   )
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div>
-      <p className="text-[10px] uppercase tracking-widest text-fg-subtle mb-3">{title}</p>
+    <section>
+      <p className="mb-3 text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle">{title}</p>
       {children}
-    </div>
+    </section>
   )
 }
 
@@ -514,8 +509,8 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   return (
     <button onClick={onChange} className="flex items-center justify-between w-full group">
       <span className="text-[12px] text-fg-subtle group-hover:text-fg-muted transition-colors">{label}</span>
-      <div className={`relative w-7 h-4 rounded-full transition-colors ${value ? 'bg-[#58A6FF]' : 'bg-white/10'}`}>
-        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${value ? 'left-[14px]' : 'left-0.5'}`} />
+      <div className={`relative w-7 h-4 rounded-full transition-colors ${value ? 'bg-accent' : 'bg-node'}`}>
+        <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-fg shadow transition-all ${value ? 'left-[14px]' : 'left-0.5'}`} />
       </div>
     </button>
   )
@@ -532,13 +527,13 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
 
 function Seg<T extends string>({ options, value, onChange }: { options: T[]; value: T; onChange: (value: T) => void }) {
   return (
-    <div className="flex rounded overflow-hidden border border-white/[0.08]">
+    <div className="flex rounded overflow-hidden border border-node-border">
       {options.map(option => (
         <button
           key={option}
           onClick={() => onChange(option)}
           className={`px-2 py-0.5 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-fg-subtle hover:text-fg-muted'
+            value === option ? 'bg-accent/20 text-accent' : 'text-fg-subtle hover:text-fg-muted'
           }`}
         >
           {option}
@@ -582,17 +577,17 @@ function ZoneModelBrowse({
         value={query}
         onChange={event => setQuery(event.target.value)}
         placeholder={`Browse all ${available.length} models…`}
-        className="w-full bg-black/30 border border-white/[0.08] rounded px-2 py-1 text-[11px] text-fg-muted placeholder-fg-subtle focus:outline-none focus:border-white/20 font-mono"
+        className="w-full bg-node border border-node-border rounded px-2 py-1 text-[11px] text-fg-muted placeholder:text-fg-subtle focus:outline-none focus:border-accent font-mono"
       />
       {filtered.length > 0 && (
-        <div className="absolute z-10 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded border border-white/10 bg-[#1c1916] shadow-lg">
+        <div className="absolute z-10 left-0 right-0 mt-1 max-h-56 overflow-y-auto rounded border border-node-border bg-panel shadow-lg">
           {filtered.map(id => (
             <button
               key={id}
               onClick={() => choose(id)}
               className={`block w-full text-left px-2 py-1 text-[11px] font-mono ${
                 current === id
-                  ? 'text-[#58A6FF] bg-[#58A6FF]/10'
+                  ? 'text-accent bg-accent/10'
                   : 'text-fg-subtle hover:bg-white/[0.05] hover:text-fg'
               }`}
             >

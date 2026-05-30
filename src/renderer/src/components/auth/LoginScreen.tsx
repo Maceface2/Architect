@@ -33,7 +33,7 @@ export default function LoginScreen() {
   return (
     <div className="h-screen w-screen bg-canvas flex flex-col items-center justify-center gap-8 select-none">
       <div className="flex flex-col items-center gap-4">
-        <CliqueLogo size={52} className="text-fg" />
+        <CliqueLogo size={62} className="text-fg" />
         <div className="text-center">
           <h1 className="text-2xl font-semibold text-fg tracking-tight">Clique</h1>
           <p className="text-sm text-fg-subtle mt-1">Sign in to continue</p>
@@ -69,7 +69,7 @@ export default function LoginScreen() {
         <button
           type="submit"
           disabled={submitting || !email || !password}
-          className="flex items-center justify-center gap-2 px-6 py-3 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-sm font-medium rounded-lg transition-colors"
+          className="flex items-center justify-center gap-2 rounded-lg bg-accent px-6 py-3 text-sm font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
         >
           {submitting ? <Loader2 size={14} className="animate-spin" /> : null}
           {submitting ? 'Signing in…' : 'Sign in'}
