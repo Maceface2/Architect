@@ -355,7 +355,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
                   }}
                   disabled={openingPath !== null}
                   title={project.path}
-                  className="group w-full rounded-md px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60"
+                  className="group w-full rounded-[3px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60"
                   style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
                 >
                   <div className="truncate text-[12px] font-medium text-fg">
@@ -386,7 +386,7 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
           <button
             onClick={pick}
             disabled={openingPath !== null}
-            className="inline-flex w-full items-center justify-center gap-2 rounded-md border border-node-border bg-node px-3.5 py-2.5 text-[12px] font-medium text-fg transition-colors hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-50"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-[3px] border border-node-border bg-node px-3.5 py-2.5 text-[12px] font-medium text-fg transition-colors hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-50"
             style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
           >
             <FolderOpen size={14} strokeWidth={1.8} />
