@@ -4,21 +4,17 @@ import {
   BaseEdge,
   EdgeLabelRenderer,
   getBezierPath,
+  useInternalNode,
   useReactFlow,
   type EdgeProps,
 } from '@xyflow/react'
 import { Trash2, X } from 'lucide-react'
-import type { CanvasEdge, ComponentEdgeData, ComponentEdgeDirection } from '../../types'
+import type { CanvasEdge, ComponentEdgeData } from '../../types'
 import { normalizeEdgeData } from '../../lib/canvas'
+import { getEdgeParams } from './floatingEdgeMath'
 
-const DIRECTION_LABELS: Record<ComponentEdgeDirection, string> = {
-  'source-to-target': 'One-way',
-  bidirectional: 'Two-way',
-  none: 'None',
-}
-
-function edgeMarkerId(id: string, side: 'start' | 'end'): string {
-  return `component-edge-${side}-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
+function edgeMarkerId(id: string): string {
+  return `component-edge-end-${id.replace(/[^a-zA-Z0-9_-]/g, '-')}`
 }
 
 function ComponentEdge(props: EdgeProps<CanvasEdge>) {
@@ -37,19 +33,36 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
   const { setEdges, getNode } = useReactFlow()
   const [editorOpen, setEditorOpen] = useState(false)
 
-  // Handle-to-handle bezier only — handles sit ~5px outside each node body,
-  // so the line stays in the gap *outside* the nodes instead of being
-  // extended in to touch (and tuck under) the card edges.
-  const [edgePath, labelX, labelY] = getBezierPath({
+  // Floating edge: no ports. Anchor points are computed per render as the
+  // intersection of the center-to-center line with each card's rect, so the
+  // edge re-anchors to the nearest side as cards move. Stored source/target
+  // handle ids from legacy canvases are ignored. Falls back to React Flow's
+  // handle-derived coordinates when a node isn't measurable yet.
+  const sourceNode = useInternalNode(props.source)
+  const targetNode = useInternalNode(props.target)
+
+  let pathParams = {
     sourceX,
     sourceY,
     sourcePosition,
     targetX,
     targetY,
     targetPosition,
-  })
+  }
+  if (sourceNode && targetNode) {
+    const { sx, sy, tx, ty, sourcePos, targetPos } = getEdgeParams(sourceNode, targetNode)
+    pathParams = {
+      sourceX: sx,
+      sourceY: sy,
+      sourcePosition: sourcePos,
+      targetX: tx,
+      targetY: ty,
+      targetPosition: targetPos,
+    }
+  }
+  const [edgePath, labelX, labelY] = getBezierPath(pathParams)
+
   const edgeData = normalizeEdgeData(data)
-  const direction = edgeData.direction ?? 'source-to-target'
   const label = edgeData.label ?? ''
   const isCrossFolder = !!edgeData.targetFolder
   // Dangling: persisted edge whose target folder isn't loaded into the
@@ -65,13 +78,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
     : isDangling
       ? '#424242'
       : '#525252'
-  const markerStart = direction === 'bidirectional' ? `url(#${edgeMarkerId(id, 'start')})` : undefined
-  const markerEnd = direction === 'source-to-target' || direction === 'bidirectional'
-    ? `url(#${edgeMarkerId(id, 'end')})`
-    : undefined
-  const sourceNode = getNode(props.source)
-  const targetNode = getNode(props.target)
-  const editable = sourceNode?.type === 'component' && targetNode?.type === 'component'
+  const editable = getNode(props.source)?.type === 'component' && getNode(props.target)?.type === 'component'
 
   const updateEdge = (next: ComponentEdgeData) => {
     const normalized = normalizeEdgeData(next)
@@ -93,19 +100,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
     <>
       <defs>
         <marker
-          id={edgeMarkerId(id, 'end')}
-          viewBox="0 0 10 10"
-          refX="10"
-          refY="5"
-          markerWidth="7"
-          markerHeight="7"
-          orient="auto-start-reverse"
-          markerUnits="strokeWidth"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 z" fill={color} />
-        </marker>
-        <marker
-          id={edgeMarkerId(id, 'start')}
+          id={edgeMarkerId(id)}
           viewBox="0 0 10 10"
           refX="10"
           refY="5"
@@ -121,8 +116,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
       <BaseEdge
         id={id}
         path={edgePath}
-        markerStart={markerStart}
-        markerEnd={markerEnd}
+        markerEnd={`url(#${edgeMarkerId(id)})`}
         style={{
           ...style,
           stroke: color,
@@ -156,7 +150,7 @@ function ComponentEdge(props: EdgeProps<CanvasEdge>) {
               event.stopPropagation()
               if (editable) setEditorOpen(true)
             }}
-            title={editable ? 'Double-click to edit edge' : undefined}
+            title={editable ? 'Double-click to edit connection' : undefined}
           >
             {label}
           </button>
@@ -188,10 +182,11 @@ function EdgeEditorModal({
   onClose: () => void
 }) {
   const [label, setLabel] = useState(data.label ?? '')
-  const [direction, setDirection] = useState<ComponentEdgeDirection>(data.direction ?? 'source-to-target')
 
   const save = () => {
-    onChange({ label, direction })
+    // Preserve fields the simplified UI no longer edits (direction from
+    // legacy canvases, targetFolder for cross-folder edges).
+    onChange({ ...data, label })
     onClose()
   }
 
@@ -202,7 +197,7 @@ function EdgeEditorModal({
     >
       <div className="w-[360px] rounded-lg border border-node-border bg-panel p-4 shadow-2xl">
         <div className="mb-4 flex items-center justify-between">
-          <h2 className="text-sm font-semibold text-fg">Component Edge</h2>
+          <h2 className="text-sm font-semibold text-fg">Connection</h2>
           <button
             type="button"
             onClick={onClose}
@@ -213,35 +208,17 @@ function EdgeEditorModal({
           </button>
         </div>
 
-        <label className="mb-4 block">
+        <label className="mb-5 block">
           <span className="mb-1.5 block text-xs font-medium text-fg-muted">Label</span>
           <input
             value={label}
             onChange={event => setLabel(event.target.value)}
+            onKeyDown={event => { if (event.key === 'Enter') save() }}
             placeholder="e.g. publishes events"
+            autoFocus
             className="w-full rounded border border-node-border bg-node px-3 py-2 text-sm text-fg outline-none transition-colors placeholder:text-fg-subtle focus:border-accent"
           />
         </label>
-
-        <div className="mb-5">
-          <span className="mb-1.5 block text-xs font-medium text-fg-muted">Direction</span>
-          <div className="grid grid-cols-3 gap-1 rounded bg-node p-1">
-            {(Object.keys(DIRECTION_LABELS) as ComponentEdgeDirection[]).map(value => (
-              <button
-                key={value}
-                type="button"
-                onClick={() => setDirection(value)}
-                className={`rounded px-2 py-1.5 text-xs font-medium transition-colors ${
-                  direction === value
-                    ? 'bg-accent text-fg'
-                    : 'text-fg-muted hover:bg-white/10 hover:text-fg'
-                }`}
-              >
-                {DIRECTION_LABELS[value]}
-              </button>
-            ))}
-          </div>
-        </div>
 
         <div className="flex items-center justify-between">
           <button
@@ -252,22 +229,13 @@ function EdgeEditorModal({
             <Trash2 size={13} />
             Delete
           </button>
-          <div className="flex items-center gap-2">
-            <button
-              type="button"
-              onClick={() => setLabel('')}
-              className="rounded px-3 py-2 text-xs font-medium text-fg-muted hover:bg-white/10 hover:text-fg"
-            >
-              Clear Label
-            </button>
-            <button
-              type="button"
-              onClick={save}
-              className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-accent/90"
-            >
-              Save
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={save}
+            className="rounded bg-accent px-3 py-2 text-xs font-semibold text-fg hover:bg-accent/90"
+          >
+            Save
+          </button>
         </div>
       </div>
     </div>

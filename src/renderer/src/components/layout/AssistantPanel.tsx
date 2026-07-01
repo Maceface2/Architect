@@ -25,12 +25,6 @@ const COLS_DEBOUNCE_MS = 100
 
 export type AssistantOrientation = 'right' | 'bottom'
 
-// Strip ANSI escape codes so we can search for plain-text markers
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '')
-}
-
 // Two themes for the embedded assistant terminal — see TerminalPanel for
 // the rationale on light-mode color picks. Cursor stays purple here to
 // match the assistant accent that's used elsewhere in the UI.
@@ -68,18 +62,10 @@ const TERM_THEME_LIGHT = {
   brightWhite:  '#0f172a',
 }
 
-interface CanvasUpdate {
-  zones?: unknown[]
-  components?: unknown[]
-  nodes?: unknown[]
-  edges: unknown[]
-}
-
 interface Props {
   visible: boolean
   orientation: AssistantOrientation
   onClose: () => void
-  onCanvasUpdate: (update: CanvasUpdate) => void
   runtime: AgentRuntime
   mode: AssistantMode
   onModeChange: (next: AssistantMode) => void
@@ -92,7 +78,6 @@ interface Props {
 interface AssistantTerminalProps {
   mode: AssistantMode
   visible: boolean
-  onCanvasUpdate: (update: CanvasUpdate) => void
 }
 
 export interface AssistantTerminalHandle {
@@ -111,11 +96,10 @@ export interface AssistantTerminalHandle {
 // - `requestResize` is the single entry point for all resize decisions:
 //   rows broadcast immediately, cols debounced COLS_DEBOUNCE_MS.
 const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalProps>(
-  function AssistantTerminal({ mode, visible, onCanvasUpdate }, ref) {
+  function AssistantTerminal({ mode, visible }, ref) {
     const containerRef   = useRef<HTMLDivElement>(null)
     const termRef        = useRef<Terminal | null>(null)
     const fitRef         = useRef<FitAddon | null>(null)
-    const parseBufferRef = useRef<string>('')
     const assistantId = ASSISTANT_IDS[mode]
     const { theme } = useInterfaceSettings()
     const xtermTheme = useMemo(
@@ -207,44 +191,12 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
         // only clears scrollback above the cursor, which collides with Ink
         // CLIs that reposition the cursor on startup.
         try { termRef.current?.reset() } catch {}
-        parseBufferRef.current = ''
         // Route through the gated path. clear() is only ever invoked for the
         // currently-visible mode, so requestResize will take the fast path.
         const m = measure()
         if (m) requestResize(m.cols, m.rows)
       },
     }), [measure, requestResize])
-
-    // Parse the ANSI-stripped data stream for ARCHITECT_CANVAS_UPDATE blocks.
-    // Only active in architecture mode — general mode must never modify the canvas.
-    const parseForUpdates = useCallback((raw: string) => {
-      if (mode !== 'architecture') return
-      parseBufferRef.current += stripAnsi(raw)
-
-      const START = 'ARCHITECT_CANVAS_UPDATE'
-      const END   = 'END_ARCHITECT_CANVAS_UPDATE'
-
-      let startIdx: number
-      while ((startIdx = parseBufferRef.current.indexOf(START)) !== -1) {
-        const endIdx = parseBufferRef.current.indexOf(END, startIdx + START.length)
-        if (endIdx === -1) break
-
-        const jsonStr = parseBufferRef.current.slice(startIdx + START.length, endIdx).trim()
-        parseBufferRef.current = parseBufferRef.current.slice(endIdx + END.length)
-
-        try {
-          const update = JSON.parse(jsonStr)
-          if ((update?.zones || update?.nodes) && update?.edges) {
-            onCanvasUpdate(update as CanvasUpdate)
-          }
-        } catch { /* malformed — skip */ }
-      }
-
-      // Prevent unbounded growth
-      if (parseBufferRef.current.length > 50_000) {
-        parseBufferRef.current = parseBufferRef.current.slice(-10_000)
-      }
-    }, [onCanvasUpdate, mode])
 
     // Mount xterm once — never unmount across close/mode/orientation changes.
     useEffect(() => {
@@ -264,7 +216,6 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       term.loadAddon(fit)
       termRef.current = term
       fitRef.current  = fit
-      parseBufferRef.current = ''
 
       term.onData(data => window.electron.terminal.input(assistantId, data))
       term.open(containerRef.current)
@@ -334,14 +285,14 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       }
     }, [visible, commitResize, measure])
 
-    // Stream terminal data
+    // Stream terminal data. Canvas edits arrive via the file watcher (the
+    // assistant writes the page file directly), not by parsing this stream.
     useEffect(() => {
       return window.electron.terminal.onData(({ id, data }) => {
         if (id !== assistantId) return
         termRef.current?.write(data)
-        parseForUpdates(data)
       })
-    }, [parseForUpdates, assistantId])
+    }, [assistantId])
 
     // Handle session exit
     useEffect(() => {
@@ -365,7 +316,6 @@ export default function AssistantPanel({
   visible,
   orientation,
   onClose,
-  onCanvasUpdate,
   runtime,
   mode,
   onModeChange,
@@ -478,8 +428,8 @@ export default function AssistantPanel({
       {/* Terminals — both mounted, only the active mode's is displayed.
           Keeps PTY state + xterm scrollback alive across close/mode/orientation. */}
       <div className="flex-1 relative overflow-hidden">
-        <AssistantTerminal ref={archRef}    mode="architecture" visible={visible && mode === 'architecture'} onCanvasUpdate={onCanvasUpdate} />
-        <AssistantTerminal ref={generalRef} mode="general"      visible={visible && mode === 'general'}      onCanvasUpdate={onCanvasUpdate} />
+        <AssistantTerminal ref={archRef}    mode="architecture" visible={visible && mode === 'architecture'} />
+        <AssistantTerminal ref={generalRef} mode="general"      visible={visible && mode === 'general'}      />
       </div>
 
       {modalOpen && projectDir && (

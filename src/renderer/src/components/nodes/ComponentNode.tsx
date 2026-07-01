@@ -1,7 +1,6 @@
-import { memo, type CSSProperties } from 'react'
-import { Handle, Position, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
+import { memo } from 'react'
+import { Handle, Position, useConnection, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { FileText, Trash2 } from 'lucide-react'
-import { getIcon } from '../../lib/icons'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
 import { useDocPane } from '../../context/DocPaneContext'
 import type { ComponentNodeData } from '../../types'
@@ -18,86 +17,66 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
   const label = data.label
   const description = data.description
   const specs = data.specs ?? ''
-  const iconName = data.iconName
-  const Icon = getIcon(iconName)
-  // The card previews the component's markdown note: the first few content
-  // lines of `specs` (markdown tokens stripped), falling back to the legacy
-  // one-line description so older canvases still read well.
+  // The card previews the markdown note: the first few content lines of
+  // `specs` (markdown tokens stripped), falling back to the legacy one-line
+  // description so older canvases still read well.
   const cardPreview = deriveCardPreview(specs, description, label)
 
-  const handleBaseStyle = {
-    width: 9,
-    height: 9,
-    // Match the card body so the handle reads as a subtle clip, not a dot.
-    // Hardcoded dark used to bleed through in light mode — pull from the
-    // same theme token the card uses.
-    background: isLight ? '#ffffff' : '#2a2723',
-    border: `2px solid ${color}`,
-    zIndex: 10,
-  } as const
-
-  const handlePairs: Array<{ side: 'left' | 'right' | 'top' | 'bottom'; position: Position; style: CSSProperties }> = [
-    { side: 'left', position: Position.Left, style: { left: -5 } },
-    { side: 'right', position: Position.Right, style: { right: -5 } },
-    { side: 'top', position: Position.Top, style: { top: -5 } },
-    { side: 'bottom', position: Position.Bottom, style: { bottom: -5 } },
-  ]
+  // Portless connections: while a drag-connect is in progress the whole card
+  // becomes the drop target; at rest the target handle is inert so it never
+  // steals node drag/click/double-click.
+  const connection = useConnection()
+  const isConnecting = connection.inProgress
+  const isConnectionTarget = isConnecting && connection.fromNode?.id !== id
 
   return (
-    <div className="relative architect-component-node">
-      {handlePairs.flatMap(({ side, position, style }) => [
-        <Handle
-          key={`target-${side}`}
-          id={`target-${side}`}
-          type="target"
-          position={position}
-          className="architect-component-handle"
-          style={{ ...handleBaseStyle, ...style }}
-        />,
-        <Handle
-          key={`source-${side}`}
-          id={`source-${side}`}
-          type="source"
-          position={position}
-          className="architect-component-handle"
-          style={{ ...handleBaseStyle, ...style }}
-        />,
-      ])}
+    <div className="group relative architect-component-node">
+      {/* Invisible full-card target handle. Always in the DOM so React Flow
+          can resolve edges whose targetHandle is null; only interactive
+          while a connection drag is live. */}
+      <Handle
+        type="target"
+        position={Position.Left}
+        isConnectableStart={false}
+        style={{
+          position: 'absolute',
+          inset: 0,
+          width: '100%',
+          height: '100%',
+          transform: 'none',
+          borderRadius: 0,
+          border: 'none',
+          opacity: 0,
+          background: 'transparent',
+          pointerEvents: isConnecting ? 'all' : 'none',
+          zIndex: 5,
+        }}
+      />
 
-      {/* Markdown note card. Neutral hairline border (no zone-color outline);
-          zone identity is carried by the icon in the header and the color band
-          at the foot. The body previews the component's markdown note.
-          Selection ring uses accent blue so it reads as a system signal, not
-          as zone overlap. */}
+      {/* Natural-language card: title + a few lines of the note + a thin
+          accent band. Selection ring stays accent blue (system signal);
+          while a connection hovers, the ring switches to the card color so
+          the drop target reads clearly. */}
       <div
         className="relative bg-component overflow-hidden select-none cursor-pointer transition-colors rounded-md min-w-[210px] max-w-[300px]"
         style={{
           border: '1px solid rgba(255, 255, 255, 0.06)',
-          boxShadow: selected
-            ? '0 0 0 1px rgba(88, 166, 255, 0.55), 0 0 24px rgba(88, 166, 255, 0.18)'
-            : '0 6px 14px -8px rgba(0, 0, 0, 0.55)',
+          boxShadow: isConnectionTarget
+            ? `0 0 0 1px ${color}, 0 0 20px ${color}33`
+            : selected
+              ? '0 0 0 1px rgba(88, 166, 255, 0.55), 0 0 24px rgba(88, 166, 255, 0.18)'
+              : '0 6px 14px -8px rgba(0, 0, 0, 0.55)',
         }}
         onDoubleClick={(e) => {
           e.stopPropagation()
           openComponent(id)
         }}
       >
-        {/* Header band: darker than body. Holds the (neutral) icon + name and
-            the edit/delete actions. The bottom border is dropped when the note
-            preview is empty, so the header reads as the whole card. */}
-        <div className={`flex items-center justify-between gap-2 px-3 py-2 bg-canvas ${cardPreview ? 'border-b border-node-border' : ''}`}>
-          <div className="flex items-center gap-2 min-w-0">
-            <Icon
-              size={14}
-              strokeWidth={1.7}
-              style={{ color }}
-              className="flex-shrink-0"
-            />
-            <span className="font-semibold text-fg truncate text-[14px]">
-              {label}
-            </span>
-          </div>
-          <div className="flex items-center gap-1.5 flex-shrink-0">
+        <div className="flex items-center justify-between gap-2 px-3 pt-2.5 pb-1.5">
+          <span className="font-semibold text-fg truncate text-[14px]">
+            {label}
+          </span>
+          <div className="flex items-center gap-1.5 flex-shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
             <button
               onClick={(e) => {
                 e.stopPropagation()
@@ -107,8 +86,8 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
               className={`w-4 h-4 flex items-center justify-center rounded-[2px] text-fg-subtle hover:text-fg transition-colors nodrag ${
                 isLight ? 'hover:bg-slate-200/70' : 'hover:bg-white/10'
               }`}
-              title="Edit component"
-              aria-label="Edit component"
+              title="Open note"
+              aria-label="Open note"
             >
               <FileText size={10} strokeWidth={1.7} />
             </button>
@@ -120,39 +99,52 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               className="w-4 h-4 flex items-center justify-center rounded-[2px] text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
-              title="Delete component"
-              aria-label="Delete component"
+              title="Delete card"
+              aria-label="Delete card"
             >
               <Trash2 size={10} strokeWidth={1.7} />
             </button>
           </div>
         </div>
 
-        {/* Body: a few lines of the component's markdown note (markdown tokens
-            stripped). Suppressed entirely when the note is empty — the header
-            then reads as the whole card. */}
+        {/* Body: a few lines of the card's note (markdown tokens stripped).
+            Suppressed when the note is empty — the title reads as the card. */}
         {cardPreview && (
-          <div className="px-3 py-2">
+          <div className="px-3 pb-2">
             <p className="whitespace-pre-line text-[12px] text-fg-muted leading-relaxed line-clamp-3">
               {cardPreview}
             </p>
           </div>
         )}
 
-        {/* Identity footer: a thin solid band in the node's zone color
-            anchored to the bottom of the card. Reintroduces the per-zone
-            color signal we dropped from the border without re-creating a
-            banned side-stripe. */}
+        {/* Identity footer: thin accent band in the card's auto-assigned
+            color. */}
         <div className="h-1 w-full" style={{ backgroundColor: color }} aria-hidden />
       </div>
 
+      {/* Connect affordance: a grab dot on the right edge, visible on hover.
+          Dragging it to another card creates an edge. */}
+      <Handle
+        type="source"
+        position={Position.Right}
+        className="clique-connect-dot nodrag"
+        style={{
+          width: 11,
+          height: 11,
+          right: -6,
+          borderRadius: 9999,
+          background: color,
+          border: `2px solid ${isLight ? '#ffffff' : '#1e1e1e'}`,
+          zIndex: 10,
+        }}
+      />
     </div>
   )
 }
 
-// Build the on-card preview from a component's markdown note. Strips heading
+// Build the on-card preview from a card's markdown note. Strips heading
 // hashes, list/blockquote markers, and inline-code backticks; skips a leading
-// H1 that just repeats the component name; keeps the first 3 content lines.
+// H1 that just repeats the card title; keeps the first 3 content lines.
 // Falls back to the legacy one-line description when the note is empty.
 function deriveCardPreview(specs: string, description: string, label: string): string {
   const out: string[] = []

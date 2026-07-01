@@ -76,7 +76,7 @@ export default function BugReportModal({ projectDir, activeDispatchId, onClose }
         <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Report a bug</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            Describe what happened, then click <span className="text-fg">Copy logs &amp; open form</span>. Architect copies a diagnostic bundle to your clipboard and opens the feedback form. Paste the bundle into the &ldquo;Logs&rdquo; field.
+            Describe what happened, then click <span className="text-fg">Copy logs &amp; open form</span>. Clique copies a diagnostic bundle to your clipboard and opens the feedback form. Paste the bundle into the &ldquo;Logs&rdquo; field.
           </p>
         </div>
 

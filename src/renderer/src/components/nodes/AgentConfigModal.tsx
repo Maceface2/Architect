@@ -18,10 +18,7 @@ import type {
   NodeSkillFile,
   NodeTools,
   NodeBehavior,
-  NodePermissions,
   NodeEnvVar,
-  RunMode,
-  OnFailure,
   RuntimeModelMap,
 } from '../../types'
 
@@ -46,7 +43,6 @@ interface Props {
   skills: NodeSkillFile[]
   tools: NodeTools
   behavior: NodeBehavior
-  permissions: NodePermissions
   envVars: NodeEnvVar[]
   patch: (partial: Partial<ZoneNodeData>) => void
   onClose: () => void
@@ -64,7 +60,6 @@ export default function AgentConfigModal({
   skills,
   tools,
   behavior,
-  permissions,
   envVars,
   patch,
   onClose,
@@ -132,7 +127,6 @@ export default function AgentConfigModal({
   const removeSkill = (path: string) => patch({ skills: skills.filter(skill => skill.path !== path) })
   const toggleTool = (key: keyof NodeTools) => patch({ tools: { ...tools, [key]: !tools[key] } })
   const setBehavior = (partial: Partial<NodeBehavior>) => patch({ behavior: { ...behavior, ...partial } })
-  const togglePerm = (key: keyof NodePermissions) => patch({ permissions: { ...permissions, [key]: !permissions[key] } })
   const addEnvVar = () => patch({ envVars: [...envVars, { key: '', value: '' }] })
   const removeEnvVar = (index: number) => patch({ envVars: envVars.filter((_, idx) => idx !== index) })
   const updateEnvVar = (index: number, field: keyof NodeEnvVar, value: string) =>
@@ -162,8 +156,8 @@ export default function AgentConfigModal({
 
   return (
     <DocPane
-      title={labelDraft.trim() || label || 'Zone'}
-      kindLabel="Zone"
+      title={labelDraft.trim() || label || 'Agent'}
+      kindLabel="Agent"
       onClose={onClose}
       headerActions={<MarkdownModeToggle mode={mode} onToggle={toggleMode} />}
     >
@@ -213,7 +207,7 @@ export default function AgentConfigModal({
                     <button
                       onClick={() => setConfiguredRuntime(projectSettings.dispatchRuntime)}
                       className="rounded border border-node-border px-1.5 py-0.5 uppercase tracking-wider text-fg-subtle transition-colors hover:border-accent hover:text-fg"
-                      title="Drop the per-zone CLI override and inherit the canvas default."
+                      title="Drop the per-agent CLI override and inherit the canvas default."
                     >
                       Use default
                     </button>
@@ -353,55 +347,16 @@ export default function AgentConfigModal({
               </Section>
 
               <Section title="Behavior">
-                <div className="space-y-3">
-                  <Field label="Mode">
-                    <Seg
-                      options={['sequential', 'parallel', 'loop'] as RunMode[]}
-                      value={behavior.mode}
-                      onChange={value => setBehavior({ mode: value })}
-                    />
-                  </Field>
-                  <Field label="On failure">
-                    <Seg
-                      options={['stop', 'retry', 'skip'] as OnFailure[]}
-                      value={behavior.onFailure}
-                      onChange={value => setBehavior({ onFailure: value })}
-                    />
-                  </Field>
-                  <Field label="Retries">
-                    <input
-                      type="number"
-                      min={0}
-                      max={10}
-                      value={behavior.retries}
-                      onChange={event => setBehavior({ retries: Number(event.target.value) })}
-                      className="w-16 rounded border border-node-border bg-node/80 px-2 py-1 text-xs text-fg-muted outline-none transition-colors focus:border-accent"
-                    />
-                  </Field>
-                  <Field label="Timeout (ms)">
-                    <input
-                      type="number"
-                      min={0}
-                      step={1000}
-                      value={behavior.timeoutMs}
-                      onChange={event => setBehavior({ timeoutMs: Number(event.target.value) })}
-                      className="w-24 rounded border border-node-border bg-node/80 px-2 py-1 text-xs text-fg-muted outline-none transition-colors focus:border-accent"
-                    />
-                  </Field>
-                </div>
-              </Section>
-
-              <Section title="Permissions">
-                <div className="space-y-2">
-                  {([
-                    ['readFiles', 'Read files'],
-                    ['writeFiles', 'Write files'],
-                    ['network', 'Network'],
-                    ['shell', 'Shell'],
-                  ] as [keyof NodePermissions, string][]).map(([key, pLabel]) => (
-                    <Toggle key={key} label={pLabel} value={permissions[key]} onChange={() => togglePerm(key)} />
-                  ))}
-                </div>
+                <Field label="Retries">
+                  <input
+                    type="number"
+                    min={0}
+                    max={10}
+                    value={behavior.retries}
+                    onChange={event => setBehavior({ retries: Number(event.target.value) })}
+                    className="w-16 rounded border border-node-border bg-node/80 px-2 py-1 text-xs text-fg-muted outline-none transition-colors focus:border-accent"
+                  />
+                </Field>
               </Section>
 
               <Section title="Environment">
@@ -521,24 +476,6 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
     <div className="flex items-center justify-between gap-2">
       <span className="text-[12px] text-fg-subtle flex-shrink-0">{label}</span>
       {children}
-    </div>
-  )
-}
-
-function Seg<T extends string>({ options, value, onChange }: { options: T[]; value: T; onChange: (value: T) => void }) {
-  return (
-    <div className="flex rounded overflow-hidden border border-node-border">
-      {options.map(option => (
-        <button
-          key={option}
-          onClick={() => onChange(option)}
-          className={`px-2 py-0.5 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-accent/20 text-accent' : 'text-fg-subtle hover:text-fg-muted'
-          }`}
-        >
-          {option}
-        </button>
-      ))}
     </div>
   )
 }

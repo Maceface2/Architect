@@ -206,33 +206,24 @@ samp {
   z-index: 1 !important;
 }
 
-/* Component connection points */
-.architect-component-handle {
+/* Card connect affordance: a grab dot on the card's right edge, revealed on
+   hover (or while a connection drag is live). Dragging it to another card
+   creates an edge — there are no fixed ports. */
+.clique-connect-dot {
   opacity: 0;
   transition:
     opacity 150ms ease,
     box-shadow 150ms ease;
 }
 
-.architect-component-node:hover .architect-component-handle,
-.architect-edge-mode .architect-component-handle {
+.architect-component-node:hover .clique-connect-dot,
+.react-flow__node-component:hover .clique-connect-dot,
+.clique-connect-dot.connectingfrom {
   opacity: 1;
 }
 
-.architect-edge-mode .architect-component-handle {
-  animation: architect-handle-pulse 1.15s ease-in-out infinite;
-  box-shadow: 0 0 0 2px rgb(var(--accent) / 0.18), 0 0 14px rgb(var(--accent) / 0.42);
-}
-
-@keyframes architect-handle-pulse {
-  0%,
-  100% {
-    box-shadow: 0 0 0 2px rgb(var(--accent) / 0.16), 0 0 10px rgb(var(--accent) / 0.3);
-  }
-
-  50% {
-    box-shadow: 0 0 0 5px rgb(var(--accent) / 0.26), 0 0 18px rgb(var(--accent) / 0.52);
-  }
+.architect-component-node:hover .clique-connect-dot {
+  box-shadow: 0 0 0 3px rgb(var(--accent) / 0.14);
 }
 
 /* Selection box — neutral marquee, not a colored signal. */

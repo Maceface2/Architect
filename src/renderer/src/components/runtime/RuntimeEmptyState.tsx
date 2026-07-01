@@ -13,7 +13,7 @@ export function RuntimeEmptyState({ compact = false }: { compact?: boolean }) {
     <div className={`rounded-lg border border-node-border bg-panel px-4 py-3 ${compact ? 'text-[11px]' : 'text-xs'}`}>
       <div className="text-accent font-medium mb-2">No CLIs detected</div>
       <div className="text-fg-subtle leading-relaxed mb-3">
-        Architect orchestrates agent CLIs. Install at least one to dispatch zones.
+        Clique orchestrates agent CLIs. Install at least one to launch agents.
       </div>
       <div className="space-y-1.5 mb-3">
         {AGENT_RUNTIMES.map(def => (

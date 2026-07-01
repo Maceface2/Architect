@@ -152,7 +152,7 @@ export default function ZoneLaunchModal({
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-fg flex items-center gap-2">
-              <Play size={16} style={{ color: zoneColor }} /> Launch zone · {zoneLabel}
+              <Play size={16} style={{ color: zoneColor }} /> Launch agent · {zoneLabel}
             </h2>
             <p className="text-xs text-fg-muted mt-1">
               Start a new session or continue a previous one.
@@ -183,7 +183,7 @@ export default function ZoneLaunchModal({
                   void launchNew()
                 }
               }}
-              placeholder="What should this zone do on this run?"
+              placeholder="What should this agent do on this run?"
               rows={5}
               className="w-full bg-canvas border border-white/10 rounded-md px-3 py-2 text-sm text-fg resize-y focus:outline-none focus:border-accent"
             />

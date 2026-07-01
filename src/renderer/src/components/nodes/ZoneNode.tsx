@@ -162,8 +162,8 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               className={`w-5 h-5 flex items-center justify-center rounded transition-colors nodrag ${buttonIdleClass}`}
-              title="Launch this zone"
-              aria-label="Launch this zone"
+              title="Launch this agent"
+              aria-label="Launch this agent"
             >
               <Play size={12} />
             </button>
@@ -174,8 +174,8 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               className={`w-5 h-5 flex items-center justify-center rounded transition-colors nodrag ${buttonIdleClass}`}
-              title="Configure zone agent"
-              aria-label="Configure zone agent"
+              title="Configure agent"
+              aria-label="Configure agent"
             >
               <Settings size={12} />
             </button>
@@ -189,8 +189,8 @@ function ZoneNode({ id, data, selected }: ZoneNodeProps) {
               }}
               onMouseDown={(e) => e.stopPropagation()}
               className="w-5 h-5 flex items-center justify-center rounded text-fg-subtle hover:text-red-300 hover:bg-red-500/15 transition-colors nodrag"
-              title="Delete zone"
-              aria-label="Delete zone"
+              title="Delete agent"
+              aria-label="Delete agent"
             >
               <Trash2 size={12} />
             </button>

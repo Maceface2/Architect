@@ -28,8 +28,8 @@ export default function ComponentConfigModal({ label, specs, patch, onClose }: P
 
   return (
     <DocPane
-      title={labelDraft.trim() || label || 'Component'}
-      kindLabel="Component"
+      title={labelDraft.trim() || label || 'Card'}
+      kindLabel="Card"
       onClose={onClose}
       headerActions={<MarkdownModeToggle mode={mode} onToggle={toggleMode} />}
     >
@@ -47,7 +47,7 @@ export default function ComponentConfigModal({ label, specs, patch, onClose }: P
             }
           }}
           className="w-full border-0 bg-transparent p-0 text-[26px] font-semibold tracking-[-0.02em] text-fg outline-none placeholder:text-fg-subtle"
-          placeholder="Component name"
+          placeholder="Card title"
         />
 
         {/* Body: the component spec note */}
@@ -58,7 +58,7 @@ export default function ComponentConfigModal({ label, specs, patch, onClose }: P
           onToggleMode={toggleMode}
           autoFocus
           minHeight={520}
-          placeholder={'Describe this component: responsibilities, API contracts, schemas, interfaces, invariants — anything the zone’s agent needs to build it.\n\n# Responsibilities\n- ...\n\n# API\n- ...'}
+          placeholder={'Describe this piece of the system in plain language: what it is, what it should do, contracts, constraints — anything the owning agent needs to build it.\n\n# Responsibilities\n- ...\n\n# Notes\n- ...'}
         />
       </div>
     </DocPane>

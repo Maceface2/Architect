@@ -133,7 +133,7 @@ export default function DispatchSwimlane({ dispatchId, participantLabels, partic
     return <EmptyMessage>No active dispatch.</EmptyMessage>
   }
   if (!state || participants.length === 0) {
-    return <EmptyMessage>Waiting for the first activity from any zone…</EmptyMessage>
+    return <EmptyMessage>Waiting for the first activity from any agent…</EmptyMessage>
   }
 
   const gridTemplate = `${TIME_GUTTER_PX}px repeat(${participants.length}, minmax(${COLUMN_MIN_WIDTH}px, 1fr))`

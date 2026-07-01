@@ -10,6 +10,9 @@ export type ComponentEdgeDirection = 'source-to-target' | 'bidirectional' | 'non
 
 export interface ComponentEdgeData extends Record<string, unknown> {
   label?: string
+  // Deprecated: the simplified canvas no longer surfaces edge direction.
+  // Tolerated on disk (old canvases) and still normalized by the projection
+  // for prompts, but never written or rendered by the UI.
   direction?: ComponentEdgeDirection
   // Cross-folder edge metadata. When source and target nodes live in
   // different workspace folders, the edge is owned by the source folder's
@@ -243,27 +246,29 @@ export type DispatchRequest =
       dispatchId: string
     }
 
-// A structured spec/note on a component. Renders as a `key · value` row on
-// the canvas card; value drives a color via fieldTypeColor when it matches
-// a known schema type (uuid, string, int…), otherwise neutral. Open-ended
-// by design: any key, any value. id is a stable key for React keying.
+// Deprecated: typed key/value rows from the old UML-style cards. Kept only
+// so legacy canvases parse; normalizeComponentData folds any rows into the
+// `specs` note as a `## Properties` section and empties the array.
 export interface ComponentField {
   id: string
   key: string
   value: string
 }
 
-// A component is a design artifact. It carries the core context (description, specs)
-// for one part of the system; zones overlay components to add agent behavior.
+// A card is a natural-language design artifact: a title (`label`) plus a
+// markdown note (`specs`). Zones overlay cards to add agent behavior.
+// `description`, `category`, `iconName`, `tag`, and `fields` are deprecated
+// leftovers from the UML-style cards — tolerated on disk, still emitted by
+// the projection when present, but never written by the simplified UI.
 export interface ComponentNodeData {
   label: string
-  description: string  // short tagline
-  specs: string        // long-form description, API contracts, notes, requirements
-  category: ComponentCategory
-  iconName: string
-  color: string
-  tag: string
-  fields?: ComponentField[]  // typed key/value rows shown on the card
+  description: string  // deprecated: short tagline; read as preview fallback only
+  specs: string        // the card's markdown note: description, contracts, requirements
+  category: ComponentCategory  // deprecated: no longer surfaced in UI
+  iconName: string     // deprecated: no longer surfaced in UI
+  color: string        // accent color, auto-assigned from CARD_COLOR_PALETTE
+  tag: string          // deprecated: no longer surfaced in UI
+  fields?: ComponentField[]  // deprecated: folded into specs at load
   [key: string]: unknown
 }
 
