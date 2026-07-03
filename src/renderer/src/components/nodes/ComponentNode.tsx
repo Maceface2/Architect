@@ -1,4 +1,4 @@
-import { memo } from 'react'
+import { memo, type CSSProperties } from 'react'
 import { Handle, Position, useConnection, useReactFlow, type NodeProps, type Node } from '@xyflow/react'
 import { FileText, Trash2 } from 'lucide-react'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
@@ -6,6 +6,16 @@ import { useDocPane } from '../../context/DocPaneContext'
 import type { ComponentNodeData } from '../../types'
 
 type ComponentNodeProps = NodeProps<Node<ComponentNodeData>>
+
+// One connect dot per side, centered on each edge. Ids are stable for React
+// keying only — onConnect persists null handles, and the floating edge
+// computes its own anchors from node geometry.
+const connectDots: Array<{ id: string; position: Position; style: CSSProperties }> = [
+  { id: 'dot-top', position: Position.Top, style: { top: -6 } },
+  { id: 'dot-right', position: Position.Right, style: { right: -6 } },
+  { id: 'dot-bottom', position: Position.Bottom, style: { bottom: -6 } },
+  { id: 'dot-left', position: Position.Left, style: { left: -6 } },
+]
 
 function ComponentNode({ id, data, selected }: ComponentNodeProps) {
   const { deleteElements } = useReactFlow()
@@ -122,22 +132,29 @@ function ComponentNode({ id, data, selected }: ComponentNodeProps) {
         <div className="h-1 w-full" style={{ backgroundColor: color }} aria-hidden />
       </div>
 
-      {/* Connect affordance: a grab dot on the right edge, visible on hover.
-          Dragging it to another card creates an edge. */}
-      <Handle
-        type="source"
-        position={Position.Right}
-        className="clique-connect-dot nodrag"
-        style={{
-          width: 11,
-          height: 11,
-          right: -6,
-          borderRadius: 9999,
-          background: color,
-          border: `2px solid ${isLight ? '#ffffff' : '#1e1e1e'}`,
-          zIndex: 10,
-        }}
-      />
+      {/* Connect affordances: one grab dot per side, visible on hover.
+          Dragging any dot to another card creates an edge. The dots only
+          start the drag — the rendered edge floats to the card border
+          (ComponentEdge ignores handle ids), so which dot you grab doesn't
+          pin the line. */}
+      {connectDots.map(dot => (
+        <Handle
+          key={dot.id}
+          id={dot.id}
+          type="source"
+          position={dot.position}
+          className="clique-connect-dot nodrag"
+          style={{
+            width: 11,
+            height: 11,
+            borderRadius: 9999,
+            background: color,
+            border: `2px solid ${isLight ? '#ffffff' : '#1e1e1e'}`,
+            zIndex: 10,
+            ...dot.style,
+          }}
+        />
+      ))}
     </div>
   )
 }
