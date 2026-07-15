@@ -8,7 +8,9 @@ import { getAgentRuntime, type AgentRuntime } from '../../../../shared/agentRunt
 import { DEFAULT_COLS, DEFAULT_ROWS } from '../../../../shared/terminalDims'
 import type { TerminalInfo } from '../../../../shared/electronTypes'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
+import { withTerminalSurface } from '../../lib/terminalTheme'
 import { useWorkspaceOptional } from '../../context/WorkspaceContext'
+import CliqueLogo from '../branding/CliqueLogo'
 import type { LayoutNode, PaneNode, TerminalLayout, DropEdge } from './terminalLayoutTypes'
 import {
   emptyLayout,
@@ -46,16 +48,16 @@ interface Props {
 // darkened so they remain readable on a white background (the dark-mode
 // values wash out).
 const TERM_THEME_DARK = {
-  background:  '#14110e',
+  background:  '#212121',
   foreground:  '#e2e8f0',
   cursor:      '#58A6FF',
-  cursorAccent:'#14110e',
+  cursorAccent:'#212121',
   black:       '#1e1e1e',
   red:         '#f87171',
   green:       '#4ade80',
   yellow:      '#fbbf24',
   blue:        '#58A6FF',
-  magenta:     '#c084fc',
+  magenta:     '#7e7eea',
   cyan:        '#38bdf8',
   white:       '#e2e8f0',
   brightBlack: '#3a3a3a',
@@ -139,7 +141,13 @@ function TermTab({ info, active }: { info: TerminalInfo; active: boolean }) {
   const containerRef = useRef<HTMLDivElement>(null)
   const isCoordinated = !!info.coordinatedMode
   const { theme } = useInterfaceSettings()
-  const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
+  // Derive background/cursorAccent from the --bg-terminal token so the token
+  // is the single source of truth. Memoized on app theme (recomputes on theme
+  // flip; remounts on CSS HMR pick up token edits).
+  const xtermTheme = useMemo(
+    () => withTerminalSurface(theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK),
+    [theme],
+  )
   // Plan-mode pill state. The conductor's prompt instructs it to wait for
   // the user to type `GO` on its own line before emitting any assignments.
   // We mirror that locally: while the user hasn't typed GO yet, render a
@@ -480,7 +488,7 @@ function PaneView({
         return (
           <Fragment key={tabId}>
             {tabDropIdx === i && (
-              <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+              <div className="w-0.5 self-stretch bg-accent" />
             )}
             <div
               data-tab-id={tabId}
@@ -492,7 +500,7 @@ function PaneView({
               style={titleBarItemStyle}
               className={`flex items-center border-b-2 transition-colors flex-shrink-0 ${
                 isActive
-                  ? 'border-[#58A6FF] bg-white/[0.04]'
+                  ? 'border-accent bg-white/[0.04]'
                   : 'border-transparent hover:bg-white/[0.02]'
               }`}
             >
@@ -507,7 +515,7 @@ function PaneView({
                 ) : (
                   <span
                     className={`w-1.5 h-1.5 rounded-full flex-shrink-0 ${
-                      isConductor ? 'bg-[#c084fc]' : 'bg-[#58A6FF]'
+                      isConductor ? 'bg-accent' : 'bg-accent'
                     } ${exitedIds.has(s.id) ? 'opacity-30' : ''}`}
                   />
                 )}
@@ -574,7 +582,7 @@ function PaneView({
         )
       })}
       {tabDropIdx === pane.tabs.length && (
-        <div className="w-0.5 self-stretch bg-[#58A6FF]" />
+        <div className="w-0.5 self-stretch bg-accent" />
       )}
       <button
         onClick={onNewShell}
@@ -607,18 +615,11 @@ function PaneView({
           <div className="flex items-stretch bg-white/[0.05]">
             <div style={{ width: 80, flexShrink: 0 }} aria-hidden />
             <div
-              className="flex items-center justify-center pl-1 pr-2.5 flex-shrink-0"
+              className="flex items-center justify-center pl-1 pr-2.5 flex-shrink-0 text-fg-muted"
               style={titleBarItemStyle}
-              aria-label="Architect"
+              aria-label="Clique"
             >
-              <svg width="14" height="14" viewBox="0 0 400 400" fill="none" xmlns="http://www.w3.org/2000/svg">
-                <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="32" strokeLinecap="round" />
-                <circle cx="40" cy="360" r="28" fill="#58A6FF" />
-                <circle cx="200" cy="360" r="28" fill="#58A6FF" />
-                <circle cx="360" cy="40" r="28" fill="#58A6FF" />
-              </svg>
+              <CliqueLogo size={14} />
             </div>
             <div
               className="flex items-center gap-0 overflow-x-auto scrollbar-hide flex-1 min-w-0 relative"
@@ -713,8 +714,8 @@ function LayoutRenderer({
             <PanelResizeHandle
               className={
                 node.direction === 'row'
-                  ? 'w-1 bg-white/[0.04] hover:bg-[#58A6FF]/40 transition-colors'
-                  : 'h-1 bg-white/[0.04] hover:bg-[#58A6FF]/40 transition-colors'
+                  ? 'w-1 bg-white/[0.04] hover:bg-accent/40 transition-colors'
+                  : 'h-1 bg-white/[0.04] hover:bg-accent/40 transition-colors'
               }
             />
           )}

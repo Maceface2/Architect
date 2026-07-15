@@ -36,11 +36,26 @@ export const DEFAULT_INTERFACE_SETTINGS: InterfaceSettings = {
   zoneTreatment: 'default',
   theme: 'dark',
   canvasBackground: 'dots',
-  componentDensity: 'detailed',
 }
 
 export const DEFAULT_ZONE_TIMEOUT_MS = 30_000
 export const DEFAULT_EDGE_DIRECTION: ComponentEdgeDirection = 'source-to-target'
+
+// Card accents are auto-assigned at creation — no color picker. Muted hues
+// tuned for the flat Obsidian-dark surface; first entry matches the app
+// accent, second the logo's yellow node.
+export const CARD_COLOR_PALETTE = [
+  '#7e7eea', // periwinkle (app accent)
+  '#e8c547', // yellow (logo node)
+  '#5fb0a5', // teal
+  '#c96f6f', // rose
+  '#8fb562', // green
+  '#c98d5a', // amber
+] as const
+
+export function nextCardColor(existingCardCount: number): string {
+  return CARD_COLOR_PALETTE[existingCardCount % CARD_COLOR_PALETTE.length]
+}
 
 export const DEFAULT_TOOLS: NodeTools = {
   webSearch: false,
@@ -110,9 +125,6 @@ function normalizeInterfaceSettings(raw: unknown): InterfaceSettings {
   }
   if (rec.canvasBackground === 'dots' || rec.canvasBackground === 'grid') {
     base.canvasBackground = rec.canvasBackground as CanvasBackground
-  }
-  if (rec.componentDensity === 'detailed' || rec.componentDensity === 'simplified') {
-    base.componentDensity = rec.componentDensity
   }
   return base
 }
@@ -475,15 +487,28 @@ function normalizeComponentData(raw: Record<string, unknown>): ComponentNodeData
     // Drop fully-empty rows; preserve partials so half-typed edits survive.
     .filter(f => f.key.trim().length > 0 || f.value.trim().length > 0)
 
+  let specs = typeof raw.specs === 'string' ? raw.specs : ''
+
+  // Legacy migration: the simplified cards have no typed-field UI. Fold any
+  // surviving rows into the note as a Properties section, then empty the
+  // array. Deterministic for a given disk input, so repeated loads without
+  // a save in between produce identical output (no duplication).
+  if (fields.length > 0) {
+    const propertyLines = fields
+      .map(f => `- **${f.key.trim() || '—'}**: ${f.value.trim()}`)
+      .join('\n')
+    specs = `${specs.trimEnd()}\n\n## Properties\n${propertyLines}`.trimStart()
+  }
+
   return {
     label: typeof raw.label === 'string' ? raw.label : 'Component',
     description: typeof raw.description === 'string' ? raw.description : '',
-    specs: typeof raw.specs === 'string' ? raw.specs : '',
+    specs,
     category: (raw.category as ComponentNodeData['category']) ?? 'custom',
     iconName: typeof raw.iconName === 'string' ? raw.iconName : 'Wrench',
     color: typeof raw.color === 'string' ? raw.color : '#60a5fa',
     tag: typeof raw.tag === 'string' ? raw.tag : 'NODE',
-    fields,
+    fields: [],
   }
 }
 
@@ -594,8 +619,11 @@ export function migrateCanvasData(raw: unknown): ArchitectCanvasData {
     type: 'component-edge',
     source: String(edge.source ?? ''),
     target: String(edge.target ?? ''),
-    sourceHandle: typeof edge.sourceHandle === 'string' ? edge.sourceHandle : null,
-    targetHandle: typeof edge.targetHandle === 'string' ? edge.targetHandle : null,
+    // Legacy per-side handle ids (e.g. "source-right") no longer exist on
+    // the simplified cards — null them so React Flow resolves the node's
+    // default handles; the floating edge computes its own anchors anyway.
+    sourceHandle: null,
+    targetHandle: null,
     data: normalizeEdgeData(edge.data ?? edge),
   }))
 

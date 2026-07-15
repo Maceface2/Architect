@@ -102,13 +102,13 @@ export default function SettingsPanel({
         <header>
           <h1 className="text-xl font-semibold text-fg tracking-tight">Project Settings</h1>
           <p className="text-xs text-fg-subtle mt-1 leading-relaxed">
-            These settings persist in <span className="font-mono text-fg-muted">architect-canvas.json</span> and apply to every new zone and dispatch in this project.
+            These settings persist with the canvas and apply to every new agent and dispatch in this project.
           </p>
         </header>
 
         <Section title="Interface" hint="Pure UI preferences — these only affect how the renderer paints. Saved with the canvas so the next session starts with the same look.">
           <div className="space-y-3">
-            <Field label="Zone style">
+            <Field label="Agent style">
               <Seg
                 options={['default', 'architectural', 'terminal'] as const}
                 value={settings.interface.zoneTreatment}
@@ -131,11 +131,11 @@ export default function SettingsPanel({
             </Field>
           </div>
           <p className="text-[11px] text-fg-subtle leading-relaxed mt-3">
-            <span className="text-fg-muted">Default</span> keeps the filled card look. <span className="text-fg-muted">Architectural</span> turns zones into outlined regions with small zone-colored corner ticks and a slashed label. <span className="text-fg-muted">Terminal</span> drops fill and border entirely, leaving large neutral L-brackets and a <span className="font-mono">[ bracketed ]</span> label, like a TUI window.
+            <span className="text-fg-muted">Default</span> keeps the filled card look. <span className="text-fg-muted">Architectural</span> turns agents into outlined regions with small corner ticks in the agent’s color and a slashed label. <span className="text-fg-muted">Terminal</span> drops fill and border entirely, leaving large neutral L-brackets and a <span className="font-mono">[ bracketed ]</span> label, like a TUI window.
           </p>
         </Section>
 
-        <Section title="Canvas Zone CLI" hint="Picking a CLI here bulk-applies it to every zone on the canvas and seeds newly dragged zones. Individual zones may still override via the zone config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
+        <Section title="Agent CLI" hint="Picking a CLI here bulk-applies it to every agent on the canvas and seeds new agents. Individual agents may still override via the agent config. The Orchestrator (Conductor) CLI is picked separately at dispatch time.">
           <div className="flex items-center justify-between mb-2">
             <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
               {lastScanned ? `Scanned ${lastScanned}` : 'Scanning…'}
@@ -165,7 +165,7 @@ export default function SettingsPanel({
                       selected
                         ? notInstalled
                           ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
-                          : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                          : 'border-accent/50 bg-accent/10 text-fg'
                         : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                     }`}
                   >
@@ -187,8 +187,8 @@ export default function SettingsPanel({
                 }`}
                 title={
                   zonesAreCustom
-                    ? 'Zones on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
-                    : 'Highlights when zones diverge from the canvas default.'
+                    ? 'Agents on the canvas use different CLIs. Pick a CLI above to bulk-apply it everywhere.'
+                    : 'Highlights when agents diverge from the canvas default.'
                 }
               >
                 <span className="text-sm font-medium">Custom</span>
@@ -202,7 +202,7 @@ export default function SettingsPanel({
 
         <Section
           title="Models"
-          hint="Per-CLI default model. Seeds new zones and pre-fills the Dispatch model picker."
+          hint="Per-CLI default model. Seeds new agents and pre-fills the Dispatch model picker."
         >
           <div className="flex items-center justify-between mb-3">
             <span className="text-[10px] uppercase tracking-wider text-fg-subtle">
@@ -281,7 +281,7 @@ export default function SettingsPanel({
                         onClick={() => setModel(runtime.id, model)}
                         className={`px-2 py-1 rounded text-[11px] border transition-colors ${
                           current === model
-                            ? 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-[#58A6FF]'
+                            ? 'border-accent/50 bg-accent/10 text-accent'
                             : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                         }`}
                       >
@@ -307,7 +307,7 @@ export default function SettingsPanel({
 
         <Section
           title="Dispatch effort"
-          hint="Reasoning effort applied to zones and multi-zone dispatches at spawn. Mapped to each CLI's native flag; CLIs without an effort flag ignore this. Does NOT affect the side-panel assistant."
+          hint="Reasoning effort applied to agents and multi-agent dispatches at spawn. Mapped to each CLI's native flag; CLIs without an effort flag ignore this. Does NOT affect the side-panel assistant."
         >
           <div className="space-y-3">
             <Field label="Reasoning effort">
@@ -335,8 +335,8 @@ export default function SettingsPanel({
         </Section>
 
         <Section
-          title="New-zone tool seed"
-          hint="Tool toggles copied into new zones when dragged onto the canvas. Existing zones keep their own config. The side-panel assistant is unaffected."
+          title="New-agent tool seed"
+          hint="Tool toggles copied into new agents when placed on the canvas. Existing agents keep their own config. The side-panel assistant is unaffected."
         >
           <div className="space-y-2">
             {TOOL_ROWS.map(([key, tLabel]) => (
@@ -352,13 +352,13 @@ export default function SettingsPanel({
 
         <Section
           title="Timeouts (Dispatch / Zones)"
-          hint="Zone timeout seeds new zones. Scheduler knobs govern how the conductor responds to stalled zones. The side-panel assistant has no timeout."
+          hint="The timeout seeds new agents. Scheduler knobs govern how the conductor responds to stalled agents. The side-panel assistant has no timeout."
         >
           <div className="space-y-5">
             <div className="space-y-2">
-              <p className="text-[10px] uppercase tracking-wider text-fg-subtle">New-zone timeout seed</p>
+              <p className="text-[10px] uppercase tracking-wider text-fg-subtle">New-agent timeout seed</p>
               <NumberField
-                label="Zone timeout (ms)"
+                label="Agent timeout (ms)"
                 value={settings.dispatchTimeoutMs}
                 min={0}
                 step={1000}
@@ -389,7 +389,7 @@ export default function SettingsPanel({
         </Section>
 
         <Section
-          title="ARCHITECT assistant"
+          title="Assistant"
           hint="The side-panel assistant that drafts or edits this project's architecture."
         >
           <div className="space-y-3">
@@ -409,7 +409,7 @@ export default function SettingsPanel({
             </Field>
           </div>
           <p className="text-[11px] text-fg-subtle leading-relaxed mt-2">
-            Architecture and General assistants each pick their own CLI + model from the gear icon on the assistant panel — those choices are independent of the Dispatch/Zone CLI above. Dock position is saved per machine; both mode terminals keep running when you close the panel or switch modes.
+            Architecture and General assistants each pick their own CLI + model from the gear icon on the assistant panel — those choices are independent of the Agent CLI above. Dock position is saved per machine; both mode terminals keep running when you close the panel or switch modes.
           </p>
           <div className="mt-4 flex items-center justify-between gap-3 rounded-lg border border-white/[0.08] bg-black/20 px-3 py-3">
             <div>
@@ -421,7 +421,7 @@ export default function SettingsPanel({
             <button
               onClick={onGenerateCanvasFromCodebase}
               disabled={generatingCanvasFromCodebase}
-              className="flex-shrink-0 px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+              className="flex-shrink-0 rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
             >
               {generatingCanvasFromCodebase ? 'Opening assistant...' : 'Generate Canvas From Codebase'}
             </button>
@@ -498,11 +498,11 @@ function AboutSection({ onOpenBugReport }: { onOpenBugReport: () => void }) {
   })()
 
   return (
-    <Section title="About" hint="Architect auto-checks for updates in the background and installs them on quit.">
+    <Section title="About" hint="Clique auto-checks for updates in the background and installs them on quit.">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-[12px] font-medium text-fg-muted">
-            Architect <span className="font-mono text-fg-subtle">v{version || '…'}</span>
+            Clique <span className="font-mono text-fg-subtle">v{version || '…'}</span>
           </p>
           {statusLine && (
             <p className={`mt-0.5 text-[11px] leading-relaxed ${status.kind === 'error' ? 'text-amber-300' : 'text-fg-subtle'}`}>
@@ -522,7 +522,7 @@ function AboutSection({ onOpenBugReport }: { onOpenBugReport: () => void }) {
           {status.kind === 'downloaded' ? (
             <button
               onClick={onInstall}
-              className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+              className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
             >
               Restart to install
             </button>
@@ -572,7 +572,7 @@ function Seg<T extends string>({ options, value, onChange }: { options: readonly
           key={option}
           onClick={() => onChange(option)}
           className={`px-2.5 py-1 text-[11px] capitalize transition-colors ${
-            value === option ? 'bg-[#58A6FF]/20 text-[#58A6FF]' : 'text-fg-subtle hover:text-fg-muted'
+            value === option ? 'bg-accent/20 text-accent' : 'text-fg-subtle hover:text-fg-muted'
           }`}
         >
           {option}
@@ -586,7 +586,7 @@ function Toggle({ label, value, onChange }: { label: string; value: boolean; onC
   return (
     <button onClick={onChange} className="flex items-center justify-between w-full group py-0.5">
       <span className="text-[12px] text-fg-muted group-hover:text-fg transition-colors">{label}</span>
-      <div className={`relative w-8 h-4 rounded-full transition-colors ${value ? 'bg-[#58A6FF]' : 'bg-white/10'}`}>
+      <div className={`relative w-8 h-4 rounded-full transition-colors ${value ? 'bg-accent' : 'bg-white/10'}`}>
         <div className={`absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all ${value ? 'left-[18px]' : 'left-0.5'}`} />
       </div>
     </button>
@@ -667,7 +667,7 @@ function PinnedModelsEditor({
     <div className="mt-3 rounded-lg border border-white/[0.06] bg-black/20 px-3 py-2">
       <div className="flex items-center justify-between mb-1.5">
         <span className="text-[10px] uppercase tracking-wider text-fg-subtle flex items-center gap-1">
-          <Pin size={10} /> Pinned for zones
+          <Pin size={10} /> Pinned for agents
         </span>
         <span className="text-[10px] text-fg-subtle">
           {pinned.length}/{ZONE_MODEL_PIN_LIMIT}
@@ -682,12 +682,12 @@ function PinnedModelsEditor({
           {pinned.map(id => (
             <span
               key={id}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-[#58A6FF]/40 bg-[#58A6FF]/10 text-[#58A6FF] text-[11px]"
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded border border-accent/40 bg-accent/10 text-accent text-[11px]"
             >
               <span className="font-mono">{shortModelLabel(id)}</span>
               <button
                 onClick={() => remove(id)}
-                className="text-[#58A6FF]/70 hover:text-[#58A6FF]"
+                className="text-accent/70 hover:text-accent"
                 aria-label={`Remove ${id}`}
               >
                 <XIcon size={10} />

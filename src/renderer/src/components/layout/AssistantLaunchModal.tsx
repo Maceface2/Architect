@@ -162,7 +162,7 @@ export default function AssistantLaunchModal({
         <div className="flex items-start justify-between gap-4 px-6 py-4 border-b border-white/10">
           <div className="min-w-0">
             <h2 className="text-lg font-semibold text-fg flex items-center gap-2">
-              <Settings2 size={16} className="text-[#c084fc]" /> Assistant · {modeLabel}
+              <Settings2 size={16} className="text-accent" /> Assistant · {modeLabel}
             </h2>
             <p className="text-xs text-fg-muted mt-1">
               Pick a model, start fresh, or resume a prior session.
@@ -198,7 +198,7 @@ export default function AssistantLaunchModal({
                         selected
                           ? notInstalled
                             ? 'border-amber-400/50 bg-amber-400/10 text-amber-100'
-                            : 'border-[#58A6FF]/50 bg-[#58A6FF]/10 text-fg'
+                            : 'border-accent/50 bg-accent/10 text-fg'
                           : 'border-white/[0.08] text-fg-subtle hover:text-fg-muted hover:border-white/20'
                       }`}
                     >
@@ -334,7 +334,7 @@ export default function AssistantLaunchModal({
                               <div className="flex items-center gap-2">
                                 <span className="text-fg font-medium truncate">{record.summary}</span>
                                 {record.dispatchId && (
-                                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-[#c084fc]/20 text-[#c084fc] flex-shrink-0">
+                                  <span className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider bg-accent/20 text-accent flex-shrink-0">
                                     from dispatch
                                   </span>
                                 )}

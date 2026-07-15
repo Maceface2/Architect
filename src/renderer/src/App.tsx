@@ -9,7 +9,7 @@ import {
   type ReactNode,
   type MouseEvent as ReactMouseEvent,
 } from 'react'
-import { Activity, FileStack, Files, Layers, LayoutList, Loader2, Rows3, Save, Settings, Terminal as TerminalIcon } from 'lucide-react'
+import { Activity, FileStack, FolderOpen, Loader2, Save, SquareTerminal } from 'lucide-react'
 import {
   ReactFlow,
   ReactFlowProvider,
@@ -36,16 +36,15 @@ import TerminalPanel from './components/layout/TerminalPanel'
 import PopoutTerminalApp from './components/layout/PopoutTerminalApp'
 import TerminalPagePopoutApp from './components/layout/TerminalPagePopoutApp'
 import ResizablePanel from './components/layout/ResizablePanel'
+import { DocPaneProvider, type DocPaneTarget } from './context/DocPaneContext'
 import SettingsPanel from './components/settings/SettingsPanel'
+import CliqueLogo from './components/branding/CliqueLogo'
 import type { TerminalLayout } from './components/layout/terminalLayoutTypes'
 import { emptyLayout } from './components/layout/terminalLayoutOps'
 import { nodeTypes } from './components/nodes/nodeTypes'
 import { edgeTypes } from './components/edges/edgeTypes'
 import CompactCanvasPalette, {
   type CanvasPaletteTool,
-  type ComponentCreateConfig,
-  type EdgeCreateConfig,
-  type ZoneCreateConfig,
 } from './components/palette/CompactCanvasPalette'
 import type {
   AssistantMode,
@@ -53,6 +52,7 @@ import type {
   CanvasNode,
   ComponentEdgeData,
   ComponentEdgeDirection,
+  ComponentNodeData,
   ComponentNodeType,
   ProjectSettings,
   ZoneNodeData,
@@ -63,7 +63,10 @@ import {
   createDefaultProjectSettings,
   applyDetectionToProjectSettings,
   migrateCanvasData,
+  getEffectiveModel,
+  getEffectiveRuntime,
   mintParticipantId,
+  nextCardColor,
   normalizeEdgeData,
   loadMergedCanvas,
   splitMergedForSave,
@@ -83,33 +86,47 @@ import { RuntimeDetectionProvider, useRuntimeDetection } from './context/Runtime
 import DispatchModal from './components/dispatch/DispatchModal'
 import DispatchView from './components/dispatch/DispatchView'
 import BugReportModal from './components/layout/BugReportModal'
+import AgentConfigModal from './components/nodes/AgentConfigModal'
+import ComponentConfigModal from './components/nodes/ComponentConfigModal'
 import { ErrorBoundary } from './components/ErrorBoundary'
 import { getActivityStoreSnapshot, seedDispatch, seedDispatchCombined, subscribeActivityStore } from './lib/activityStore'
 import type { DispatchRequest } from './types'
 import { DEFAULT_AGENT_RUNTIME, DEFAULT_MODEL_BY_RUNTIME, isAgentRuntime, type AgentRuntime } from '../../shared/agentRuntimes'
 import type { SessionInfo, TerminalInfo } from '../../shared/electronTypes'
 
-interface CanvasUpdate {
-  zones?: unknown[]
-  components?: unknown[]
-  nodes?: unknown[]
-  edges: unknown[]
+/** Custom rail icon for the Canvas tab: a 3-node graph — one node fanning
+    out to two others (no edge between the pair), nodes drawn hollow. Sized +
+    colored like the sibling lucide tab icons so active/inactive coloring
+    (currentColor) carries through unchanged. */
+function CanvasGraphIcon({ size = 14 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={1.7}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden
+    >
+      {/* rotated 90° counter-clockwise so the hub node points left */}
+      <g transform="rotate(-90 12 12)">
+        <line x1="12" y1="4" x2="5" y2="18" />
+        <line x1="12" y1="4" x2="19" y2="18" />
+        <circle cx="12" cy="4" r="2.4" fill="none" />
+        <circle cx="5" cy="18" r="2.4" fill="none" />
+        <circle cx="19" cy="18" r="2.4" fill="none" />
+      </g>
+    </svg>
+  )
 }
 
-type RawCanvasEdge = {
-  id?: string
-  source: string
-  target: string
-  sourceHandle?: string | null
-  targetHandle?: string | null
-  label?: string
-  direction?: ComponentEdgeDirection
-  data?: unknown
-}
-
-type PendingCreate =
-  | { kind: 'component'; config: ComponentCreateConfig }
-  | { kind: 'zone'; config: ZoneCreateConfig }
+// Click-to-place: which node kind the next pane click creates. Cards and
+// agents are created with defaults and immediately opened for editing — no
+// pre-creation dialogs.
+type PendingCreate = { kind: 'component' | 'zone' }
 
 // Must match the main-process ASSISTANT_ZONES keys (terminals.ts) — those
 // are sanitize('Architecture Assistant Design'|'General') with non-alnum
@@ -128,7 +145,7 @@ const FIT_VIEW_OPTIONS = { padding: 0.18, duration: 280 }
 const AUTO_CANVAS_DISMISS_PREFIX = 'architect:auto-canvas-dismissed:'
 const AUTO_CANVAS_INITIAL_PROMPT = `# Task
 
-Do a deep architecture discovery pass over this existing codebase and generate an Architect canvas.
+Do a deep architecture discovery pass over this existing codebase and generate a Clique canvas.
 
 # Workflow
 
@@ -139,29 +156,28 @@ Do a deep architecture discovery pass over this existing codebase and generate a
    - Manage context carefully: summarize discoveries as you go instead of dumping large files.
 
 2. Build an architecture model:
-   - Identify 5-12 meaningful components. A component should be a real subsystem, package, service, module, UI surface, data store, external integration, or workflow boundary.
-   - Identify 2-5 zones representing useful future agent ownership areas, not just folders.
-   - Add component edges for important dependencies, calls, data flow, auth flow, event flow, or build/deploy relationships.
-   - Use uncertainty honestly. If a relationship is inferred from filenames or config rather than confirmed code, say that in the component specs.
+   - Identify 5-12 meaningful cards. A card should be a real subsystem, package, service, module, UI surface, data store, external integration, or workflow boundary — described in plain language.
+   - Identify 2-5 agents representing useful future ownership areas, not just folders.
+   - Add edges between cards for important dependencies, calls, data flow, auth flow, event flow, or build/deploy relationships.
+   - Use uncertainty honestly. If a relationship is inferred from filenames or config rather than confirmed code, say that in the card's note.
 
-3. Write the canvas:
-   - Create or replace \`architect-canvas.json\` at the project root.
-   - Use the modern Architect JSON format from your context file.
-   - Pretty-print with 2-space indentation.
-   - Preserve any existing \`settings\` if present.
-   - Give zones durable role-style \`systemPrompt\` values. Do not turn zone prompts into build checklists.
-   - Place components inside their owning zone by geometry.
-   - Keep labels concise and specs specific.
+3. Write the canvas (per the "Editing the canvas" contract in your context):
+   - Read \`ARCHITECT/workspace.json\`, take \`activePageId\`, and write \`ARCHITECT/pages/<activePageId>.json\`.
+   - Use the page file shape from your context (\`nodes\` + \`edges\` + \`settings\`), pretty-printed with 2-space indentation.
+   - Preserve any existing \`settings\`.
+   - Give agents durable role-style \`systemPrompt\` values. Do not turn them into build checklists.
+   - Place cards inside their owning agent's box by geometry.
+   - Keep card titles concise and notes specific.
 
 4. Verify:
-   - Re-read \`architect-canvas.json\`.
+   - Re-read the page file.
    - Confirm it is valid JSON with top-level \`nodes\`, \`edges\`, and \`settings\`.
-   - Confirm every edge references existing component ids.
+   - Confirm every edge references existing card ids.
    - Give a brief final summary of the discovered architecture and any uncertain areas.
 
 # Scope
 
-Do not modify source code. Only write \`architect-canvas.json\`.`
+Do not modify source code. Only write the canvas page file.`
 function createEdgeId(): string {
   const uuid = globalThis.crypto?.randomUUID?.()
   return uuid ? `edge-${uuid}` : `edge-${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -170,33 +186,6 @@ function createEdgeId(): string {
 function createNodeId(prefix: string): string {
   const uuid = globalThis.crypto?.randomUUID?.()
   return uuid ? `${prefix}-${uuid}` : `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2)}`
-}
-
-// Re-mint colliding ids on an assistant-supplied patch so it can't clobber
-// nodes that live in other (currently-loaded) workspace folders. Returns a
-// rename map (oldId -> newId) the caller applies to incoming edge endpoints.
-function dedupeAgainstReserved(
-  nodes: Array<{ id: string }>,
-  reservedIds: Set<string>,
-): Map<string, string> {
-  const rename = new Map<string, string>()
-  const seen = new Set<string>(reservedIds)
-  for (const n of nodes) {
-    if (!seen.has(n.id)) {
-      seen.add(n.id)
-      continue
-    }
-    let suffix = 2
-    let candidate = `${n.id}#${suffix}`
-    while (seen.has(candidate)) {
-      suffix += 1
-      candidate = `${n.id}#${suffix}`
-    }
-    seen.add(candidate)
-    rename.set(n.id, candidate)
-    n.id = candidate
-  }
-  return rename
 }
 
 // Strip in-memory workspace tags from each node's data before serializing.
@@ -226,84 +215,138 @@ function serializeCanvasData(
   })
 }
 
+interface RecentProject {
+  path: string
+  openedAt: string
+}
+
+const RECENT_PROJECTS_KEY = 'architect:recent-projects'
+const RECENT_PROJECT_LIMIT = 6
+
+function projectNameFromPath(projectPath: string): string {
+  const normalized = projectPath.replace(/\\/g, '/').replace(/\/+$/, '')
+  return normalized.split('/').filter(Boolean).pop() || projectPath
+}
+
+function loadRecentProjects(): RecentProject[] {
+  if (typeof localStorage === 'undefined') return []
+  try {
+    const raw = localStorage.getItem(RECENT_PROJECTS_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed
+      .filter((entry): entry is RecentProject =>
+        entry &&
+        typeof entry === 'object' &&
+        typeof entry.path === 'string' &&
+        typeof entry.openedAt === 'string',
+      )
+      .slice(0, RECENT_PROJECT_LIMIT)
+  } catch {
+    return []
+  }
+}
+
+function saveRecentProjects(projects: RecentProject[]): void {
+  if (typeof localStorage === 'undefined') return
+  try {
+    localStorage.setItem(RECENT_PROJECTS_KEY, JSON.stringify(projects.slice(0, RECENT_PROJECT_LIMIT)))
+  } catch {}
+}
+
 function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
-  const [loading, setLoading] = useState(false)
+  const [openingPath, setOpeningPath] = useState<string | null>(null)
+  const [recentProjects, setRecentProjects] = useState<RecentProject[]>(() => loadRecentProjects())
+
+  const openProject = useCallback((dir: string) => {
+    const next = [
+      { path: dir, openedAt: new Date().toISOString() },
+      ...recentProjects.filter(project => project.path !== dir),
+    ].slice(0, RECENT_PROJECT_LIMIT)
+    setRecentProjects(next)
+    saveRecentProjects(next)
+    onOpen(dir)
+  }, [onOpen, recentProjects])
 
   const pick = async () => {
-    setLoading(true)
+    setOpeningPath('__picker__')
     try {
       const dir = await window.electron.openDirectory()
-      if (dir) onOpen(dir)
+      if (dir) openProject(dir)
     } finally {
-      setLoading(false)
+      setOpeningPath(null)
     }
   }
 
   return (
-    <div className="relative h-screen w-screen bg-canvas text-fg select-none flex flex-col overflow-hidden">
-      {/* Drag strip across the top so the user can move the window before
-          they've picked a project (TopNav, which owns drag normally, isn't
-          mounted yet). Behind the composition; interactive elements opt out. */}
-      <div
-        className="absolute top-0 left-0 right-0 h-9 z-0"
-        style={{ WebkitAppRegion: 'drag' } as CSSProperties}
-        aria-hidden
-      />
-      <div className="absolute top-2.5 right-3 z-10">
-        <UserMenu />
-      </div>
-
-      {/* Title block: two columns separated by a hairline rule. The lockup is
-          a drafting-style nameplate; the action column reads as the next step
-          in a numbered procedure. Asymmetric on purpose, breaks the centered-
-          welcome-stack reflex. */}
-      <main className="flex-1 flex items-center justify-center px-10">
-        <div className="w-full max-w-3xl flex items-stretch gap-12">
-          <section className="flex-1 flex flex-col items-start justify-end gap-5 pb-1">
-            <svg width="56" height="56" viewBox="0 0 400 400" fill="none" aria-hidden>
-              <line x1="40" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <line x1="40" y1="360" x2="200" y2="360" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <line x1="200" y1="360" x2="360" y2="40" stroke="#58A6FF" strokeWidth="14" strokeLinecap="round" />
-              <circle cx="40" cy="360" r="14" fill="#58A6FF" />
-              <circle cx="200" cy="360" r="14" fill="#58A6FF" />
-              <circle cx="360" cy="40" r="14" fill="#58A6FF" />
-            </svg>
-            <div>
-              <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle mb-2">
-                / Schematic for AI agent CLIs
-              </div>
-              <h1 className="text-[32px] font-medium uppercase tracking-[0.2em] leading-none text-fg">
-                Architect
-              </h1>
+    <div
+      className="grid h-screen w-screen select-none grid-cols-[218px_minmax(0,1fr)] overflow-hidden text-fg"
+      style={{ WebkitAppRegion: 'drag', backgroundColor: 'rgb(30, 30, 30)' } as CSSProperties}
+    >
+      <aside
+        className="flex min-h-0 flex-col border-r border-node-border px-3 pb-4 pt-[58px]"
+        style={{ backgroundColor: 'rgb(38, 38, 38)' }}
+      >
+        <div className="mb-3 text-[10px] font-medium uppercase tracking-[0.18em] text-fg-subtle">
+          Recent
+        </div>
+        <div className="min-h-0 flex-1 space-y-1 overflow-y-auto">
+          {recentProjects.length === 0 ? (
+            <div className="rounded-md border border-node-border px-3 py-2 text-[11px] leading-4 text-fg-subtle">
+              No recent projects.
             </div>
-          </section>
+          ) : (
+            recentProjects.map(project => {
+              const isOpening = openingPath === project.path
+              return (
+                <button
+                  key={project.path}
+                  onClick={() => {
+                    setOpeningPath(project.path)
+                    openProject(project.path)
+                  }}
+                  disabled={openingPath !== null}
+                  title={project.path}
+                  className="group w-full rounded-[3px] px-2.5 py-2 text-left transition-colors hover:bg-white/[0.06] disabled:pointer-events-none disabled:opacity-60"
+                  style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+                >
+                  <div className="truncate text-[12px] font-medium text-fg">
+                    {isOpening ? 'Opening...' : projectNameFromPath(project.path)}
+                  </div>
+                  <div className="mt-0.5 truncate text-[10px] text-fg-subtle group-hover:text-fg-muted">
+                    {project.path}
+                  </div>
+                </button>
+              )
+            })
+          )}
+        </div>
+      </aside>
 
-          <div className="w-px self-stretch bg-white/[0.08]" aria-hidden />
-
-          <section className="flex-1 flex flex-col items-start justify-end gap-3 pb-1">
-            <div className="text-[10px] font-medium uppercase tracking-[0.22em] text-fg-subtle">
-              01 / Open project
-            </div>
-            <button
-              onClick={pick}
-              disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2.5 bg-accent hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none text-fg text-[11px] font-medium uppercase tracking-[0.18em] rounded-[3px] transition-colors"
-            >
-              {loading ? 'Opening…' : 'Choose folder'}
-            </button>
-            <p className="text-[11px] text-fg-subtle leading-relaxed mt-1 max-w-[28ch]">
-              All agents are scoped to this directory.
+      <main className="flex min-w-0 flex-col px-7 pb-7 pt-[58px]">
+        <div className="flex flex-1 flex-col justify-between">
+          <div>
+            <CliqueLogo size={42} className="text-fg" />
+            <h1 className="mt-4 text-[22px] font-semibold leading-none text-fg">
+              Clique
+            </h1>
+            <p className="mt-2 max-w-[23ch] text-[12px] leading-5 text-fg-muted">
+              Open a repository to plan in plain language and build with agents.
             </p>
-          </section>
+          </div>
+
+          <button
+            onClick={pick}
+            disabled={openingPath !== null}
+            className="inline-flex w-full items-center justify-center gap-2 rounded-[3px] border border-node-border bg-node px-3.5 py-2.5 text-[12px] font-medium text-fg transition-colors hover:bg-white/[0.08] disabled:pointer-events-none disabled:opacity-50"
+            style={{ WebkitAppRegion: 'no-drag' } as CSSProperties}
+          >
+            <FolderOpen size={14} strokeWidth={1.8} />
+            {openingPath === '__picker__' ? 'Opening...' : 'Open project'}
+          </button>
         </div>
       </main>
-
-      {/* Drawing-sheet footer: hairline rule + tracked monoglyphs left/right.
-          Reinforces the title-block convention without adding decoration. */}
-      <footer className="flex items-center justify-between px-6 py-3 border-t border-white/[0.06] text-fg-subtle">
-        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">v0.1.0 / alpha</span>
-        <span className="text-[10px] uppercase tracking-[0.22em] font-medium">Sheet 01 of 01</span>
-      </footer>
     </div>
   )
 }
@@ -313,18 +356,13 @@ function DirectoryGate({ onOpen }: { onOpen: (dir: string) => void }) {
 // main; this placeholder just gives the user a way to bring the panel back.
 function PoppedOutPlaceholder({ onDock }: { onDock: () => void }) {
   return (
-    <div className="h-full w-full flex flex-col items-center justify-center gap-3 bg-terminal text-fg-muted">
-      <p className="text-sm">Terminal page is open in a separate window.</p>
+    <div className="h-full w-full flex flex-col items-center justify-center bg-terminal text-fg-muted">
       <button
         onClick={onDock}
         className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-accent/90 transition-colors"
       >
         Dock back here
       </button>
-      <p className="text-[11px] text-fg-subtle max-w-md text-center">
-        Closing the popout window also docks. Sessions and PTY state are
-        preserved across the move; on-screen scrollback may reset.
-      </p>
     </div>
   )
 }
@@ -342,12 +380,12 @@ function CanvasConflictModal({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">External canvas changes detected</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             {changedFolders.length === 0
-              ? 'The assistant updated `architect-canvas.json`, but you still have unsaved canvas edits in memory.'
+              ? 'The assistant (or another tool) updated this page’s canvas file on disk, but you still have unsaved canvas edits in memory.'
               : 'Linked folders’ canvases changed on disk, but you still have unsaved canvas edits in memory.'}
           </p>
         </div>
@@ -360,7 +398,7 @@ function CanvasConflictModal({
             ))}
           </div>
         )}
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onKeepLocal}
             className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
@@ -369,7 +407,7 @@ function CanvasConflictModal({
           </button>
           <button
             onClick={onLoadIncoming}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Load incoming changes
           </button>
@@ -390,8 +428,8 @@ function MissingFoldersPrompt({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Some folders aren&apos;t loaded</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
             This dispatch ran across folders that aren&apos;t currently in the workspace. Resume will skip those zones unless you add the folders first.
@@ -404,7 +442,7 @@ function MissingFoldersPrompt({
             </div>
           ))}
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onCancel}
             className="px-3 py-1.5 text-xs text-fg-muted border border-node-border rounded hover:bg-node transition-colors"
@@ -413,7 +451,7 @@ function MissingFoldersPrompt({
           </button>
           <button
             onClick={onContinue}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Resume anyway
           </button>
@@ -432,15 +470,15 @@ function DispatchErrorModal({
 }) {
   return (
     <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Dispatch error</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">{message}</p>
         </div>
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onClose}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90"
           >
             Dismiss
           </button>
@@ -461,15 +499,15 @@ function AutoCanvasOnboardingModal({
 }) {
   return (
     <div className="absolute inset-0 z-40 flex items-center justify-center bg-black/55 backdrop-blur-sm">
-      <div className="w-full max-w-md rounded-md border border-white/[0.08] bg-[#1c1916] shadow-2xl">
-        <div className="border-b border-white/[0.06] px-5 py-4">
+      <div className="w-full max-w-md rounded-md border border-node-border bg-panel shadow-2xl">
+        <div className="border-b border-node-border px-5 py-4">
           <h2 className="text-sm font-semibold text-fg">Generate an architecture canvas?</h2>
           <p className="mt-1 text-xs leading-5 text-fg-muted">
-            This looks like an existing codebase without an Architect canvas. Architect can open the Architecture Assistant and ask it to map the project into zones, components, and dependencies.
+            This looks like an existing codebase without a Clique canvas. Clique can open the Architecture Assistant and ask it to map the project into agents, cards, and connections.
           </p>
         </div>
 
-        <div className="flex items-center justify-end gap-2 border-t border-white/[0.06] px-5 py-4">
+        <div className="flex items-center justify-end gap-2 border-t border-node-border px-5 py-4">
           <button
             onClick={onDismiss}
             disabled={starting}
@@ -480,7 +518,7 @@ function AutoCanvasOnboardingModal({
           <button
             onClick={onGenerate}
             disabled={starting}
-            className="px-3 py-1.5 text-xs font-medium text-fg bg-accent rounded hover:bg-[#4a4ad0] disabled:opacity-50 disabled:pointer-events-none transition-colors"
+            className="rounded bg-accent px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:bg-accent/90 disabled:pointer-events-none disabled:opacity-50"
           >
             {starting ? 'Opening assistant...' : 'Generate Canvas'}
           </button>
@@ -491,25 +529,22 @@ function AutoCanvasOnboardingModal({
 }
 
 function zoneHash(n: ZoneNodeType): string {
-  // Strip volatile fields so the hash only reflects user-visible config.
-  // `status` flips during a dispatch run; `folderPath` is a workspace tag
-  // added by loadMergedCanvas — neither is a "user changed this" signal.
-  const { data: { status: _s, folderPath: _fp, ...data } } = n as ZoneNodeType & {
-    data: { folderPath?: string }
-  }
-  return JSON.stringify(data)
-}
-
-function zonesContainingPoint(zones: ZoneNodeType[], point: XYPosition): ZoneNodeType[] {
-  return zones.filter(zone => {
-    const w = zone.width ?? ZONE_DEFAULT_WIDTH
-    const h = zone.height ?? ZONE_DEFAULT_HEIGHT
-    return (
-      point.x >= zone.position.x &&
-      point.x <= zone.position.x + w &&
-      point.y >= zone.position.y &&
-      point.y <= zone.position.y + h
-    )
+  // Hash only the fields that change what a dispatched agent actually does.
+  // Volatile/visual fields (status, folderPath, color, openSections,
+  // permissions, behavior extras) must not trigger the "Big Change on Save"
+  // redispatch prompt.
+  const d = n.data
+  return JSON.stringify({
+    participantId: d.participantId,
+    label: d.label,
+    description: d.description,
+    systemPrompt: d.systemPrompt,
+    agentRuntime: d.agentRuntime,
+    providerModels: d.providerModels,
+    skills: d.skills,
+    tools: d.tools,
+    retries: d.behavior?.retries ?? 0,
+    envVars: d.envVars,
   })
 }
 
@@ -541,6 +576,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [dispatchModalOpen, setDispatchModalOpen] = useState(false)
   const [dispatchPrefill, setDispatchPrefill] = useState<string>('')
   const [assistantOpen, setAssistantOpen] = useState(false)
+  const [filesPanelOpen, setFilesPanelOpen] = useState(false)
   const [assistantRuntime, setAssistantRuntime] = useState<AgentRuntime | null>(null)
   const [autoCanvasOfferOpen, setAutoCanvasOfferOpen] = useState(false)
   const [autoCanvasStarting, setAutoCanvasStarting] = useState(false)
@@ -548,8 +584,8 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const raw = typeof localStorage !== 'undefined' ? localStorage.getItem('architect:assistant-orientation') : null
     return raw === 'bottom' ? 'bottom' : 'right'
   })
+  const [docPaneTarget, setDocPaneTarget] = useState<DocPaneTarget>(null)
   const [pendingCreate, setPendingCreate] = useState<PendingCreate | null>(null)
-  const [pendingEdgeDefaults, setPendingEdgeDefaults] = useState<EdgeCreateConfig | null>(null)
   const [pendingExternalCanvasRaw, setPendingExternalCanvasRaw] = useState<string | null>(null)
   // Non-primary folders whose canvas changed externally while the user has
   // unsaved edits. Coexists with `pendingExternalCanvasRaw` (primary's pending
@@ -586,7 +622,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   const [terminalPagePoppedOut, setTerminalPagePoppedOut] = useState(false)
   const [updateReady, setUpdateReady] = useState(false)
 
-  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, ready: workspaceReady } = useWorkspace()
+  const { loadedFolders, primaryFolder, activeFolder, activePageId, activePage, deletePage, ready: workspaceReady } = useWorkspace()
 
   // Empty-region placement offsets — lifted out of FolderRegions so the
   // pane-click drop targeting and the visual rendering stay aligned after a
@@ -1120,7 +1156,6 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
   const cancelCanvasTool = useCallback(() => {
     setPendingCreate(null)
-    setPendingEdgeDefaults(null)
   }, [])
 
   const onConnect = useCallback(
@@ -1140,31 +1175,32 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
         !!sourceFolder && !!targetFolder && sourceFolder !== targetFolder
 
       snapshotHistory()
-      const baseData = normalizeEdgeData(pendingEdgeDefaults ?? { direction: 'source-to-target' })
+      const baseData = normalizeEdgeData({ direction: 'source-to-target' })
       const edgeData: ComponentEdgeData = isCrossFolder
         ? { ...baseData, targetFolder: targetFolder! }
         : baseData
+      // Portless cards: handle ids are never persisted — the floating edge
+      // computes its own anchors from node geometry.
       const edge: CanvasEdge = {
         id: createEdgeId(),
         type: 'component-edge',
         source: connection.source,
         target: connection.target,
-        sourceHandle: connection.sourceHandle,
-        targetHandle: connection.targetHandle,
+        sourceHandle: null,
+        targetHandle: null,
         data: edgeData,
       }
       setEdges(eds => addEdge(edge, eds))
-      setPendingEdgeDefaults(null)
       setIsDirty(true)
     },
-    [pendingEdgeDefaults, setEdges, snapshotHistory]
+    [setEdges, snapshotHistory]
   )
 
-  const onPaneClick = useCallback((event: ReactMouseEvent) => {
-    ;(document.activeElement as HTMLElement | null)?.blur()
-    if (!pendingCreate) return
-    const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
-
+  // Shared creation path for click-to-place and double-click-to-create.
+  // Nodes are minted with defaults and immediately opened for editing — the
+  // card's note in the DocPane, the agent's config pane — instead of a
+  // pre-creation dialog.
+  const createNodeAt = useCallback((kind: 'component' | 'zone', flowPoint: { x: number; y: number }) => {
     // Geometric drop targeting: snap the new node to the folder whose
     // region contains the drop point; if the click lands outside every
     // region, fall back to the nearest one (Euclidean distance to the rect
@@ -1177,64 +1213,79 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
 
     snapshotHistory()
 
-    if (pendingCreate.kind === 'zone') {
-      const config = pendingCreate.config
-      setNodes(nds => {
-        const usedParticipantIds = new Set<string>()
-        for (const n of nds) {
-          if (n.type === 'zone') usedParticipantIds.add((n.data as ZoneNodeData).participantId)
-        }
-        const zoneDefaults = createDefaultZoneAgentConfig(projectSettings)
-        const newZone: ZoneNodeType = {
-          id: createNodeId('zone'),
-          type: 'zone',
-          position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
-          width: ZONE_DEFAULT_WIDTH,
-          height: ZONE_DEFAULT_HEIGHT,
-          zIndex: 0,
-          data: {
-            participantId: mintParticipantId(config.label, usedParticipantIds),
-            label: config.label,
-            description: '',
-            color: config.color,
-            status: 'idle',
-            systemPrompt: config.systemPrompt,
-            ...zoneDefaults,
-            agentRuntime: config.runtime,
-            providerModels: (() => {
-              const seed = config.model || DEFAULT_MODEL_BY_RUNTIME[config.runtime]
-              if (!seed) return zoneDefaults.providerModels
-              return { ...zoneDefaults.providerModels, [config.runtime]: seed }
-            })(),
-            folderPath,
-          },
-        }
-        return [...nds, newZone]
-      })
+    if (kind === 'zone') {
+      const usedParticipantIds = new Set<string>()
+      let zoneCount = 0
+      for (const n of nodesRef.current) {
+        if (n.type !== 'zone') continue
+        zoneCount += 1
+        usedParticipantIds.add((n.data as ZoneNodeData).participantId)
+      }
+      const zoneDefaults = createDefaultZoneAgentConfig(projectSettings)
+      const id = createNodeId('zone')
+      const newZone: ZoneNodeType = {
+        id,
+        type: 'zone',
+        position: { x: flowPoint.x - ZONE_DEFAULT_WIDTH / 2, y: flowPoint.y - ZONE_DEFAULT_HEIGHT / 2 },
+        width: ZONE_DEFAULT_WIDTH,
+        height: ZONE_DEFAULT_HEIGHT,
+        zIndex: 0,
+        data: {
+          participantId: mintParticipantId('New Agent', usedParticipantIds),
+          label: 'New Agent',
+          description: '',
+          color: nextCardColor(zoneCount),
+          status: 'idle',
+          systemPrompt: '',
+          ...zoneDefaults,
+          folderPath,
+        },
+      }
+      setNodes(nds => [...nds, newZone])
+      setDocPaneTarget({ kind: 'zone', nodeId: id })
     } else {
-      const config = pendingCreate.config
+      const cardCount = nodesRef.current.filter(n => n.type === 'component').length
+      const id = createNodeId('component')
       const newComp: ComponentNodeType = {
-        id: createNodeId('component'),
+        id,
         type: 'component',
         position: { x: flowPoint.x - COMPONENT_APPROX_W / 2, y: flowPoint.y - COMPONENT_APPROX_H / 2 },
         zIndex: 1,
         data: {
-          label: config.label,
+          label: 'Untitled',
           description: '',
-          specs: config.specs,
+          specs: '',
           category: 'custom',
           iconName: 'Wrench',
-          color: config.color,
-          tag: config.tag,
+          color: nextCardColor(cardCount),
+          tag: '',
           folderPath,
         },
       }
       setNodes(nds => [...nds, newComp])
+      setDocPaneTarget({ kind: 'component', nodeId: id })
     }
 
-    setPendingCreate(null)
     setIsDirty(true)
-  }, [pendingCreate, projectSettings, screenToFlowPosition, setNodes, snapshotHistory, loadedFolders, primaryFolder.path, emptyFolderOffsets])
+  }, [projectSettings, setNodes, snapshotHistory, loadedFolders, primaryFolder.path, emptyFolderOffsets])
+
+  const onPaneClick = useCallback((event: ReactMouseEvent) => {
+    ;(document.activeElement as HTMLElement | null)?.blur()
+    if (!pendingCreate) return
+    const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    createNodeAt(pendingCreate.kind, flowPoint)
+    setPendingCreate(null)
+  }, [pendingCreate, createNodeAt, screenToFlowPosition])
+
+  // Double-click on empty canvas creates a card at the pointer (zoom-on-
+  // double-click is disabled on the ReactFlow). Guarded to the pane element
+  // so double-clicks on nodes/edges keep their own behavior.
+  const onCanvasDoubleClick = useCallback((event: ReactMouseEvent) => {
+    const target = event.target as HTMLElement | null
+    if (!target?.classList?.contains('react-flow__pane')) return
+    const flowPoint = screenToFlowPosition({ x: event.clientX, y: event.clientY })
+    createNodeAt('component', flowPoint)
+  }, [createNodeAt, screenToFlowPosition])
 
   const onSave = useCallback(async () => {
     const raw = serializeCanvasData(nodesRef.current, edgesRef.current, settingsRef.current)
@@ -1326,7 +1377,7 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [cancelCanvasTool])
 
   const onClear = useCallback(() => {
-    if (!window.confirm('Clear the canvas? This will remove all zones and components.')) return
+    if (!window.confirm('Clear the canvas? This will remove all agents and cards.')) return
     snapshotHistory()
     if (autoSaveTimerRef.current) {
       clearTimeout(autoSaveTimerRef.current)
@@ -1340,6 +1391,32 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
   }, [setEdges, setNodes, snapshotHistory])
 
   const zones = nodes.filter((n): n is ZoneNodeType => n.type === 'zone')
+  const isCanvas = activeTab === 'Canvas'
+  const isPages = activeTab === 'Pages'
+  const isTerminal = activeTab === 'Terminal'
+  const visibleNodes = nodes.filter(node => {
+    const folderPath = (node.data as { folderPath?: string }).folderPath ?? primaryFolder.path
+    return folderPath === activeFolder.path
+  })
+  const docPaneNode = docPaneTarget ? nodes.find(node => node.id === docPaneTarget.nodeId) ?? null : null
+  const activeZoneDocNode = docPaneTarget?.kind === 'zone' && docPaneNode?.type === 'zone' ? docPaneNode : null
+  const activeComponentDocNode = docPaneTarget?.kind === 'component' && docPaneNode?.type === 'component' ? docPaneNode : null
+  const patchActiveZoneDocNode = useCallback((partial: Partial<ZoneNodeData>) => {
+    if (!activeZoneDocNode) return
+    setNodes(nodes => nodes.map(node =>
+      node.id === activeZoneDocNode.id
+        ? ({ ...node, data: { ...(node.data as ZoneNodeData), ...partial } } as ZoneNodeType)
+        : node,
+    ))
+  }, [activeZoneDocNode, setNodes])
+  const patchActiveComponentDocNode = useCallback((partial: Partial<ComponentNodeData>) => {
+    if (!activeComponentDocNode) return
+    setNodes(nodes => nodes.map(node =>
+      node.id === activeComponentDocNode.id
+        ? ({ ...node, data: { ...(node.data as ComponentNodeData), ...partial } } as ComponentNodeType)
+        : node,
+    ))
+  }, [activeComponentDocNode, setNodes])
 
   const changedZoneLabels = dispatchedGraph
     ? zones.filter(n => zoneHash(n) !== dispatchedGraph[n.id]).map(n => n.data.label)
@@ -1477,432 +1554,113 @@ function ArchitectFlow({ projectDir, onChangeDir }: { projectDir: string; onChan
     const zoneList = currentNodes.filter((n): n is ZoneNodeType => n.type === 'zone')
     const compList = currentNodes.filter((n): n is ComponentNodeType => n.type === 'component')
 
-    if (mode === 'general') {
-      // General-mode reads the canvas as reference and never edits it, so
-      // hand it the same semantic markdown projection the dispatch prompts
-      // use — strips positions/colors/sizes, surfaces cross-zone touchpoints
-      // explicitly. Identical formatter as orchestrator/prompts/conductor.ts
-      // so what the assistant sees mirrors what coordinated agents see.
-      const canvasBlock = zoneList.length === 0 && compList.length === 0
-        ? '(empty canvas)'
-        : renderProjectionMarkdown(buildCanvasProjection(currentNodes, currentEdges), {
-            scope: { kind: 'full' },
-            showCrossZoneSection: true,
-            showUnassignedSection: true,
-          })
+    // Both modes get the same semantic markdown projection the dispatch
+    // prompts use — strips positions/colors/sizes, surfaces cross-zone
+    // touchpoints explicitly. Identical formatter as
+    // orchestrator/prompts/conductor.ts so what the assistant sees mirrors
+    // what coordinated agents see. For architecture mode this is
+    // orientation only: the page file on disk is the source of truth and
+    // the assistant reads it before editing.
+    const canvasBlock = zoneList.length === 0 && compList.length === 0
+      ? '(empty canvas)'
+      : renderProjectionMarkdown(buildCanvasProjection(currentNodes, currentEdges), {
+          scope: { kind: 'full' },
+          showCrossZoneSection: true,
+          showUnassignedSection: true,
+        })
 
+    if (mode === 'general') {
       return `You are a general-purpose coding assistant working inside this project directory. Help the user with any coding, debugging, refactoring, research, or shell task they ask about.
 
-The block below is a read-only snapshot of the project's architecture canvas, provided only as reference so you understand the system being built — do not treat it as something to edit. Do NOT modify \`architect-canvas.json\` under any circumstances, and do not emit \`ARCHITECT_CANVAS_UPDATE\` blocks. If the user asks to change the canvas, tell them to switch the assistant to Architecture mode.
+The block below is a read-only snapshot of the project's architecture canvas, provided only as reference so you understand the system being built — do not treat it as something to edit. Do NOT modify anything under the \`ARCHITECT/\` directory. If the user asks to change the canvas, tell them to switch the assistant to Architecture mode.
 
 ## Canvas reference
 
 ${canvasBlock}`
     }
 
-    // Architecture mode is the canvas editor — it round-trips
-    // ARCHITECT_CANVAS_UPDATE blocks via AssistantPanel's parser, which
-    // requires positions, sizes, colors, iconNames, etc. Keep emitting the
-    // editable JSON here.
-    const componentZones = new Map<string, string | null>()
-    for (const c of compList) {
-      const center = {
-        x: c.position.x + COMPONENT_APPROX_W / 2,
-        y: c.position.y + COMPONENT_APPROX_H / 2,
-      }
-      const containing = zonesContainingPoint(zoneList, center)
-      componentZones.set(c.id, containing[0]?.id ?? null)
-    }
+    // Architecture mode edits the canvas by editing the active page file on
+    // disk; the app watches the file and live-reloads on save. This is the
+    // ONLY edit channel — there is no streamed-patch protocol.
+    const activePageFile = `ARCHITECT/pages/${pageIdForFolder(activeFolder.path)}.json`
 
-    const canvasJson = JSON.stringify({
-      zones: zoneList.map(z => ({
-        id: z.id,
-        label: z.data.label,
-        description: z.data.description,
-        color: z.data.color,
-        systemPrompt: z.data.systemPrompt,
-        position: z.position,
-        width: z.width ?? ZONE_DEFAULT_WIDTH,
-        height: z.height ?? ZONE_DEFAULT_HEIGHT,
-      })),
-      components: compList.map(c => ({
-        id: c.id,
-        label: c.data.label,
-        description: c.data.description,
-        specs: c.data.specs,
-        category: c.data.category,
-        iconName: c.data.iconName,
-        color: c.data.color,
-        tag: c.data.tag,
-        position: c.position,
-        overlayedBy: componentZones.get(c.id),
-      })),
-      edges: currentEdges.map(e => {
-        const data = normalizeEdgeData(e.data)
-        return {
-          id: e.id,
-          source: e.source,
-          target: e.target,
-          ...(e.sourceHandle ? { sourceHandle: e.sourceHandle } : {}),
-          ...(e.targetHandle ? { targetHandle: e.targetHandle } : {}),
-          ...(data.label ? { label: data.label } : {}),
-          direction: data.direction ?? 'source-to-target',
-        }
-      }),
-    }, null, 2)
-
-    const canvasBlock = zoneList.length === 0 && compList.length === 0
-      ? '(empty canvas)'
-      : `\`\`\`json\n${canvasJson}\n\`\`\``
-
-    return `You are an architecture assistant embedded in Architect. The user designs multi-agent systems by drawing **zones** (agent overlays) over **components** (subsystems) on a canvas; the canvas is reference context, not a build manifest.
+    return `You are the architecture assistant embedded in Clique. The user plans software in natural language on a canvas: **cards** are pieces of the system described in prose, and **agents** are named regions that own cards. You collaborate on that plan — discussing it, refining it, and editing it on the user's behalf.
 
 ## Model
 
-- **components** are subsystems/services/modules/UIs/data stores/integrations. Each carries \`label\`, \`specs\` (responsibilities, contracts, schemas), \`tag\`, \`color\`, \`iconName\`. Components do NOT own agent behavior.
-- **zones** are translucent agent-ownership overlays. Each zone is one CLI session with a durable role-style \`systemPrompt\` (NOT a build checklist), plus runtime/model/tools/skills/permissions.
-- Zone ownership is **geometric**: a component belongs to the zone whose bounding box contains its center. Components outside every zone are design artifacts only.
-- **edges** are component-level reference links (dependencies, calls, data flow). Optional \`label\`, \`direction\` (\`source-to-target\` | \`bidirectional\` | \`none\`), and \`sourceHandle\`/\`targetHandle\` connector ids (e.g. \`source-right\`, \`target-left\`).
+- A **card** (node \`type: "component"\`) is one part of the system — a feature, service, screen, data store, or integration. It has a \`label\` (title) and \`specs\` (a plain-markdown note: what it is, requirements, contracts). Cards are natural language, not code.
+- An **agent** (node \`type: "zone"\`) is a named region that owns cards. Each agent is one CLI coding session with a durable role-style \`systemPrompt\` (who it is and how it works — never a build checklist).
+- Ownership is **spatial**: a card belongs to the agent whose box contains the card's center. To assign a card, place it inside the agent's rectangle.
+- **Edges** are simple labeled links between cards (dependencies, data flow, "talks to").
 
-## Current Canvas
+## Canvas snapshot (orientation only — the file on disk is the source of truth)
+
 ${canvasBlock}
 
-The snapshot above uses the split projection (\`zones\` + \`components\` + \`edges\`); on disk \`architect-canvas.json\` stores a unified \`nodes\` array with a \`type\` discriminator. Both shapes are accepted when patching.
+## Editing the canvas
 
-## Canvas JSON shape (file form — what \`architect-canvas.json\` looks like on disk)
+The canvas lives in a page file that the app watches — writing that file is how you change the canvas. To edit:
+
+1. Resolve the target file at edit time: read \`ARCHITECT/workspace.json\`, take \`activePageId\`, and edit \`ARCHITECT/pages/<activePageId>.json\`. (Currently that resolves to \`${activePageFile}\`, but re-check workspace.json in case the user switched pages.)
+2. **Read the page file first.** It may contain fields this prompt doesn't describe — keep everything you aren't deliberately changing byte-for-byte intact, including top-level \`settings\`, node positions/sizes, and any legacy fields.
+3. Write back the COMPLETE file as pretty-printed JSON (2-space indent): top-level \`nodes\`, \`edges\`, \`settings\`. The app live-reloads on save.
+
+### Page file shape
 
 \`\`\`json
 {
   "nodes": [
     {
-      "id": "frontend-zone",
+      "id": "zone-frontend",
       "type": "zone",
       "position": { "x": 80, "y": 80 },
       "width": 620,
       "height": 360,
       "zIndex": 0,
       "data": {
-        "label": "Frontend Agent",
-        "description": "Owns the user-facing app shell",
-        "color": "#58A6FF",
-        "status": "idle",
+        "label": "Frontend",
+        "description": "Owns the user-facing app",
+        "color": "#7e7eea",
         "systemPrompt": "Senior frontend engineer. Idiomatic React, accessible UIs.",
-        "agentRuntime": "codex",
-        "providerModels": { "codex": "gpt-5.2-codex" },
-        "openSections": [],
-        "skills": [],
-        "tools": { "webSearch": false, "codeExec": false, "fileRead": false, "fileWrite": false, "apiCalls": false, "shell": false },
-        "behavior": { "mode": "sequential", "retries": 0, "onFailure": "stop", "timeoutMs": 30000 },
-        "permissions": { "readFiles": false, "writeFiles": false, "network": false, "shell": false },
-        "envVars": []
+        "agentRuntime": "claude",
+        "providerModels": { "claude": "sonnet" }
       }
     },
     {
-      "id": "web-ui",
+      "id": "card-login",
       "type": "component",
       "position": { "x": 120, "y": 170 },
       "zIndex": 1,
       "data": {
-        "label": "Frontend",
+        "label": "Login page",
         "description": "",
-        "specs": "React app with auth, dashboard, and settings screens.",
-        "category": "custom",
-        "iconName": "Monitor",
-        "color": "#f472b6",
-        "tag": "UI"
+        "specs": "Email + password sign-in. Magic-link support later.\\n\\nTalks to the Auth API for tokens."
       }
     }
   ],
   "edges": [
     {
-      "id": "component-flow",
-      "source": "web-ui",
-      "target": "api-client",
-      "sourceHandle": "source-right",
-      "targetHandle": "target-left",
-      "data": { "label": "uses", "direction": "source-to-target" }
+      "id": "edge-login-auth",
+      "source": "card-login",
+      "target": "card-auth-api",
+      "data": { "label": "authenticates via" }
     }
   ],
-  "settings": { "dispatchRuntime": "codex" }
+  "settings": { }
 }
 \`\`\`
 
-### Field rules (for new nodes)
+### Rules
 
-- **Zones** require: \`id\`, \`type: "zone"\`, \`position\`, \`width\`, \`height\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`color\`, \`status\`, \`systemPrompt\`, \`agentRuntime\`, \`providerModels\`, \`openSections\`, \`skills\`, \`tools\`, \`behavior\`, \`permissions\`, \`envVars\`. \`systemPrompt\` is durable role/style, never a build checklist.
-- **Components** require: \`id\`, \`type: "component"\`, \`position\`, \`zIndex\`, and \`data\` with \`label\`, \`description\`, \`specs\`, \`category\`, \`iconName\`, \`color\`, \`tag\`. For new components, set \`description: ""\` and \`category: "custom"\` and put detail in \`specs\`.
-- Allowed \`iconName\` values: Monitor, Shield, Lock, Network, Globe, ArrowLeftRight, GitBranch, Webhook, Settings2, Brain, Layers, Cpu, Clock, Mail, Bell, CreditCard, Search, Activity, BarChart2, ToggleLeft, Database, Zap, Archive, Table, Boxes, Share2, TrendingUp, Wrench.
+- **Agents**: NEVER change, remove, or duplicate an existing \`data.participantId\` — it is the agent's durable identity (session history, activity logs). OMIT \`participantId\` for brand-new agents; the app mints one on load. Keep \`systemPrompt\` a durable role, not a task list.
+- **Cards**: put all substance in \`specs\` as readable markdown. For new cards set \`description: ""\`. No categories, icons, or typed fields — plain language.
+- **Placement**: put a card's center inside its owning agent's box. Cards are roughly 210×70; space them out so they don't overlap.
+- **Edges**: \`data.label\` is optional; no handles or direction fields needed. After any edit, every edge \`source\`/\`target\` must reference an existing card id.
+- Preserve \`settings\` and any fields you didn't author verbatim. Don't blank out notes you didn't write.
+- If nodes in the snapshot above aren't in the page file you read, they belong to another workspace folder — leave them out of this file.
 
-## Preservation rules (when patching an existing canvas)
-
-- Preserve existing \`id\`, \`position\`, \`width\`/\`height\`, and top-level \`settings\` unless the user is explicitly changing them.
-- Preserve zone \`systemPrompt\`, \`agentRuntime\`, \`providerModels\`, \`tools\`, \`skills\`, \`permissions\`, \`envVars\`, \`behavior\` unless the user is changing those specific fields.
-- Preserve component \`specs\` when only renaming/repositioning. Don't blank out specs you didn't author.
-- When moving a component to a new zone, change its \`position\` so its center falls inside the target zone's bbox; keep its \`id\`.
-- When splitting a zone, keep one half with the original \`id\` (so its participantId survives) and add the other as new.
-- After any patch, every edge \`source\`/\`target\` must still reference an existing component id.
-
-## Editing the canvas
-
-You have two ways to apply changes; pick one per response.
-
-**(A) Stream a patch** — the renderer parses fenced blocks out of stdout and applies them live without touching disk. Emit ONE block containing the COMPLETE canvas projection (not just the diff):
-
-~~~
-ARCHITECT_CANVAS_UPDATE
-{ "zones": [...], "components": [...], "edges": [...] }
-END_ARCHITECT_CANVAS_UPDATE
-~~~
-
-Either the split form (\`zones\` + \`components\` + \`edges\`) or the unified form (\`nodes\` + \`edges\`) is accepted inside the block.
-
-**(B) Write the file** — overwrite \`architect-canvas.json\` at the project root with the full unified shape (\`nodes\` + \`edges\` + \`settings\`), pretty-printed with 2-space indentation. The app live-reloads on save.
-
-## Optional skills (deeper workflow guidance, if loaded)
-
-- **arch-discover** — generate a canvas by crawling an existing codebase.
-- **arch-design** — design a new canvas from a user goal (no code yet).
-- **arch-update** — workflow for editing an existing canvas.
-
-These are optional; the shape, field rules, and protocol above are sufficient on their own.
-
-When the user is asking for critique, tradeoffs, or brainstorming, discuss without editing. When they ask to build/generate/update the diagram, edit \`architect-canvas.json\` (or stream a patch) directly.`
-  }, [])
-
-  const applyCanvasUpdate = useCallback((update: CanvasUpdate) => {
-    snapshotHistory()
-    const activeFolderPath = activeFolder.path
-    const primaryFolderPath = primaryFolder.path
-    // Multi-folder workspaces: the assistant only touches the active
-    // folder's slice. Preserve nodes/edges from other folders by filtering
-    // them out of the rebuild and re-appending after the assistant's
-    // changes are applied. Untagged nodes (no folderPath) are treated as
-    // primary-folder residents — otherwise a workspace that flips from
-    // single-folder to multi-folder mid-session would silently drop any
-    // pre-existing nodes from primary whenever the assistant runs in a
-    // non-primary active folder.
-    const otherFolderNodes = nodesRef.current.filter(n => {
-      const fp = (n.data as { folderPath?: string }).folderPath ?? primaryFolderPath
-      return fp !== activeFolderPath
-    })
-    const otherFolderNodeIds = new Set(otherFolderNodes.map(n => n.id))
-    const otherFolderEdges = edgesRef.current.filter(e =>
-      otherFolderNodeIds.has(e.source) || otherFolderNodeIds.has(e.target),
-    )
-
-    const tagWithActive = <T extends { data: Record<string, unknown> }>(node: T): T => ({
-      ...node,
-      data: { ...node.data, folderPath: activeFolderPath },
-    })
-
-    const rawNodePayload = Array.isArray(update.nodes) ? update.nodes : null
-    if (rawNodePayload && !Array.isArray(update.zones) && !Array.isArray(update.components)) {
-      const migrated = migrateCanvasData({
-        nodes: rawNodePayload,
-        edges: Array.isArray(update.edges) ? update.edges : [],
-        settings: settingsRef.current,
-      })
-      if (autoSaveTimerRef.current) {
-        clearTimeout(autoSaveTimerRef.current)
-        autoSaveTimerRef.current = null
-      }
-      // De-collide assistant ids against nodes that already live in OTHER
-      // workspace folders. Same-folder collisions are intentional (a patch
-      // can overwrite an existing node by id), so the reserved set is
-      // strictly the other-folder ids.
-      const reservedIds = new Set(otherFolderNodes.map(n => n.id))
-      const rename = dedupeAgainstReserved(migrated.nodes, reservedIds)
-      if (rename.size > 0) {
-        for (const e of migrated.edges) {
-          const newSource = rename.get(e.source)
-          if (newSource) e.source = newSource
-          const newTarget = rename.get(e.target)
-          if (newTarget) e.target = newTarget
-        }
-      }
-      const taggedAssistantNodes = migrated.nodes.map(n =>
-        tagWithActive(n as unknown as { data: Record<string, unknown> }),
-      ) as typeof migrated.nodes
-      const mergedNodes = [...otherFolderNodes, ...taggedAssistantNodes]
-      const mergedEdges = [...otherFolderEdges, ...migrated.edges]
-      const rawCanvas = serializeCanvasData(mergedNodes, mergedEdges, migrated.settings)
-      setNodes(mergedNodes)
-      setEdges(mergedEdges)
-      setProjectSettings(migrated.settings)
-      setIsDirty(false)
-      setDispatchedGraph(null)
-      setPendingExternalCanvasRaw(null)
-      setActiveTab('Canvas')
-      queueFitView()
-      void persistCanvasRaw(rawCanvas, true)
-      return
-    }
-
-    const rawZones = Array.isArray(update.zones) ? (update.zones as Array<Record<string, unknown>>) : []
-    const rawComponents = Array.isArray(update.components) ? (update.components as Array<Record<string, unknown>>) : []
-    const rawEdges = (update.edges ?? []) as RawCanvasEdge[]
-
-    const existingZones = nodesRef.current.filter((n): n is ZoneNodeType => n.type === 'zone')
-    const existingComps = nodesRef.current.filter((n): n is ComponentNodeType => n.type === 'component')
-    const existingZoneById = new Map(existingZones.map(z => [z.id, z]))
-    const existingCompById = new Map(existingComps.map(c => [c.id, c]))
-
-    const readPosition = (raw: Record<string, unknown>): XYPosition | null => {
-      const p = raw.position
-      if (p && typeof p === 'object') {
-        const obj = p as Record<string, unknown>
-        if (typeof obj.x === 'number' && typeof obj.y === 'number') return { x: obj.x, y: obj.y }
-      }
-      return null
-    }
-
-    const readDim = (raw: Record<string, unknown>, key: 'width' | 'height', fallback: number): number => {
-      const v = raw[key]
-      return typeof v === 'number' && v > 0 ? v : fallback
-    }
-
-    const activeSettings = settingsRef.current
-    // Seed dedup set with the participantIds of zones that survive this
-    // patch (same id in rawZones). Zones being removed don't reserve theirs.
-    const survivingIds = new Set(rawZones.map(r => String(r.id ?? '')).filter(Boolean))
-    const participantIdsInUse = new Set<string>()
-    for (const z of existingZones) {
-      if (survivingIds.has(z.id)) participantIdsInUse.add((z.data as ZoneNodeData).participantId)
-    }
-    const newZones: ZoneNodeType[] = rawZones.map((raw, i) => {
-      const id = String(raw.id ?? `gen-zone-${Date.now()}-${i}`)
-      const existing = existingZoneById.get(id)
-      const position = readPosition(raw) ?? existing?.position ?? {
-        x: 120 + (i % 2) * 480,
-        y: 120 + Math.floor(i / 2) * 340,
-      }
-      const width = readDim(raw, 'width', existing?.width ?? ZONE_DEFAULT_WIDTH)
-      const height = readDim(raw, 'height', existing?.height ?? ZONE_DEFAULT_HEIGHT)
-      const label = String(raw.label ?? 'Zone')
-      // Preserve the existing zone's participantId across assistant patches
-      // so live dispatches / on-disk activity logs stay addressable; mint a
-      // fresh one for brand-new zones the assistant is introducing.
-      let participantId = existing?.data.participantId ?? ''
-      if (!participantId) {
-        participantId = mintParticipantId(label, participantIdsInUse)
-        participantIdsInUse.add(participantId)
-      }
-      return {
-        id,
-        type: 'zone',
-        position,
-        width,
-        height,
-        zIndex: 0,
-        data: {
-          participantId,
-          label,
-          description: String(raw.description ?? ''),
-          color: String(raw.color ?? '#58A6FF'),
-          status: 'idle',
-          systemPrompt: String(raw.systemPrompt ?? raw.prompt ?? ''),
-          ...createDefaultZoneAgentConfig(activeSettings),
-          // Tag with the active folder so multi-folder workspaces persist
-          // the assistant's new zones into the right canvas file.
-          folderPath: activeFolderPath,
-        },
-      }
-    })
-
-    const zoneById = new Map(newZones.map(z => [z.id, z]))
-
-    const newComps: ComponentNodeType[] = rawComponents.map((raw, i) => {
-      const id = String(raw.id ?? `gen-comp-${Date.now()}-${i}`)
-      const existing = existingCompById.get(id)
-      const explicitPos = readPosition(raw)
-
-      let position: XYPosition
-      if (explicitPos) {
-        position = explicitPos
-      } else if (existing) {
-        position = existing.position
-      } else {
-        const hintZoneId = String(raw.overlayZoneId ?? raw.zoneId ?? '')
-        const hintZone = hintZoneId ? zoneById.get(hintZoneId) : undefined
-        if (hintZone) {
-          const siblings = rawComponents.filter(other =>
-            other !== raw && String(other.overlayZoneId ?? other.zoneId ?? '') === hintZoneId
-          ).length
-          const cols = Math.max(1, Math.floor((hintZone.width ?? ZONE_DEFAULT_WIDTH) / (COMPONENT_APPROX_W + 20)))
-          const col = i % cols
-          const row = Math.floor(siblings / cols)
-          position = {
-            x: hintZone.position.x + 24 + col * (COMPONENT_APPROX_W + 20),
-            y: hintZone.position.y + 64 + row * (COMPONENT_APPROX_H + 28),
-          }
-        } else {
-          position = {
-            x: 120 + (i % 4) * (COMPONENT_APPROX_W + 40),
-            y: 520 + Math.floor(i / 4) * (COMPONENT_APPROX_H + 40),
-          }
-        }
-      }
-
-      return {
-        id,
-        type: 'component',
-        position,
-        zIndex: 1,
-        data: {
-          label: String(raw.label ?? 'Component'),
-          description: String(raw.description ?? ''),
-          specs: typeof raw.specs === 'string' ? raw.specs : '',
-          category: (raw.category as ComponentNodeType['data']['category']) ?? 'custom',
-          iconName: String(raw.iconName ?? 'Wrench'),
-          color: String(raw.color ?? '#60a5fa'),
-          tag: String(raw.tag ?? 'NODE'),
-          folderPath: activeFolderPath,
-        },
-      }
-    })
-
-    // De-collide assistant ids against nodes from OTHER workspace folders
-    // before edges are built — newEdges below reference the (possibly
-    // renamed) zone/component ids.
-    const reservedIds = new Set(otherFolderNodes.map(n => n.id))
-    const renameZones = dedupeAgainstReserved(newZones, reservedIds)
-    const renameComps = dedupeAgainstReserved(newComps, reservedIds)
-    const rename = new Map([...renameZones, ...renameComps])
-
-    const newEdges: CanvasEdge[] = rawEdges.map(raw => {
-      const source = rename.get(raw.source) ?? raw.source
-      const target = rename.get(raw.target) ?? raw.target
-      return {
-        id: raw.id ?? createEdgeId(),
-        type: 'component-edge',
-        source,
-        target,
-        sourceHandle: raw.sourceHandle ?? null,
-        targetHandle: raw.targetHandle ?? null,
-        data: normalizeEdgeData(raw.data ?? raw),
-      }
-    })
-
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current)
-      autoSaveTimerRef.current = null
-    }
-
-    // Stitch the assistant's edits (active folder) back together with any
-    // other folder's nodes/edges that were filtered out at the top of this
-    // callback. Single-folder workspaces have empty otherFolder* arrays.
-    const mergedNodes = [...otherFolderNodes, ...newZones, ...newComps]
-    const mergedEdges = [...otherFolderEdges, ...newEdges]
-    const rawCanvas = serializeCanvasData(mergedNodes, mergedEdges, settingsRef.current)
-    setNodes(mergedNodes)
-    setEdges(mergedEdges)
-    setIsDirty(false)
-    setDispatchedGraph(null)
-    setPendingExternalCanvasRaw(null)
-    setActiveTab('Canvas')
-    queueFitView()
-    void persistCanvasRaw(rawCanvas, true)
-  }, [activeFolder.path, primaryFolder.path, persistCanvasRaw, queueFitView, setEdges, setNodes, snapshotHistory])
+When the user is asking for critique, tradeoffs, or brainstorming, discuss without editing. When they ask to add/change/generate the plan, edit the page file directly and give a short summary of what changed.`
+  }, [activeFolder.path, pageIdForFolder])
 
   // Per-mode effective CLI for the side-panel assistant. Architecture and
   // General maintain independent runtime choices, fully decoupled from the
@@ -2215,10 +1973,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     })
   }, [onChangeDir, onSave, undoCanvas, redoCanvas])
 
-  const isCanvas = activeTab === 'Canvas'
-  const isPages = activeTab === 'Pages'
-  const isFiles = activeTab === 'Files'
-  const isTerminal = activeTab === 'Terminal'
   // 'Logs' is the user-visible tab name in TopNav; the panel it renders is
   // the DispatchView (swimlane + flat log). Keep the variable name aligned
   // with the tab string so a future tab rename only has to be made in one place.
@@ -2254,21 +2008,17 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     // Conductor gets a fixed accent so it reads as orchestration, not a zone.
     // Zones contribute their own color so swimlane column headers match the
     // on-canvas zone they represent.
-    const map: Record<string, string> = { conductor: '#c084fc' }
+    const map: Record<string, string> = { conductor: '#7e7eea' }
     for (const z of zones) {
       const pid = (z.data.participantId as string) || z.id
       map[pid] = (z.data.color as string) || '#58A6FF'
     }
     return map
   }, [zones])
-  const activePaletteTool: CanvasPaletteTool | null = pendingCreate?.kind ?? (pendingEdgeDefaults ? 'edge' : null)
+  const activePaletteTool: CanvasPaletteTool | null = pendingCreate?.kind ?? null
   const placementHint = pendingCreate
-    ? `Click canvas to place ${pendingCreate.kind === 'zone' ? 'zone' : 'component'}`
-    : pendingEdgeDefaults
-      ? 'Connect two component handles'
-      : null
-  const defaultZoneRuntime = projectSettings.dispatchRuntime ?? DEFAULT_AGENT_RUNTIME
-  const defaultZoneModel = projectSettings.dispatchModels[defaultZoneRuntime] ?? DEFAULT_MODEL_BY_RUNTIME[defaultZoneRuntime] ?? ''
+    ? `Click the canvas to place the ${pendingCreate.kind === 'zone' ? 'agent' : 'card'}`
+    : null
 
   const handleSettingsChange = useCallback((partial: Partial<ProjectSettings>) => {
     setProjectSettings(current => ({ ...current, ...partial }))
@@ -2287,11 +2037,37 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
     }
   }, [setNodes])
 
+  const openZoneDocPane = useCallback((nodeId: string) => {
+    setDocPaneTarget({ kind: 'zone', nodeId })
+  }, [])
+
+  const openComponentDocPane = useCallback((nodeId: string) => {
+    setDocPaneTarget({ kind: 'component', nodeId })
+  }, [])
+
+  const closeDocPane = useCallback(() => {
+    setDocPaneTarget(null)
+  }, [])
+
+  useEffect(() => {
+    if (!docPaneTarget) return
+    if (nodes.some(node => node.id === docPaneTarget.nodeId)) return
+    setDocPaneTarget(null)
+  }, [docPaneTarget, nodes])
+
   return (
     <ProjectSettingsProvider value={projectSettings}>
       <InterfaceSettingsProvider value={projectSettings.interface}>
       <ProjectDirProvider value={projectDir}>
-      <div className="flex flex-col h-screen bg-canvas text-fg overflow-hidden">
+      <DocPaneProvider
+        value={{
+          target: docPaneTarget,
+          openZone: openZoneDocPane,
+          openComponent: openComponentDocPane,
+          close: closeDocPane,
+        }}
+      >
+      <div className="flex h-screen flex-col overflow-hidden bg-canvas text-fg">
         <TopNav
           onDispatch={onDispatch}
           dispatching={dispatching}
@@ -2300,6 +2076,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onChangeDir={onChangeDir}
           onAssistantToggle={handleAssistantToggle}
           assistantOpen={assistantOpen}
+          onFilesToggle={() => setFilesPanelOpen(o => !o)}
+          filesPanelOpen={filesPanelOpen}
           isRedispatch={dispatchedGraph !== null}
           changedCount={changedZoneLabels.length}
           onUndo={undoCanvas}
@@ -2310,19 +2088,16 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
           onUpdateInstall={onUpdateInstall}
         />
         <div className="flex flex-1 overflow-hidden">
-          {/* Left rail: vertical instrument strip. Each tab stacks an icon
-              over a tracked 3-letter mono code. The active tab is signaled
-              by an inset hairline rule along its top edge in the accent
-              color, never a side stripe or a filled pill. */}
-          <nav className="flex flex-col items-stretch w-11 py-2 bg-panel border-r border-node-border flex-shrink-0">
+          {/* Left rail: Obsidian-style ribbon. Each tab is a bare icon; the
+              active tab brightens to full foreground on a soft surface, never
+              a colored stripe or hairline. */}
+          <nav className="flex flex-col items-stretch w-11 py-2 bg-sidebar border-r border-node-border flex-shrink-0">
             {([
-              { id: 'Canvas',   code: 'CAN', icon: <Layers size={14} strokeWidth={1.7} />,      title: 'Canvas'   },
-              { id: 'Pages',    code: 'PAG', icon: <FileStack size={14} strokeWidth={1.7} />,   title: 'Pages'    },
-              { id: 'Files',    code: 'FIL', icon: <Files size={14} strokeWidth={1.7} />,       title: 'Files'    },
-              { id: 'Terminal', code: 'TRM', icon: <TerminalIcon size={14} strokeWidth={1.7} />, title: 'Terminal' },
-              { id: 'Logs',     code: 'LOG', icon: <Activity size={14} strokeWidth={1.7} />,    title: 'Logs'     },
-              { id: 'Settings', code: 'SET', icon: <Settings size={14} strokeWidth={1.7} />,    title: 'Settings' },
-            ] as const).map(({ id, code, icon, title }) => {
+              { id: 'Canvas',   icon: <CanvasGraphIcon size={18} />,                  title: 'Canvas'   },
+              { id: 'Pages',    icon: <FileStack size={18} strokeWidth={1.7} />,      title: 'Pages'    },
+              { id: 'Terminal', icon: <SquareTerminal size={18} strokeWidth={1.7} />, title: 'Terminal' },
+              { id: 'Logs',     icon: <Activity size={18} strokeWidth={1.7} />,       title: 'Logs'     },
+            ] as const).map(({ id, icon, title }) => {
               const active = activeTab === id
               return (
                 <button
@@ -2330,32 +2105,37 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                   onClick={() => setActiveTab(id)}
                   title={title}
                   aria-label={title}
-                  className={`relative flex flex-col items-center justify-center gap-1 py-2.5 transition-colors ${
-                    active ? 'text-fg' : 'text-fg-subtle hover:text-fg-muted'
+                  className={`flex items-center justify-center mx-1.5 my-0.5 rounded-md py-2 transition-colors ${
+                    active
+                      ? 'bg-white/[0.09] text-fg'
+                      : 'text-fg-subtle hover:text-fg hover:bg-white/[0.05]'
                   }`}
                 >
-                  {active && (
-                    <span
-                      className="absolute left-1.5 right-1.5 top-0 h-px bg-accent"
-                      aria-hidden
-                    />
-                  )}
                   {icon}
-                  <span className="text-[9px] font-bold uppercase tracking-[0.2em] leading-none">
-                    {code}
-                  </span>
                 </button>
               )
             })}
             <div className="flex-1" />
             <div className="flex items-center justify-center pb-1">
-              <UserMenu />
+              <UserMenu onOpenSettings={() => setActiveTab('Settings')} />
             </div>
           </nav>
           <div
             className={`flex-1 flex overflow-hidden ${assistantOrientation === 'bottom' ? 'flex-col' : 'flex-row'}`}
           >
             <div className="flex-1 flex overflow-hidden">
+
+          {/* Files: a left-docked resizable panel that lives alongside the
+              active tab (Canvas included), mirroring the AssistantPanel
+              open/hide pattern. Kept mounted so its directory listing +
+              folder-link state survive a close/reopen. */}
+          <div style={{ display: filesPanelOpen ? 'contents' : 'none' }}>
+            <ResizablePanel side="left" defaultSize={280} minSize={180} maxSize={560}>
+              <div className="h-full overflow-hidden">
+                <FilesPanel />
+              </div>
+            </ResizablePanel>
+          </div>
 
           <div className={`flex-1 relative ${isPages ? '' : 'hidden'}`}>
             <PagesPanel onSwitch={() => setActiveTab('Canvas')} />
@@ -2373,22 +2153,24 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               connectionMode={ConnectionMode.Loose}
               elevateNodesOnSelect={false}
               defaultEdgeOptions={{ type: 'component-edge', style: { stroke: '#3a3a3a', strokeWidth: 1.5 } }}
-              className={pendingEdgeDefaults ? 'architect-edge-mode' : undefined}
               proOptions={{ hideAttribution: true }}
               fitView
               minZoom={0.05}
               maxZoom={3}
+              zoomOnDoubleClick={false}
+              onDoubleClick={onCanvasDoubleClick}
             >
-              <Background
-                variant={projectSettings.interface.canvasBackground === 'grid' ? BackgroundVariant.Lines : BackgroundVariant.Dots}
-                gap={28}
-                size={projectSettings.interface.canvasBackground === 'grid' ? 1 : 1.8}
-                color={
-                  projectSettings.interface.theme === 'light'
-                    ? (projectSettings.interface.canvasBackground === 'grid' ? '#e2e8f0' : '#cbd5e1')
-                    : (projectSettings.interface.canvasBackground === 'grid' ? '#69696935' : '#515151')
-                }
-              />
+              {/* Grid is still available via Settings; the default canvas is a
+                  plain solid surface (no dot texture), painted by the
+                  --bg-flow token on .react-flow. */}
+              {projectSettings.interface.canvasBackground === 'grid' && (
+                <Background
+                  variant={BackgroundVariant.Lines}
+                  gap={28}
+                  size={1}
+                  color={projectSettings.interface.theme === 'light' ? '#e2e8f0' : '#69696935'}
+                />
+              )}
               <FolderRegions
                 nodes={nodes}
                 emptyOffsets={emptyFolderOffsets}
@@ -2401,17 +2183,17 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                 pannable
                 zoomable
                 ariaLabel="Canvas minimap"
-                bgColor={projectSettings.interface.theme === 'light' ? '#f8fafc' : '#1a1714'}
+                bgColor={projectSettings.interface.theme === 'light' ? '#f9f9f9' : '#1a1a1a'}
                 maskColor={
                   projectSettings.interface.theme === 'light'
-                    ? 'rgba(34, 31, 27, 0.10)'
-                    : 'rgba(20, 17, 14, 0.55)'
+                    ? 'rgba(0, 0, 0, 0.08)'
+                    : 'rgba(0, 0, 0, 0.55)'
                 }
                 nodeColor={(node) => {
                   const c = (node.data as { color?: string } | undefined)?.color
                   return typeof c === 'string' ? c : '#58A6FF'
                 }}
-                nodeStrokeColor={projectSettings.interface.theme === 'light' ? '#cbd5e1' : '#443d35'}
+                nodeStrokeColor={projectSettings.interface.theme === 'light' ? '#e0e0e0' : '#3a3a3a'}
                 nodeBorderRadius={2}
                 style={{
                   border: '1px solid rgba(255, 255, 255, 0.08)',
@@ -2422,44 +2204,31 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
             </ReactFlow>
 
+            {/* Empty-canvas hint: quiet onboarding for a fresh page. Sits
+                under the modals (z-20 < z-50) and never intercepts input. */}
+            {nodes.length === 0 && !autoCanvasOfferOpen && (
+              <div className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+                <div className="max-w-sm text-center">
+                  <p className="text-sm font-medium text-fg-muted">Plan it in plain language</p>
+                  <p className="mt-2 text-xs leading-relaxed text-fg-subtle">
+                    Double-click anywhere to add a card and describe a piece of the system.
+                    Drag the dot on a card&apos;s edge to connect it to another.
+                    Add an agent to own a region of the plan — then dispatch.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <div className="absolute right-4 z-30 flex items-center gap-1.5" style={{ bottom: 144 }}>
               <button
-                onClick={() => setProjectSettings(s => ({
-                  ...s,
-                  interface: {
-                    ...s.interface,
-                    componentDensity:
-                      s.interface.componentDensity === 'simplified' ? 'detailed' : 'simplified',
-                  },
-                }))}
-                className="flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
-                title={
-                  projectSettings.interface.componentDensity === 'simplified'
-                    ? 'Switch to detailed UML node rendering'
-                    : 'Switch to simplified node rendering (header only)'
-                }
-              >
-                {projectSettings.interface.componentDensity === 'simplified' ? (
-                  <>
-                    <Rows3 size={11} />
-                    Simple
-                  </>
-                ) : (
-                  <>
-                    <LayoutList size={11} />
-                    Detail
-                  </>
-                )}
-              </button>
-              <button
                 onClick={onClear}
-                className="px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                className="rounded-md border border-node-border bg-node/90 px-2.5 py-1 text-xs text-fg-muted shadow-lg backdrop-blur transition-colors hover:bg-node hover:text-fg"
               >
                 Clear
               </button>
               <button
                 onClick={onSave}
-                className="relative flex items-center gap-1.5 px-2.5 py-1 text-xs text-fg-muted border border-white/10 rounded-md bg-[#171717]/90 hover:bg-white/10 hover:text-fg backdrop-blur transition-colors shadow-lg"
+                className="relative flex items-center gap-1.5 rounded-md border border-node-border bg-node/90 px-2.5 py-1 text-xs text-fg-muted shadow-lg backdrop-blur transition-colors hover:bg-node hover:text-fg"
                 title="Save canvas"
               >
                 <Save size={11} />
@@ -2473,20 +2242,8 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             <CompactCanvasPalette
               activeTool={activePaletteTool}
               placementHint={placementHint}
-              defaultZoneRuntime={defaultZoneRuntime}
-              defaultZoneModel={defaultZoneModel}
-              onCreateComponent={config => {
-                setPendingEdgeDefaults(null)
-                setPendingCreate({ kind: 'component', config })
-              }}
-              onCreateZone={config => {
-                setPendingEdgeDefaults(null)
-                setPendingCreate({ kind: 'zone', config })
-              }}
-              onCreateEdge={config => {
-                setPendingCreate(null)
-                setPendingEdgeDefaults(config)
-              }}
+              onCreateComponent={() => setPendingCreate({ kind: 'component' })}
+              onCreateZone={() => setPendingCreate({ kind: 'zone' })}
               onCancel={cancelCanvasTool}
             />
 
@@ -2510,7 +2267,7 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               <DispatchModal
                 zones={zones.map(z => ({
                   id: z.id,
-                  label: (z.data.label as string) ?? 'Zone',
+                  label: (z.data.label as string) ?? 'Agent',
                   color: (z.data.color as string) ?? '#58A6FF',
                   folderPath:
                     typeof z.data.folderPath === 'string' ? z.data.folderPath : undefined,
@@ -2521,12 +2278,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
               />
             )}
           </div>
-
-          {isFiles && (
-            <div className="flex-1 overflow-hidden">
-              <FilesPanel />
-            </div>
-          )}
 
           <div className={`flex-1 overflow-hidden ${isTerminal ? '' : 'hidden'}`}>
             {terminalPagePoppedOut ? (
@@ -2599,7 +2350,6 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
                   visible={assistantOpen}
                   orientation={assistantOrientation}
                   onClose={handleAssistantClose}
-                  onCanvasUpdate={applyCanvasUpdate}
                   runtime={assistantRuntime ?? effectiveAssistantRuntime(projectSettings.assistantMode)}
                   mode={projectSettings.assistantMode}
                   onModeChange={handleAssistantModeChange}
@@ -2629,7 +2379,43 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
             onClose={() => setDispatchErrorMessage(null)}
           />
         )}
+        {activeZoneDocNode && (
+          <AgentConfigModal
+            zoneColor={(activeZoneDocNode.data.color as string) ?? '#58A6FF'}
+            zoneId={activeZoneDocNode.id}
+            label={(activeZoneDocNode.data.label as string) ?? 'Agent'}
+            systemPrompt={(activeZoneDocNode.data.systemPrompt as string) ?? ''}
+            configuredRuntime={(activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime}
+            effectiveRuntime={getEffectiveRuntime(
+              { agentRuntime: (activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime },
+              projectSettings,
+            )}
+            effectiveModel={getEffectiveModel(
+              {
+                providerModels: (activeZoneDocNode.data.providerModels ?? {}) as Record<string, string>,
+                agentRuntime: (activeZoneDocNode.data.agentRuntime as AgentRuntime) ?? projectSettings.dispatchRuntime,
+              },
+              projectSettings,
+            )}
+            providerModels={(activeZoneDocNode.data.providerModels ?? {}) as Record<string, string>}
+            skills={(activeZoneDocNode.data.skills ?? []) as ZoneNodeData['skills']}
+            tools={(activeZoneDocNode.data.tools ?? { webSearch: false, codeExec: false, fileRead: false, fileWrite: false, apiCalls: false, shell: false }) as ZoneNodeData['tools']}
+            behavior={(activeZoneDocNode.data.behavior ?? { mode: 'sequential', retries: 0, onFailure: 'stop', timeoutMs: 30000 }) as ZoneNodeData['behavior']}
+            envVars={(activeZoneDocNode.data.envVars ?? []) as ZoneNodeData['envVars']}
+            patch={patchActiveZoneDocNode}
+            onClose={closeDocPane}
+          />
+        )}
+        {activeComponentDocNode && (
+          <ComponentConfigModal
+            label={(activeComponentDocNode.data.label as string) ?? 'Component'}
+            specs={(activeComponentDocNode.data.specs as string) ?? ''}
+            patch={patchActiveComponentDocNode}
+            onClose={closeDocPane}
+          />
+        )}
       </div>
+      </DocPaneProvider>
       </ProjectDirProvider>
       </InterfaceSettingsProvider>
     </ProjectSettingsProvider>
@@ -2638,6 +2424,10 @@ When the user is asking for critique, tradeoffs, or brainstorming, discuss witho
 
 function MainApp() {
   const [projectDir, setProjectDir] = useState<string | null>(null)
+
+  useEffect(() => {
+    void window.electron.appWindow.setMode(projectDir ? 'workspace' : 'launcher')
+  }, [projectDir])
 
   if (!projectDir) {
     return <DirectoryGate onOpen={setProjectDir} />

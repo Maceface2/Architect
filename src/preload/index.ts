@@ -8,6 +8,10 @@ contextBridge.exposeInMainWorld('electron', {
   readDir: (dirPath: string) => ipcRenderer.invoke('read-dir', dirPath),
   openDirectory: () => ipcRenderer.invoke('open-directory'),
   inspectProject: (projectDir: string) => ipcRenderer.invoke('inspect-project', projectDir),
+  appWindow: {
+    setMode: (mode: 'launcher' | 'workspace') =>
+      ipcRenderer.invoke('app-window:set-mode', mode),
+  },
 
   // Per-page canvas persistence. Each folder owns its own pages list under
   // ARCHITECT/pages/<pageId>.json. The activePageId is part of the

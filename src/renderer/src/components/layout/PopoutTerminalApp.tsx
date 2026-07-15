@@ -2,18 +2,19 @@ import { useEffect, useRef } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import '@xterm/xterm/css/xterm.css'
+import { withTerminalSurface } from '../../lib/terminalTheme'
 
 const TERM_THEME = {
-  background:  '#14110e',
+  background:  '#212121',
   foreground:  '#e2e8f0',
   cursor:      '#58A6FF',
-  cursorAccent:'#14110e',
+  cursorAccent:'#212121',
   black:       '#1e1e1e',
   red:         '#f87171',
   green:       '#4ade80',
   yellow:      '#fbbf24',
   blue:        '#58A6FF',
-  magenta:     '#c084fc',
+  magenta:     '#7e7eea',
   cyan:        '#38bdf8',
   white:       '#e2e8f0',
   brightBlack: '#3a3a3a',
@@ -35,7 +36,7 @@ export default function PopoutTerminalApp({ id, label }: Props) {
   useEffect(() => {
     if (!containerRef.current) return
     const term = new Terminal({
-      theme: TERM_THEME,
+      theme: withTerminalSurface(TERM_THEME),
       fontFamily: '"JetBrains Mono", "Cascadia Code", "Fira Code", Menlo, monospace',
       fontSize: 13,
       lineHeight: 1.4,

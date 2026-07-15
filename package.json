@@ -1,6 +1,6 @@
 {
-  "name": "architect",
-  "productName": "Architect",
+  "name": "clique",
+  "productName": "Clique",
   "version": "0.2.2-alpha",
   "description": "Visual architecture builder for agentic coding CLIs",
   "main": "./out/main/index.js",
@@ -16,8 +16,8 @@
     "postinstall": "chmod +x node_modules/node-pty/prebuilds/darwin-arm64/spawn-helper 2>/dev/null; chmod +x node_modules/node-pty/prebuilds/darwin-x64/spawn-helper 2>/dev/null; true"
   },
   "build": {
-    "appId": "com.architect.app",
-    "productName": "Architect",
+    "appId": "com.clique.app",
+    "productName": "Clique",
     "files": [
       "out/**/*",
       "resources/**/*"
@@ -65,7 +65,7 @@
       }
     ],
     "dmg": {
-      "title": "Architect",
+      "title": "Clique",
       "background": null,
       "window": {
         "width": 540,
@@ -105,7 +105,9 @@
     "node-pty": "^1.1.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-resizable-panels": "^2.1.9"
+    "react-markdown": "^10.1.0",
+    "react-resizable-panels": "^2.1.9",
+    "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

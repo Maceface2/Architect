@@ -10,10 +10,10 @@ import { useRuntimeDetection } from '../../context/RuntimeDetectionContext'
 export function RuntimeEmptyState({ compact = false }: { compact?: boolean }) {
   const { rescan, rescanning } = useRuntimeDetection()
   return (
-    <div className={`rounded-lg border border-amber-400/30 bg-amber-400/5 px-4 py-3 ${compact ? 'text-[11px]' : 'text-xs'}`}>
-      <div className="text-amber-200 font-medium mb-2">No CLIs detected</div>
+    <div className={`rounded-lg border border-node-border bg-panel px-4 py-3 ${compact ? 'text-[11px]' : 'text-xs'}`}>
+      <div className="text-accent font-medium mb-2">No CLIs detected</div>
       <div className="text-fg-subtle leading-relaxed mb-3">
-        Architect orchestrates agent CLIs. Install at least one to dispatch zones.
+        Clique orchestrates agent CLIs. Install at least one to launch agents.
       </div>
       <div className="space-y-1.5 mb-3">
         {AGENT_RUNTIMES.map(def => (
@@ -24,7 +24,7 @@ export function RuntimeEmptyState({ compact = false }: { compact?: boolean }) {
         <button
           onClick={() => void rescan()}
           disabled={rescanning}
-          className="px-2.5 py-1 rounded border border-white/10 text-fg-muted hover:text-fg hover:border-white/20 text-[11px] disabled:opacity-50"
+          className="px-2.5 py-1 rounded border border-node-border text-fg-muted hover:text-fg hover:border-accent text-[11px] disabled:opacity-50"
         >
           {rescanning ? 'Rescanning…' : 'Rescan'}
         </button>
@@ -45,7 +45,7 @@ function RuntimeInstallRow({ runtimeId }: { runtimeId: AgentRuntime }) {
       <span className="text-fg-muted w-24 shrink-0" style={{ color: def.accentColor }}>
         {def.label}
       </span>
-      <code className="flex-1 truncate font-mono text-[10.5px] text-fg-subtle bg-black/30 rounded px-2 py-0.5">
+      <code className="flex-1 truncate font-mono text-[10.5px] text-fg-subtle bg-node rounded px-2 py-0.5">
         {primary}
       </code>
       <CopyButton text={primary} />
@@ -67,7 +67,7 @@ function CopyButton({ text }: { text: string }) {
   return (
     <button
       onClick={onClick}
-      className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-white/10 text-fg-subtle hover:text-fg hover:border-white/30"
+      className="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded border border-node-border text-fg-subtle hover:text-fg hover:border-accent"
     >
       {copied ? 'Copied' : 'Copy'}
     </button>

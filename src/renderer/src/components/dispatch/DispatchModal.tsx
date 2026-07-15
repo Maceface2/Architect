@@ -232,12 +232,12 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
             </h2>
             <p className="text-xs text-fg-muted mt-1">
               {zoneCount === 0
-                ? 'No zones on the canvas.'
+                ? 'No agents on the canvas.'
                 : selectedCount >= 2
-                  ? `Architect coordinator will run across ${selectedCount} selected zones.`
+                  ? `Clique coordinator will run across ${selectedCount} selected agents.`
                   : selectedCount === 1
-                    ? 'Single zone selected. Runs directly without a coordinator.'
-                    : 'Select at least one zone below.'}
+                    ? 'Single agent selected. Runs directly without a coordinator.'
+                    : 'Select at least one agent below.'}
             </p>
           </div>
           <button onClick={onClose} className="text-fg-subtle hover:text-fg transition-colors flex-shrink-0 p-1">
@@ -258,7 +258,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
               <div>
                 <div className="flex items-center justify-between mb-1.5">
                   <label className="block text-xs font-medium text-fg-muted">
-                    Zones to involve <span className="text-fg-subtle">· {selectedCount}/{zoneCount}</span>
+                    Agents to involve <span className="text-fg-subtle">· {selectedCount}/{zoneCount}</span>
                   </label>
                   <div className="flex items-center gap-2 text-[11px]">
                     <button type="button" onClick={selectAllZones} className="text-fg-muted hover:text-fg transition-colors">Select all</button>
@@ -315,7 +315,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                   </div>
                 )}
                 <p className="text-[11px] text-fg-subtle mt-1.5">
-                  Only the selected zones will receive task files. Others remain idle for this dispatch.
+                  Only the selected agents will receive task files. Others remain idle for this dispatch.
                   {involvedFolderCount > 1 && (
                     <>
                       {' '}Spans <strong className="text-fg-muted">{involvedFolderCount}</strong> folders;
@@ -378,7 +378,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 </>
               )}
               <p className="text-[11px] text-fg-subtle mt-1">
-                Runs the multi-zone Conductor. Zones keep their individually configured CLIs.
+                Runs the multi-agent Conductor. Agents keep their individually configured CLIs.
               </p>
             </div>
 
@@ -413,7 +413,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                 </label>
                 <p className="text-[11px] text-fg-subtle mt-1">
                   {selectedCount >= 2
-                    ? 'Applied to the Architect coordinator only. Zones still execute autonomously.'
+                    ? 'Applied to the Clique coordinator only. Agents still execute autonomously.'
                     : 'Claude will plan before making changes.'}
                 </p>
               </div>
@@ -477,7 +477,7 @@ export default function DispatchModal({ zones, prefillPrompt, onClose, onSubmit 
                             <button
                               onClick={() => handleResume(record)}
                               className="flex-1 text-left min-w-0"
-                              title="Resume this dispatch (coordinator + all zones)"
+                              title="Resume this dispatch (coordinator + all agents)"
                             >
                               <div className="flex items-center gap-2">
                                 <span className="text-fg font-medium truncate">

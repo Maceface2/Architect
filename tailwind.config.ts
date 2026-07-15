@@ -8,11 +8,23 @@ function v(token: string) {
   return `rgb(var(--${token}) / <alpha-value>)`
 }
 
-// Commit Mono as the single UI typeface (SIL OFL by Eigil Nikolajsen).
-// Hierarchy is carried by weight (400/500/600/700) + size + tracking, never
-// by a second family. Stack falls back through bundled woff2, installed
-// Commit Mono, then platform mono so a font load failure never produces a
-// system serif.
+// Obsidian-style chrome: the UI runs in the host OS's native interface font
+// (`font-sans`), so the app inherits the look of whatever machine it's on.
+// Monospace (`font-mono`) is reserved for genuine code: fenced/inline markdown
+// code, raw identifiers (model ids, paths, session ids), and the terminal
+// (which sets its own family). The mono stack still falls through bundled
+// Commit Mono → platform mono so a font-load failure never yields a serif.
+const SYSTEM_STACK = [
+  '-apple-system',
+  'BlinkMacSystemFont',
+  '"Segoe UI"',
+  'Roboto',
+  '"Helvetica Neue"',
+  'Arial',
+  'system-ui',
+  'sans-serif',
+]
+
 const MONO_STACK = [
   '"Commit Mono"',
   'ui-monospace',
@@ -26,12 +38,14 @@ export default {
   theme: {
     extend: {
       fontFamily: {
-        sans: MONO_STACK,
+        sans: SYSTEM_STACK,
         mono: MONO_STACK,
       },
       colors: {
         canvas: v('bg-canvas'),
         panel: v('bg-panel'),
+        topbar: v('bg-topbar'),
+        sidebar: v('bg-sidebar'),
         node: v('bg-node'),
         // Card surfaces inside the canvas (ComponentNode etc.) that need to
         // flip from dark to white when the theme switches.

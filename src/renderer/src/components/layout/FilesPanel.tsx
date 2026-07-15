@@ -1,7 +1,71 @@
-import { useState, useEffect, useMemo } from 'react'
-import { Folder, File, ArrowLeft, FolderOpen, FolderPlus, X, FilePlus, Check } from 'lucide-react'
+import { useState, useEffect, useMemo, type ReactNode } from 'react'
+import { ChevronRight, FolderPlus, X, FilePlus, Check } from 'lucide-react'
 import type { FileEntry } from '../../../../shared/electronTypes'
 import { useWorkspace, type WorkspacePage } from '../../context/WorkspaceContext'
+
+/** Map a filename to a single flat dev-convention symbol — no letter
+    abbreviations, no colored chip. JSON -> {}, code -> </>, styles -> #,
+    config -> =, docs -> ≡, everything else a quiet dot. */
+function fileSymbol(name: string): string {
+  const lower = name.toLowerCase()
+  if (lower === 'dockerfile' || lower === 'makefile') return '='
+  if (lower.startsWith('.env')) return '='
+  if (lower === 'package-lock.json' || lower === 'yarn.lock' || lower.endsWith('.lock')) return '='
+  if (lower.startsWith('.git')) return '·'
+  const ext = lower.includes('.') ? lower.slice(lower.lastIndexOf('.') + 1) : ''
+  switch (ext) {
+    case 'json': case 'jsonc':
+      return '{}'
+    case 'ts': case 'tsx': case 'js': case 'jsx': case 'mjs': case 'cjs':
+    case 'py': case 'rb': case 'go': case 'rs': case 'java': case 'php':
+    case 'c': case 'h': case 'cpp': case 'cc': case 'hpp': case 'swift': case 'kt':
+    case 'html': case 'htm': case 'xml': case 'svg': case 'vue': case 'svelte':
+      return '</>'
+    case 'sh': case 'bash': case 'zsh':
+      return '$_'
+    case 'css': case 'scss': case 'sass': case 'less':
+      return '#'
+    case 'yml': case 'yaml': case 'toml': case 'ini': case 'cfg': case 'conf': case 'properties':
+      return '='
+    case 'md': case 'mdx': case 'markdown': case 'txt': case 'log': case 'rst':
+    case 'pdf': case 'csv': case 'tsv':
+      return '≡'
+    case 'png': case 'jpg': case 'jpeg': case 'gif': case 'webp': case 'ico': case 'bmp': case 'avif':
+    case 'zip': case 'tar': case 'gz': case 'tgz': case 'rar': case '7z':
+      return '◆'
+    default:
+      return '·'
+  }
+}
+
+/** Flat gray, filled folder glyph (no amber, no outline). */
+function FolderGlyph({ size = 15 }: { size?: number }) {
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="currentColor"
+      className="text-fg-subtle flex-shrink-0"
+      aria-hidden
+    >
+      <path d="M3 6.5A2.5 2.5 0 0 1 5.5 4h3.6a2 2 0 0 1 1.5.68l1.2 1.32H18.5A2.5 2.5 0 0 1 21 8.5v9A2.5 2.5 0 0 1 18.5 20h-13A2.5 2.5 0 0 1 3 17.5v-11Z" />
+    </svg>
+  )
+}
+
+/** Bare monochrome convention symbol for a file — no box, fixed-width so
+    filenames stay aligned regardless of symbol length. */
+function FileGlyph({ name }: { name: string }) {
+  return (
+    <span
+      className="inline-flex items-center justify-center w-[18px] text-fg-subtle font-mono text-[10px] leading-none flex-shrink-0 select-none"
+      aria-hidden
+    >
+      {fileSymbol(name)}
+    </span>
+  )
+}
 
 interface PendingLink {
   folderPath: string
@@ -22,15 +86,11 @@ export default function FilesPanel() {
   // hardcoding the name onto the PageLink schema.
   const [linkedPageNameByFolder, setLinkedPageNameByFolder] = useState<Record<string, string>>({})
 
-  // Per-folder navigation history. Drilling into a subfolder pushes onto
-  // that folder's history; switching to another loaded folder restores its
-  // own breadcrumb without bleeding the previous folder's path.
-  const [pathByFolder, setPathByFolder] = useState<Record<string, string>>(() => ({
-    [primaryFolder.path]: primaryFolder.path,
-  }))
-  const [historyByFolder, setHistoryByFolder] = useState<Record<string, string[]>>(() => ({}))
-  const [entries, setEntries] = useState<FileEntry[]>([])
-  const [loading, setLoading] = useState(true)
+  // Expandable file tree (replaces the old drill-in breadcrumb). The active
+  // workspace folder is the tree root; directories expand in place rather
+  // than replacing the view. childrenByDir caches one readDir per dir.
+  const [expanded, setExpanded] = useState<Set<string>>(new Set())
+  const [childrenByDir, setChildrenByDir] = useState<Record<string, FileEntry[]>>({})
   const [adding, setAdding] = useState(false)
 
   // Resolve the linked page name for each non-host folder once per change to
@@ -63,59 +123,68 @@ export default function FilesPanel() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeLinksKey])
 
-  // Seed pathByFolder for any folder we've never tracked yet (newly added).
-  useEffect(() => {
-    setPathByFolder(prev => {
-      let changed = false
-      const next = { ...prev }
-      for (const folder of loadedFolders) {
-        if (!(folder.path in next)) {
-          next[folder.path] = folder.path
-          changed = true
-        }
-      }
-      // Drop entries for folders that are no longer loaded.
-      for (const key of Object.keys(next)) {
-        if (!loadedFolders.some(f => f.path === key)) {
-          delete next[key]
-          changed = true
-        }
-      }
-      return changed ? next : prev
+  const rootPath = activeFolder.path
+
+  const loadDir = (dir: string) => {
+    void window.electron.readDir(dir).then(result => {
+      setChildrenByDir(prev => ({ ...prev, [dir]: result }))
     })
-  }, [loadedFolders])
-
-  const currentPath = pathByFolder[activeFolder.path] ?? activeFolder.path
-  const history = historyByFolder[activeFolder.path] ?? []
-
-  useEffect(() => {
-    if (!currentPath) return
-    setLoading(true)
-    let cancelled = false
-    window.electron.readDir(currentPath).then(result => {
-      if (cancelled) return
-      setEntries(result)
-      setLoading(false)
-    })
-    return () => { cancelled = true }
-  }, [currentPath])
-
-  const navigateTo = (dirPath: string) => {
-    setHistoryByFolder(prev => ({
-      ...prev,
-      [activeFolder.path]: [...(prev[activeFolder.path] ?? []), currentPath],
-    }))
-    setPathByFolder(prev => ({ ...prev, [activeFolder.path]: dirPath }))
   }
 
-  const navigateBack = () => {
-    const prev = history[history.length - 1]
-    if (prev === undefined) return
-    setHistoryByFolder(p => ({
-      ...p,
-      [activeFolder.path]: (p[activeFolder.path] ?? []).slice(0, -1),
-    }))
-    setPathByFolder(p => ({ ...p, [activeFolder.path]: prev }))
+  // Switching the active workspace folder re-roots the tree: collapse all,
+  // expand just the new root, and (re)read its children.
+  useEffect(() => {
+    setExpanded(new Set([rootPath]))
+    loadDir(rootPath)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [rootPath])
+
+  const toggleDir = (dir: string) => {
+    const isOpen = expanded.has(dir)
+    setExpanded(prev => {
+      const n = new Set(prev)
+      if (isOpen) n.delete(dir)
+      else n.add(dir)
+      return n
+    })
+    if (!isOpen && !(dir in childrenByDir)) loadDir(dir)
+  }
+
+  const renderTree = (dir: string, depth: number): ReactNode[] => {
+    const items = childrenByDir[dir]
+    if (!items) return []
+    return items.map(entry => {
+      if (entry.isDirectory) {
+        const open = expanded.has(entry.path)
+        return (
+          <div key={entry.path}>
+            <button
+              onClick={() => toggleDir(entry.path)}
+              className="flex items-center gap-1.5 w-full py-1.5 pr-3 text-left hover:bg-white/[0.04] transition-colors cursor-pointer"
+              style={{ paddingLeft: 12 + depth * 14 }}
+            >
+              <ChevronRight
+                size={12}
+                className={`flex-shrink-0 text-fg-subtle transition-transform ${open ? 'rotate-90' : ''}`}
+              />
+              <FolderGlyph size={14} />
+              <span className="text-sm truncate text-fg">{entry.name}</span>
+            </button>
+            {open && renderTree(entry.path, depth + 1)}
+          </div>
+        )
+      }
+      return (
+        <div
+          key={entry.path}
+          className="flex items-center gap-2.5 w-full py-1.5 pr-3 cursor-default"
+          style={{ paddingLeft: 12 + depth * 14 + 18 }}
+        >
+          <FileGlyph name={entry.name} />
+          <span className="text-sm truncate text-fg-subtle">{entry.name}</span>
+        </div>
+      )
+    })
   }
 
   const handleAddFolder = async () => {
@@ -172,20 +241,19 @@ export default function FilesPanel() {
     await removeFolder(path)
   }
 
-  const canGoBack = history.length > 0
-  const folderName = useMemo(() => {
-    const trimmed = currentPath.replace(/[\\/]+$/, '')
+  const rootName = useMemo(() => {
+    const trimmed = rootPath.replace(/[\\/]+$/, '')
     const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'))
     return idx >= 0 ? trimmed.slice(idx + 1) || trimmed : trimmed
-  }, [currentPath])
+  }, [rootPath])
 
   return (
-    <div className="relative h-full flex flex-col bg-canvas">
+    <div className="relative flex h-full flex-col bg-canvas">
       {/* Workspace folder list. Each row is one loaded folder; click to make
           it the active folder (file tree below switches to it). The "+ Add"
           row at the bottom appends to workspace.json on the primary anchor. */}
-      <div className="flex flex-col bg-panel border-b border-node-border">
-        <div className="px-3 pt-2 pb-1 text-[10px] uppercase tracking-wider text-fg-subtle font-mono">
+      <div className="flex flex-col border-b border-node-border bg-panel">
+        <div className="px-3 pb-1 pt-2 font-mono text-[10px] uppercase tracking-wider text-fg-subtle">
           Workspace
         </div>
         <div className="px-1.5 pb-1.5">
@@ -197,30 +265,24 @@ export default function FilesPanel() {
             return (
               <div
                 key={folder.path}
-                className={`group flex items-start gap-1.5 rounded px-1.5 py-1 cursor-pointer transition-colors ${
+                className={`group flex cursor-pointer items-start gap-1.5 rounded px-1.5 py-1 transition-colors ${
                   isActive ? 'bg-white/[0.06]' : 'hover:bg-white/[0.03]'
                 }`}
                 onClick={() => setActiveFolderPath(folder.path)}
               >
-                <span
-                  aria-hidden
-                  className="flex-shrink-0 w-2 h-2 rounded-sm mt-1"
-                  style={{ background: folder.color }}
-                />
-                <FolderOpen
-                  size={12}
-                  className={`flex-shrink-0 mt-0.5 ${isActive ? 'text-amber-400' : 'text-fg-subtle'}`}
-                />
+                <span className="mt-0.5 flex-shrink-0">
+                  <FolderGlyph size={13} />
+                </span>
                 <div className="flex-1 min-w-0">
                   <div
-                    className={`truncate text-xs font-mono ${isActive ? 'text-fg' : 'text-fg-muted'}`}
+                  className={`truncate font-mono text-xs ${isActive ? 'text-fg' : 'text-fg-muted'}`}
                     title={folder.path}
                   >
                     {folder.label}
                     {folder.isPrimary && (
-                      <span className="ml-1.5 text-[9px] uppercase tracking-wider text-fg-subtle">
-                        primary
-                      </span>
+                        <span className="ml-1.5 text-[9px] uppercase tracking-wider text-fg-subtle">
+                          primary
+                        </span>
                     )}
                   </div>
                   {pageName && (
@@ -238,7 +300,7 @@ export default function FilesPanel() {
                       e.stopPropagation()
                       void handleRemoveFolder(folder.path)
                     }}
-                    className="p-0.5 rounded text-fg-subtle opacity-0 group-hover:opacity-100 hover:text-fg hover:bg-white/10 transition-colors mt-0.5"
+                    className="mt-0.5 rounded p-0.5 text-fg-subtle opacity-0 transition-colors group-hover:opacity-100 hover:bg-node hover:text-fg"
                     title="Remove from workspace"
                   >
                     <X size={11} />
@@ -250,7 +312,7 @@ export default function FilesPanel() {
           <button
             onClick={() => void handleAddFolder()}
             disabled={adding}
-            className="flex items-center gap-1.5 w-full rounded px-1.5 py-1 text-xs text-fg-subtle hover:text-fg hover:bg-white/[0.03] transition-colors disabled:opacity-50 disabled:pointer-events-none"
+            className="flex w-full items-center gap-1.5 rounded px-1.5 py-1 text-xs text-fg-subtle transition-colors hover:bg-white/[0.03] hover:text-fg disabled:pointer-events-none disabled:opacity-50"
           >
             <FolderPlus size={12} className="flex-shrink-0" />
             <span className="font-mono">{adding ? 'Adding…' : 'Add Folder'}</span>
@@ -258,46 +320,19 @@ export default function FilesPanel() {
         </div>
       </div>
 
-      {/* Tree navigation for the currently-active folder. Back button is
-          per-folder so switching folders preserves your scroll position
-          inside each one. */}
-      <div className="flex items-center gap-2 px-3 py-2 bg-panel border-b border-node-border flex-shrink-0">
-        <button
-          onClick={navigateBack}
-          disabled={!canGoBack}
-          className="p-1 rounded text-fg-muted hover:text-fg hover:bg-node transition-colors disabled:opacity-25 disabled:pointer-events-none"
-        >
-          <ArrowLeft size={14} />
-        </button>
-        <div className="flex items-center gap-1.5 flex-1 min-w-0">
-          <FolderOpen size={13} className="text-amber-400 flex-shrink-0" />
-          <span className="text-xs text-fg-muted truncate font-mono">{folderName}</span>
-        </div>
+      {/* Tree root header for the active workspace folder. */}
+      <div className="flex flex-shrink-0 items-center gap-1.5 border-b border-node-border bg-panel px-3 py-2">
+        <FolderGlyph size={14} />
+        <span className="text-xs text-fg-muted truncate font-mono">{rootName}</span>
       </div>
 
       <div className="flex-1 overflow-y-auto py-1">
-        {loading ? (
-          <div className="flex items-center justify-center h-24 text-xs text-fg-subtle">Loading…</div>
-        ) : entries.length === 0 ? (
-          <div className="flex items-center justify-center h-24 text-xs text-fg-subtle">Empty directory</div>
+        {!(rootPath in childrenByDir) ? (
+          <div className="flex h-24 items-center justify-center text-xs text-fg-subtle">Loading…</div>
+        ) : (childrenByDir[rootPath]?.length ?? 0) === 0 ? (
+          <div className="flex h-24 items-center justify-center text-xs text-fg-subtle">Empty directory</div>
         ) : (
-          entries.map(entry => (
-            <button
-              key={entry.path}
-              onClick={() => entry.isDirectory ? navigateTo(entry.path) : undefined}
-              className={`flex items-center gap-2.5 w-full px-4 py-1.5 text-left hover:bg-white/[0.04] transition-colors ${
-                entry.isDirectory ? 'cursor-pointer' : 'cursor-default'
-              }`}
-            >
-              {entry.isDirectory
-                ? <Folder size={13} className="text-amber-400 flex-shrink-0" />
-                : <File   size={13} className="text-fg-subtle flex-shrink-0" />
-              }
-              <span className={`text-sm truncate ${entry.isDirectory ? 'text-fg' : 'text-fg-subtle'}`}>
-                {entry.name}
-              </span>
-            </button>
-          ))
+          renderTree(rootPath, 0)
         )}
       </div>
 
@@ -307,18 +342,18 @@ export default function FilesPanel() {
           onClick={cancelPendingLink}
         >
           <div
-            className="w-[min(420px,90%)] rounded-md border border-white/10 bg-[#171717] shadow-xl"
+            className="w-[min(420px,90%)] rounded-md border border-node-border bg-node shadow-xl"
             onClick={e => e.stopPropagation()}
           >
-            <div className="px-4 pt-3 pb-2 border-b border-white/[0.06]">
-              <div className="text-[10px] uppercase tracking-wider text-fg-subtle font-mono">Link folder</div>
-              <div className="text-sm text-fg mt-1">
+            <div className="border-b border-node-border px-4 pb-2 pt-3">
+              <div className="font-mono text-[10px] uppercase tracking-wider text-fg-subtle">Link folder</div>
+              <div className="mt-1 text-sm text-fg">
                 Pick which page in <span className="font-mono text-accent">{primaryFolder.label}</span> to link to a page in <span className="font-mono text-amber-300">{pendingLink.folderLabel}</span>.
               </div>
             </div>
 
             <div className="px-4 pt-3 pb-1">
-              <div className="text-[10px] uppercase tracking-wider text-fg-subtle font-mono mb-1.5">
+              <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-subtle">
                 Host page in {primaryFolder.label}
               </div>
               <div className="flex flex-wrap gap-1">
@@ -328,10 +363,10 @@ export default function FilesPanel() {
                     <button
                       key={hp.id}
                       onClick={() => setHostPageChoice(hp.id)}
-                      className={`flex items-center gap-1 px-2 py-1 rounded-[3px] border text-[11px] ${
+                      className={`flex items-center gap-1 rounded-[3px] border px-2 py-1 text-[11px] ${
                         isSelected
                           ? 'border-accent/60 bg-accent/15 text-fg'
-                          : 'border-white/[0.06] text-fg-muted hover:bg-white/[0.05] hover:text-fg'
+                          : 'border-node-border text-fg-muted hover:bg-node hover:text-fg'
                       }`}
                       title={hp.id === activePageId ? 'Currently active page' : undefined}
                     >
@@ -346,7 +381,7 @@ export default function FilesPanel() {
             </div>
 
             <div className="px-4 pt-3 pb-2">
-              <div className="text-[10px] uppercase tracking-wider text-fg-subtle font-mono mb-1.5">
+              <div className="mb-1.5 font-mono text-[10px] uppercase tracking-wider text-fg-subtle">
                 Target page in {pendingLink.folderLabel}
               </div>
               {pendingLink.pages.length === 0 ? (
@@ -357,7 +392,7 @@ export default function FilesPanel() {
                     <button
                       key={p.id}
                       onClick={() => void confirmLinkToExisting(p.id)}
-                      className="flex items-center gap-1 px-2 py-1 rounded-[3px] border border-white/[0.06] text-[11px] text-fg-muted hover:bg-white/[0.05] hover:text-fg"
+                      className="flex items-center gap-1 rounded-[3px] border border-node-border px-2 py-1 text-[11px] text-fg-muted hover:bg-node hover:text-fg"
                     >
                       <span className="truncate max-w-[140px]">{p.name}</span>
                     </button>
@@ -365,7 +400,7 @@ export default function FilesPanel() {
                 </div>
               )}
             </div>
-            <div className="border-t border-white/[0.06] px-3 py-2">
+            <div className="border-t border-node-border px-3 py-2">
               {creatingPageDraft === null ? (
                 <button
                   onClick={() => setCreatingPageDraft('Untitled')}
@@ -385,19 +420,19 @@ export default function FilesPanel() {
                       if (e.key === 'Enter') void confirmLinkToNew()
                       else if (e.key === 'Escape') setCreatingPageDraft(null)
                     }}
-                    className="flex-1 bg-transparent outline-none border-b border-white/20 text-xs text-fg placeholder:text-fg-subtle"
+                    className="flex-1 border-b border-node-border bg-transparent text-xs text-fg outline-none placeholder:text-fg-subtle"
                     placeholder="New page name"
                   />
                   <button
                     onClick={() => void confirmLinkToNew()}
-                    className="p-1 rounded text-emerald-300 hover:bg-white/[0.05]"
+                    className="rounded p-1 text-emerald-300 hover:bg-node"
                     title="Create and link"
                   >
                     <Check size={12} />
                   </button>
                   <button
                     onClick={() => setCreatingPageDraft(null)}
-                    className="p-1 rounded text-fg-muted hover:bg-white/[0.05]"
+                    className="rounded p-1 text-fg-muted hover:bg-node"
                     title="Cancel"
                   >
                     <X size={12} />
@@ -405,10 +440,10 @@ export default function FilesPanel() {
                 </div>
               )}
             </div>
-            <div className="border-t border-white/[0.06] px-3 py-2 flex justify-end">
+            <div className="flex justify-end border-t border-node-border px-3 py-2">
               <button
                 onClick={cancelPendingLink}
-                className="px-2.5 py-1 text-[11px] rounded text-fg-muted hover:text-fg hover:bg-white/[0.05]"
+                className="rounded px-2.5 py-1 text-[11px] text-fg-muted hover:bg-node hover:text-fg"
               >
                 Cancel
               </button>

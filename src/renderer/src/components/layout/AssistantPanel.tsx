@@ -1,4 +1,4 @@
-import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useRef, useState } from 'react'
+import { forwardRef, useCallback, useEffect, useImperativeHandle, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { Terminal } from '@xterm/xterm'
 import { FitAddon } from '@xterm/addon-fit'
 import { Bot, Settings2, X } from 'lucide-react'
@@ -9,6 +9,7 @@ import { useProjectDir } from '../../context/ProjectDirContext'
 import { useProjectSettings } from '../../context/ProjectSettingsContext'
 import { useWorkspace } from '../../context/WorkspaceContext'
 import { useInterfaceSettings } from '../../context/InterfaceSettingsContext'
+import { withTerminalSurface } from '../../lib/terminalTheme'
 import type { ProjectSettings } from '../../types'
 import AssistantLaunchModal, { type AssistantRelaunchOpts } from './AssistantLaunchModal'
 
@@ -24,26 +25,20 @@ const COLS_DEBOUNCE_MS = 100
 
 export type AssistantOrientation = 'right' | 'bottom'
 
-// Strip ANSI escape codes so we can search for plain-text markers
-const ANSI_RE = /\x1b(?:\[[0-9;?]*[a-zA-Z]|\][^\x07\x1b]*(?:\x07|\x1b\\))/g
-function stripAnsi(s: string): string {
-  return s.replace(ANSI_RE, '')
-}
-
 // Two themes for the embedded assistant terminal — see TerminalPanel for
 // the rationale on light-mode color picks. Cursor stays purple here to
 // match the assistant accent that's used elsewhere in the UI.
 const TERM_THEME_DARK = {
-  background:   '#14110e',
+  background:   '#212121',
   foreground:   '#e2e8f0',
-  cursor:       '#c084fc',
-  cursorAccent: '#14110e',
+  cursor:       '#7e7eea',
+  cursorAccent: '#212121',
   black:        '#1e1e1e',
   red:          '#f87171',
   green:        '#4ade80',
   yellow:       '#fbbf24',
   blue:         '#58A6FF',
-  magenta:      '#c084fc',
+  magenta:      '#7e7eea',
   cyan:         '#38bdf8',
   white:        '#e2e8f0',
   brightBlack:  '#3a3a3a',
@@ -67,18 +62,10 @@ const TERM_THEME_LIGHT = {
   brightWhite:  '#0f172a',
 }
 
-interface CanvasUpdate {
-  zones?: unknown[]
-  components?: unknown[]
-  nodes?: unknown[]
-  edges: unknown[]
-}
-
 interface Props {
   visible: boolean
   orientation: AssistantOrientation
   onClose: () => void
-  onCanvasUpdate: (update: CanvasUpdate) => void
   runtime: AgentRuntime
   mode: AssistantMode
   onModeChange: (next: AssistantMode) => void
@@ -91,7 +78,6 @@ interface Props {
 interface AssistantTerminalProps {
   mode: AssistantMode
   visible: boolean
-  onCanvasUpdate: (update: CanvasUpdate) => void
 }
 
 export interface AssistantTerminalHandle {
@@ -110,14 +96,16 @@ export interface AssistantTerminalHandle {
 // - `requestResize` is the single entry point for all resize decisions:
 //   rows broadcast immediately, cols debounced COLS_DEBOUNCE_MS.
 const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalProps>(
-  function AssistantTerminal({ mode, visible, onCanvasUpdate }, ref) {
+  function AssistantTerminal({ mode, visible }, ref) {
     const containerRef   = useRef<HTMLDivElement>(null)
     const termRef        = useRef<Terminal | null>(null)
     const fitRef         = useRef<FitAddon | null>(null)
-    const parseBufferRef = useRef<string>('')
     const assistantId = ASSISTANT_IDS[mode]
     const { theme } = useInterfaceSettings()
-    const xtermTheme = theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK
+    const xtermTheme = useMemo(
+      () => withTerminalSurface(theme === 'light' ? TERM_THEME_LIGHT : TERM_THEME_DARK),
+      [theme],
+    )
 
     // Mirrored synchronously into a ref so callbacks (RO, debounce tail) can
     // read the current visibility without needing stale-closure gymnastics.
@@ -203,44 +191,12 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
         // only clears scrollback above the cursor, which collides with Ink
         // CLIs that reposition the cursor on startup.
         try { termRef.current?.reset() } catch {}
-        parseBufferRef.current = ''
         // Route through the gated path. clear() is only ever invoked for the
         // currently-visible mode, so requestResize will take the fast path.
         const m = measure()
         if (m) requestResize(m.cols, m.rows)
       },
     }), [measure, requestResize])
-
-    // Parse the ANSI-stripped data stream for ARCHITECT_CANVAS_UPDATE blocks.
-    // Only active in architecture mode — general mode must never modify the canvas.
-    const parseForUpdates = useCallback((raw: string) => {
-      if (mode !== 'architecture') return
-      parseBufferRef.current += stripAnsi(raw)
-
-      const START = 'ARCHITECT_CANVAS_UPDATE'
-      const END   = 'END_ARCHITECT_CANVAS_UPDATE'
-
-      let startIdx: number
-      while ((startIdx = parseBufferRef.current.indexOf(START)) !== -1) {
-        const endIdx = parseBufferRef.current.indexOf(END, startIdx + START.length)
-        if (endIdx === -1) break
-
-        const jsonStr = parseBufferRef.current.slice(startIdx + START.length, endIdx).trim()
-        parseBufferRef.current = parseBufferRef.current.slice(endIdx + END.length)
-
-        try {
-          const update = JSON.parse(jsonStr)
-          if ((update?.zones || update?.nodes) && update?.edges) {
-            onCanvasUpdate(update as CanvasUpdate)
-          }
-        } catch { /* malformed — skip */ }
-      }
-
-      // Prevent unbounded growth
-      if (parseBufferRef.current.length > 50_000) {
-        parseBufferRef.current = parseBufferRef.current.slice(-10_000)
-      }
-    }, [onCanvasUpdate, mode])
 
     // Mount xterm once — never unmount across close/mode/orientation changes.
     useEffect(() => {
@@ -260,7 +216,6 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       term.loadAddon(fit)
       termRef.current = term
       fitRef.current  = fit
-      parseBufferRef.current = ''
 
       term.onData(data => window.electron.terminal.input(assistantId, data))
       term.open(containerRef.current)
@@ -330,14 +285,14 @@ const AssistantTerminal = forwardRef<AssistantTerminalHandle, AssistantTerminalP
       }
     }, [visible, commitResize, measure])
 
-    // Stream terminal data
+    // Stream terminal data. Canvas edits arrive via the file watcher (the
+    // assistant writes the page file directly), not by parsing this stream.
     useEffect(() => {
       return window.electron.terminal.onData(({ id, data }) => {
         if (id !== assistantId) return
         termRef.current?.write(data)
-        parseForUpdates(data)
       })
-    }, [parseForUpdates, assistantId])
+    }, [assistantId])
 
     // Handle session exit
     useEffect(() => {
@@ -361,7 +316,6 @@ export default function AssistantPanel({
   visible,
   orientation,
   onClose,
-  onCanvasUpdate,
   runtime,
   mode,
   onModeChange,
@@ -381,8 +335,8 @@ export default function AssistantPanel({
 
   const headerLabel = mode === 'architecture' ? 'Architecture Assistant' : 'General Assistant'
   const borderClass = orientation === 'bottom'
-    ? 'border-t border-white/[0.06]'
-    : 'border-l border-white/[0.06]'
+    ? 'border-t border-node-border'
+    : 'border-l border-node-border'
 
   const handleRelaunch = useCallback(async (opts: AssistantRelaunchOpts) => {
     // Clear the current mode's xterm before we ask main to respawn. Prevents
@@ -398,9 +352,9 @@ export default function AssistantPanel({
       style={{ display: visible ? 'flex' : 'none' }}
     >
       {/* Header */}
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/[0.06] flex-shrink-0 bg-[#111111]">
+      <div className="flex items-center justify-between border-b border-node-border bg-panel px-3 py-2 flex-shrink-0">
         <div className="flex items-center gap-2 min-w-0">
-          <Bot size={13} className="text-[#c084fc] flex-shrink-0" />
+          <Bot size={13} className="text-accent flex-shrink-0" />
           <span className="text-xs font-medium text-fg-muted truncate">{headerLabel}</span>
           <span
             className="px-1.5 py-0.5 rounded text-[9px] uppercase tracking-wider flex-shrink-0"
@@ -442,7 +396,7 @@ export default function AssistantPanel({
               onClick={() => onModeChange('architecture')}
               className={
                 mode === 'architecture'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-accent text-fg'
                   : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="Architecture mode — edit the canvas"
@@ -453,7 +407,7 @@ export default function AssistantPanel({
               onClick={() => onModeChange('general')}
               className={
                 mode === 'general'
-                  ? 'px-2 py-0.5 text-[10px] font-medium bg-[#3d3dbf] text-fg'
+                  ? 'px-2 py-0.5 text-[10px] font-medium bg-accent text-fg'
                   : 'px-2 py-0.5 text-[10px] text-fg-muted hover:text-fg hover:bg-white/[0.04]'
               }
               title="General mode — generic coding assistant"
@@ -474,8 +428,8 @@ export default function AssistantPanel({
       {/* Terminals — both mounted, only the active mode's is displayed.
           Keeps PTY state + xterm scrollback alive across close/mode/orientation. */}
       <div className="flex-1 relative overflow-hidden">
-        <AssistantTerminal ref={archRef}    mode="architecture" visible={visible && mode === 'architecture'} onCanvasUpdate={onCanvasUpdate} />
-        <AssistantTerminal ref={generalRef} mode="general"      visible={visible && mode === 'general'}      onCanvasUpdate={onCanvasUpdate} />
+        <AssistantTerminal ref={archRef}    mode="architecture" visible={visible && mode === 'architecture'} />
+        <AssistantTerminal ref={generalRef} mode="general"      visible={visible && mode === 'general'}      />
       </div>
 
       {modalOpen && projectDir && (
